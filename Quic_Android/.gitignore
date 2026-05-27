@@ -1,0 +1,44 @@
+# 1. Bỏ qua Chứng chỉ và Private Keys (TUYỆT ĐỐI BẢO MẬT)
+*.pem
+*.key
+*.crt
+
+# 2. Bỏ qua file rác và file log
+tcp_dump.txt
+*.tar.gz
+
+# Cấu hình cho Android
+Quic_Android/build/
+Quic_Android/app/build/
+Quic_Android/.idea/
+Quic_Android/.gradle/
+Quic_Android/local.properties
+
+# Cấu hình cho Server
+quic_server_bin
+quic-server-bin
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Cấu hình cho Windows
+Quic_client_Windows/*.exe
+Quic_client_Windows/*.dll
+
+# 5. Bỏ qua file cấu hình nhạy cảm chứa IP/Pass/Port (KÉT SẮT)
+config.json
+
+# 6. Logs & OS metadata
+quic.log
+*.log
+.DS_Store
+Thumbs.db
+
+#7. Bo push file script chay push.sh len github
+push.sh
+
+#8. Bỏ qua các bản build của Go Mobile
+*.aar
+*.jar
