@@ -10,8 +10,8 @@ static SQLiteHandler db_handler;
 static UFWManager ufw_manager;
 static VfsServer* kcp_server = nullptr;
 
-static int g_kcp_port = 6666;
-static int g_quic_port = 4433;
+static int g_kcp_port = 0;
+static int g_quic_port = 0;
 
 void vfs_register_ip_uds(const std::string& ip, const std::string& uds_path);
 
