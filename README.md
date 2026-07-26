@@ -1,6 +1,6 @@
 # 🚀 Transfer Protocol / ZhiAuth Ecosystem
 
-[ 🇻🇳 **Tiếng Việt**](#-tiếng-việt) | [ 🇬🇧 **English**](#-english) | [ 🇨🇳 **中文**](#-中文)
+[ 🇻🇳 **Tiếng Việt**](#-tiếng-việt) | [ en **English**](#-english) | [ 🇨🇳 **中文**](#-中文)
 
 ---
 
