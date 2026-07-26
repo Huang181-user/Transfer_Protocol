@@ -1,0 +1,19 @@
+# 1. Chặn toàn bộ cấu hình nhạy cảm và token
+config/config.json
+config/.session
+
+# 2. Chặn rác và Log
+*.log
+log_run.txt
+*.txt
+
+# 3. Chặn thư mục Build và Binary thực thi
+build/
+go_client/zhiauth_client
+src/**/*.o
+*.a
+*.so
+
+# 4. Rác hệ điều hành
+.DS_Store
+Thumbs.db
