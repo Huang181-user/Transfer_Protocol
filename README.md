@@ -1,4 +1,3 @@
-```markdown
 # 🚀 Transfer Protocol / ZhiAuth Ecosystem
 
 [ 🇻🇳 **Tiếng Việt**](#-tiếng-việt) | [ 🇬🇧 **English**](#-english) | [ 🇨🇳 **中文**](#-中文)
