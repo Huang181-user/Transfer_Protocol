@@ -1,6 +1,6 @@
 # 🚀 Transfer Protocol / ZhiAuth Ecosystem
 
-[ 🇻🇳 **Tiếng Việt**](#-tiếng-việt) | [ en **English**](#-english) | [ 🇨🇳 **中文**](#-中文)
+[ 🇻🇳 **Tiếng Việt**](#vietnamese) | [ 🌐 **English**](#english) | [ 🇨🇳 **中文**](#chinese)
 
 ---
 <a id="vietnamese"></a>
@@ -159,7 +159,7 @@ make client
 ```
 
 ---
-<a id="中文"></a>
+<a id="chinese"></a>
 ## 🇨🇳 中文
 
 ### 📖 项目简介
