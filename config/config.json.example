@@ -1,5 +1,5 @@
 {
-  "port": "4433",
+  "port": "port_quic",
   "custom_mtu": 1200,
   "safe_root": "/path/to/your/merge_pool",
   "log_path": "/path/to/your/logs/quic.log",
