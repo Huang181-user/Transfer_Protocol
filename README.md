@@ -1,6 +1,6 @@
 # 🚀 Transfer Protocol / ZhiAuth Ecosystem
 
-[ 🇻🇳 **Tiếng Việt**](#vietnamese) | [ 🌐 **English**](#english) | [ 🇨🇳 **中文**](#chinese)
+[ vi **Tiếng Việt**](#vietnamese) | [ en **English**](#english) | [ cn **中文**](#chinese)
 
 ---
 <a id="vietnamese"></a>
