@@ -1,0 +1,66 @@
+#include "bridge/auth_bridge.h"
+#include "common/sqlite_handler.h"
+#include "system/ufw_manager.h"
+#include "rpc_vfs/crypto_box.h"
+#include "rpc_vfs/vfs_server.h"
+#include "common/logger.h"
+#include <string>
+
+static SQLiteHandler db_handler;
+static UFWManager ufw_manager;
+static VfsServer* kcp_server = nullptr;
+
+static int g_kcp_port = 6666;
+static int g_quic_port = 4433;
+
+void vfs_register_ip_uds(const std::string& ip, const std::string& uds_path);
+
+extern "C" {
+int zhiauth_core_init(const char* db_path, const char* master_key, int kcp_port, int quic_port) {
+    g_kcp_port = kcp_port;
+    g_quic_port = quic_port;
+    
+    if (!db_handler.initialize_database(db_path ? db_path : "")) return -1;
+    ufw_manager.start_worker();
+    if (!CryptoBox::initialize()) return -1;
+    
+    kcp_server = new VfsServer(g_kcp_port, master_key ? master_key : "");
+    kcp_server->start();
+    return 0;
+}
+
+const char* zhiauth_authenticate_and_trigger(const char* username, const char* password, const char* client_lan, const char* client_ts, const char* client_hwid) {
+    static std::string result_cache;
+    std::string user = username ? username : "";
+    std::string pass = password ? password : ""; 
+    std::string lan = client_lan ? client_lan : "";
+    std::string ts_ip = client_ts ? client_ts : "";
+    
+    UserRecord user_rec;
+    if (!db_handler.authenticate_user(user, pass, user_rec)) return "0|AUTH_FAIL";
+
+    std::string uds_path = "/tmp/zhiauth_kcp_" + user_rec.username + ".sock";
+
+    if (!lan.empty() && lan != "NONE") {
+        vfs_register_ip_uds(lan, uds_path);
+        ufw_manager.push_task(lan, g_quic_port, "udp", true);
+        ufw_manager.push_task(lan, g_kcp_port, "udp", true); 
+    }
+    if (!ts_ip.empty() && ts_ip != "NONE") {
+        vfs_register_ip_uds(ts_ip, uds_path);
+        ufw_manager.push_task(ts_ip, g_quic_port, "udp", true);
+        ufw_manager.push_task(ts_ip, g_kcp_port, "udp", true); 
+    }
+    result_cache = "1|" + user_rec.username + "|" + user_rec.shared_path;
+    return result_cache.c_str();
+}
+
+void zhiauth_revoke_access(const char* client_ip, const char* shared_path) {
+    std::string ip = client_ip ? client_ip : "";
+    if (!ip.empty()) {
+        ufw_manager.push_task(ip, g_quic_port, "udp", false);
+        ufw_manager.push_task(ip, g_kcp_port, "udp", false); 
+    }
+}
+void zhiauth_core_shutdown() { if (kcp_server) { kcp_server->stop(); delete kcp_server; } ufw_manager.stop_worker(); }
+}

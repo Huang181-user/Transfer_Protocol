@@ -1,0 +1,33 @@
+# ==============================
+# 🚫 QUY TẮC CHẶN BẢO MẬT TỐI CAO
+# ==============================
+
+# 1. Chặn toàn bộ cấu hình nhạy cảm và chứng chỉ
+config/config.json
+config/*.key
+config/*.crt
+config/*.pem
+
+# 2. Chặn toàn bộ Cơ sở dữ liệu SQLite
+database/*.db
+database/*.db-shm
+database/*.db-wal
+database/*.sqlite
+database/*.sqlite3
+
+# 3. Chặn rác dịch thuật và File log
+*.log
+/tmp/*.log
+go_gateway/*.log
+
+# 4. Chặn các thư mục Build và Binary thực thi
+build/
+go_gateway/zhiauth_gateway
+src/**/*.o
+*.a
+*.so
+
+# 5. Rác hệ điều hành
+.DS_Store
+Thumbs.db
+*.txt
