@@ -87,7 +87,7 @@ make client
 
 ---
 
-## 🇬🇧 English
+## en English
 
 ### 📖 Overview
 
