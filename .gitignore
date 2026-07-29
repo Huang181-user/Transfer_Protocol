@@ -1,0 +1,13 @@
+﻿# Config & Secret
+config/config.json
+config/.session
+
+# Toàn bộ file text (log, install, structure)
+*.txt
+*.log
+
+# Folder build & rác
+build/
+*.exe
+*.o
+*.a
