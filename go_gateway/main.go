@@ -2,7 +2,7 @@ package main
 
 /*
 #cgo CFLAGS: -I../src/bridge -I../src
-#cgo LDFLAGS: -L../build -lzhiauth_core -lstdc++ -lsqlite3
+#cgo LDFLAGS: -L../build -lzhiauth_core -lstdc++ -lsqlite3 -lsodium
 #include "auth_bridge.h"
 #include <stdlib.h>
 */

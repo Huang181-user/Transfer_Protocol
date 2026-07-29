@@ -8,7 +8,6 @@ import (
 	"crypto/x509"
 	"log"
 	"math/big"
-	"net"
 	"strconv"
 	"time"
 
@@ -44,15 +43,9 @@ func spawnListener(port string, role string) {
 }
 
 func handleClientSession(conn *quic.Conn, port string) {
-	remoteIP := (*conn).RemoteAddr().(*net.UDPAddr).IP.String()
-
+	// 🎯 FIX: QUIC rớt kệ QUIC, KCP vẫn bơm data vô tư. Mọi việc dọn rác cứ để Watchdog lo.
 	defer func() {
 		(*conn).CloseWithError(0, "session terminated cleanly")
-		quicDataPortStr := strconv.Itoa(globalConfig.Network.QuicDataPort)
-		if port == quicDataPortStr {
-			log.Printf("[QUIC-DISCONNECT] 🚨 Phát hiện hầm DATA cổng %s bị sập từ IP: %s. Kích hoạt xả trạm an toàn...", port, remoteIP)
-			TriggerServerSessionCleanup(remoteIP)
-		}
 	}()
 
 	for {
