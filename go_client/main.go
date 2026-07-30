@@ -62,6 +62,10 @@ func main() {
 		os.Remove(sessionPath)
 		log.Fatalf("❌ [ACCESS_DENIED] Xác thực sập: %v", err)
 	}
+
+	// 🔥 Kích nổ luồng nhịp tim ưu tiên chạy ngầm
+	go tunnel.StartHeartbeat()
+
 	if !exists {
 		SaveDeviceSession(sessionPath, user, pass, mountPath)
 	}

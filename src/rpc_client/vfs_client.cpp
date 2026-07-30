@@ -1,3 +1,4 @@
+#include "bridge/client_bridge.h"
 #include "rpc_client/vfs_client.h"
 #include "rpc_client/crypto_box.h"
 #include "rpc_client/vfs_packet.h"
@@ -40,7 +41,7 @@ static size_t calculateAbsoluteMaxSocketBuffer() {
 
 VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu)
     : socket_(io_context_, udp::endpoint(udp::v4(), 0)), is_running_(false), 
-      recv_buffer_(65536), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu)
+      recv_buffer_(4194304), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu) // 🔥 BUFF 4MB
 {
     asio::ip::udp::resolver resolver(io_context_);
     server_endpoint_ = *resolver.resolve(udp::v4(), server_ip, std::to_string(port)).begin();
@@ -61,9 +62,10 @@ bool VfsClient::start() {
     
     ikcp_nodelay(kcp_cb_, 1, 1, 1, 1);
     int safe_mtu = (mtu_ > 100) ? (mtu_ - 56) : 1350; 
-    int max_auto_wnd = 65535;
-
-    ikcp_wndsize(kcp_cb_, max_auto_wnd, max_auto_wnd); 
+    
+    ikcp_wndsize(kcp_cb_, 65535, 65535); 
+    kcp_cb_->stream = 1; // 🔥 BẬT CHẾ ĐỘ TRUYỀN STREAM LUỒNG LIÊN TỤC
+    
     ikcp_setmtu(kcp_cb_, safe_mtu); 
     kcp_cb_->rx_minrto = 2;
 
@@ -105,18 +107,8 @@ void VfsClient::receive_loop() {
                     if (plaintext.size() >= sizeof(VfsPacketHeader)) {
                         VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
                         uint64_t req_id = hdr->session_id;
-                        std::shared_ptr<RpcContext> ctx;
-                        {
-                            std::lock_guard<std::mutex> map_lock(rpc_map_mutex_);
-                            auto it = rpc_map_.find(req_id);
-                            if (it != rpc_map_.end()) ctx = it->second;
-                        }
-                        if (ctx) {
-                            std::lock_guard<std::mutex> lock(ctx->mtx);
-                            ctx->response = std::move(plaintext);
-                            ctx->done = true;
-                            ctx->cv.notify_one();
-                        }
+                        // 🔥 ĐÁP THẲNG LÊN GO KHÔNG CẦN TÌM MAP NỮA!
+                        zhiauth_cgo_on_response(req_id, plaintext.data(), plaintext.size());
                     }
                 }
             }
@@ -127,7 +119,7 @@ void VfsClient::receive_loop() {
 
 void VfsClient::kcp_update_loop() {
     while (is_running_) {
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
         uint32_t current_clock = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         std::lock_guard<std::mutex> lock(kcp_mutex_);
         if (kcp_cb_) ikcp_update(kcp_cb_, current_clock);
@@ -158,47 +150,22 @@ void VfsClient::kcp_adaptive_tuner_loop() {
             kcp_cb_->rx_minrto = 2;
             ikcp_wndsize(kcp_cb_, bdp_packets, bdp_packets);
         } else {
-            ikcp_nodelay(kcp_cb_, 1, 1, 2, 0);
+            ikcp_nodelay(kcp_cb_, 1, 1, 2, 1);
             kcp_cb_->rx_minrto = std::clamp(current_rtt * 2, 20, 200);
             ikcp_wndsize(kcp_cb_, bdp_packets, bdp_packets);
         }
     }
 }
 
-std::vector<uint8_t> VfsClient::send_rpc_sync(const std::vector<uint8_t>& request_payload) {
-    if (request_payload.size() < sizeof(VfsPacketHeader)) return {};
-    const VfsPacketHeader* hdr = reinterpret_cast<const VfsPacketHeader*>(request_payload.data());
-    uint64_t req_id = hdr->session_id;
-
-    auto ctx = std::make_shared<RpcContext>();
-    {
-        std::lock_guard<std::mutex> map_lock(rpc_map_mutex_);
-        rpc_map_[req_id] = ctx;
-    }
-
+// 🔥 FIX: Đổi trả về void, không return {} nữa!
+void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
+    if (request_payload.size() < sizeof(VfsPacketHeader)) return;
+    
     std::vector<uint8_t> encrypted_payload;
-    if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) {
-        std::lock_guard<std::mutex> map_lock(rpc_map_mutex_);
-        rpc_map_.erase(req_id); return {};
-    }
-
+    if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) return;
     {
         std::lock_guard<std::mutex> lock(kcp_mutex_);
         ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), encrypted_payload.size());
         ikcp_flush(kcp_cb_);
     }
-
-    std::vector<uint8_t> ret;
-    {
-        std::unique_lock<std::mutex> lock(ctx->mtx);
-        if (ctx->cv.wait_for(lock, std::chrono::seconds(15), [&ctx] { return ctx->done; })) {
-            ret = std::move(ctx->response);
-        }
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(rpc_map_mutex_);
-        rpc_map_.erase(req_id);
-    }
-    return ret;
 }

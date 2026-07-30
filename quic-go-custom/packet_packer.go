@@ -201,7 +201,7 @@ func (p *packetPacker) packConnectionClose(
 ) (*coalescedPacket, error) {
 	// [DEBUG-CORE] Ép xung bóp nghẹt gói tin đóng kết nối
 	if HuangCustomMTU > 0 && int(maxPacketSize) > HuangCustomMTU {
-		fmt.Printf("[DEBUG][CORE-CUSTOM-MTU] 🎪 packConnectionClose: Ép hạ trần packet từ %d xuống %d bytes\n", maxPacketSize, HuangCustomMTU)
+
 		maxPacketSize = protocol.ByteCount(HuangCustomMTU)
 	}
 
@@ -344,7 +344,7 @@ func (p *packetPacker) initialPaddingLen(frames []ackhandler.Frame, currentSize,
 func (p *packetPacker) PackCoalescedPacket(onlyAck bool, maxSize protocol.ByteCount, now monotime.Time, v protocol.Version) (*coalescedPacket, error) {
 	// [DEBUG-CORE] Khống chế trần hầm mạng ban đầu (Initial Handshake)
 	if HuangCustomMTU > 0 && int(maxSize) > HuangCustomMTU {
-		fmt.Printf("[DEBUG][CORE-CUSTOM-MTU] 📡 PackCoalescedPacket: Khống chế kích thước tối đa gói từ %d xuống %d bytes\n", maxSize, HuangCustomMTU)
+
 		maxSize = protocol.ByteCount(HuangCustomMTU)
 	}
 
@@ -496,7 +496,7 @@ func (p *packetPacker) appendPacket(
 ) (shortHeaderPacket, error) {
 	// [DEBUG-CORE] Bóp nghẹt luồng truyền tải dữ liệu thực tế (Application Data 1-RTT)
 	if HuangCustomMTU > 0 && int(maxPacketSize) > HuangCustomMTU {
-		fmt.Printf("[DEBUG][CORE-CUSTOM-MTU] 🚀 appendPacket (Application Data): Bóp nghẹt kích thước gói từ %d xuống %d bytes\n", maxPacketSize, HuangCustomMTU)
+
 		maxPacketSize = protocol.ByteCount(HuangCustomMTU)
 	}
 
@@ -741,7 +741,7 @@ func (p *packetPacker) PackPTOProbePacket(
 ) (*coalescedPacket, error) {
 	// [DEBUG-CORE] Ép hạ trần kích thước gói thăm dò PTO
 	if HuangCustomMTU > 0 && int(maxPacketSize) > HuangCustomMTU {
-		fmt.Printf("[DEBUG][CORE-CUSTOM-MTU] 🔍 PackPTOProbePacket: Điều tiết gói kích thước thăm dò từ %d xuống %d bytes\n", maxPacketSize, HuangCustomMTU)
+
 		maxPacketSize = protocol.ByteCount(HuangCustomMTU)
 	}
 

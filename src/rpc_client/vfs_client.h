@@ -23,7 +23,7 @@ public:
     ~VfsClient();
     bool start();
     void stop();
-    std::vector<uint8_t> send_rpc_sync(const std::vector<uint8_t>& request_payload);
+    void send_rpc_async(const std::vector<uint8_t>& request_payload);
     static int kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user);
 private:
     void receive_loop();

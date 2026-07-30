@@ -11,7 +11,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 )
 
@@ -24,21 +26,36 @@ const (
 	OP_MKDIR    = 0x05
 	OP_DELETE   = 0x06
 	OP_RENAME   = 0x07
-	OP_TRUNCATE = 0x08 // 🔥 THÊM OPCODE TRUNCATE CHO CHROME
+	OP_TRUNCATE = 0x08
 	OP_ERROR    = 0xFF
 )
 
 var globalReqId uint64 = 0
+var pendingRequests sync.Map 
 
 func InitCppSDK(ip string, port int, symKey string, mtu int) bool {
 	cIP, cKey := C.CString(ip), C.CString(symKey)
-	defer C.free(unsafe.Pointer(cIP)); defer C.free(unsafe.Pointer(cKey))
+	defer C.free(unsafe.Pointer(cIP))
+	defer C.free(unsafe.Pointer(cKey))
 	return C.zhiauth_client_init(cIP, C.int(port), cKey, C.int(mtu)) == 0
 }
 
 func ShutdownCppSDK() { C.zhiauth_client_shutdown() }
 
-func BuildVfsPacket(opcode byte, path string, offset uint64, reqLen uint32, data []byte) []byte {
+//export zhiauth_cgo_on_response
+func zhiauth_cgo_on_response(reqId C.uint64_t, data *C.uint8_t, length C.size_t) {
+	goReqId := uint64(reqId)
+	if val, ok := pendingRequests.Load(goReqId); ok {
+		ch := val.(chan []byte)
+		safeData := C.GoBytes(unsafe.Pointer(data), C.int(length))
+		select {
+		case ch <- safeData:
+		default:
+		}
+	}
+}
+
+func BuildVfsPacket(opcode byte, path string, offset uint64, reqLen uint32, data []byte) ([]byte, uint64) {
 	buf := new(bytes.Buffer)
 	dataLen := uint32(len(data))
 	if opcode == OP_READ { dataLen = reqLen }
@@ -54,23 +71,27 @@ func BuildVfsPacket(opcode byte, path string, offset uint64, reqLen uint32, data
 
 	buf.WriteString(path)
 	if data != nil { buf.Write(data) }
-	return buf.Bytes()
+	return buf.Bytes(), reqId
 }
 
 func SendRpcVfs(opcode byte, path string, offset uint64, reqLen uint32, data []byte) ([]byte, error) {
-	payload := BuildVfsPacket(opcode, path, offset, reqLen, data)
-	cPayload := (*C.uint8_t)(C.CBytes(payload))
-	defer C.free(unsafe.Pointer(cPayload))
-
-	var outLen C.size_t
-	cRes := C.zhiauth_send_vfs_command(cPayload, C.size_t(len(payload)), &outLen)
-
-	if cRes == nil || outLen < 27 { return nil, fmt.Errorf("VFS RPC Timeout") }
-	defer C.free(unsafe.Pointer(cRes))
-
-	resBytes := C.GoBytes(unsafe.Pointer(cRes), C.int(outLen))
-	respOpcode := resBytes[4]
-	if respOpcode == OP_ERROR { return nil, fmt.Errorf("Server VFS Error") }
+	payload, reqId := BuildVfsPacket(opcode, path, offset, reqLen, data)
 	
-	return resBytes[27:], nil 
+	resChan := make(chan []byte, 1)
+	pendingRequests.Store(reqId, resChan)
+	defer pendingRequests.Delete(reqId) 
+
+	cPayload := (*C.uint8_t)(C.CBytes(payload))
+	C.zhiauth_send_vfs_command_async(cPayload, C.size_t(len(payload)))
+	C.free(unsafe.Pointer(cPayload))
+
+	select {
+	case resBytes := <-resChan:
+		if len(resBytes) < 27 { return nil, fmt.Errorf("VFS Packet Corrupted") }
+		if resBytes[4] == OP_ERROR { return nil, fmt.Errorf("Server VFS Error") }
+		return resBytes[27:], nil
+		
+	case <-time.After(15 * time.Second):
+		return nil, fmt.Errorf("VFS RPC Timeout")
+	}
 }

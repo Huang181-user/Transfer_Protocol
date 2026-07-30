@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/huang/zhiauth_client/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
