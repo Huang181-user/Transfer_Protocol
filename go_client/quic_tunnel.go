@@ -18,7 +18,7 @@ import (
 
 type QuicTunnel struct {
 	AssignedPath string
-	Session      *quic.Conn
+	Session      *quic.Conn 
 	activeIp     string
 	authPort     string
 	dataPort     string
@@ -27,7 +27,7 @@ type QuicTunnel struct {
 	limiter      chan struct{}
 }
 
-func GetTimestamp() string { return time.Now().Format("2006-01-02 15:04:05.000000") }
+func GetTimestamp() string { return time.Now().Format("2006-01-02 15:04:05.000") }
 
 func NewQuicTunnel(ip, authPort, dataPort, authCmd string) *QuicTunnel {
 	return &QuicTunnel{activeIp: ip, authPort: authPort, dataPort: dataPort, authCmd: authCmd, limiter: make(chan struct{}, 5000)}
@@ -92,6 +92,7 @@ func (t *QuicTunnel) ReconnectSilently() error {
 	dataConn, err := quic.DialAddr(context.Background(), net.JoinHostPort(t.activeIp, t.dataPort), tlsConf, config)
 	if err != nil { return err }
 
+	// 🔥 TRỊ TẬN GỐC LỖI TYPE QUIC.CONN
 	t.Session = dataConn
 	go t.ListenForServerSignals()
 	return nil
@@ -103,6 +104,7 @@ func (t *QuicTunnel) ListenForServerSignals() {
 		stream, err := t.Session.AcceptStream(context.Background())
 		if err != nil { return }
 
+		// 🔥 TRỊ TẬN GỐC LỖI TYPE QUIC.STREAM (Truyền đúng con trỏ)
 		go func(s *quic.Stream) {
 			defer s.Close()
 			data, _ := io.ReadAll(s)
@@ -123,14 +125,18 @@ func (t *QuicTunnel) SendFsCommandRaw(payload []byte) ([]byte, error) {
 	defer func() { <-t.limiter }()
 
 	if t.Session == nil || t.Session.Context().Err() != nil {
-		log.Printf("[%s] [QUIC-TUNNEL] [AUTO-RECONNECT] Đứt kết nối dữ liệu QUIC. Đang nổ máy ngầm khôi phục...", GetTimestamp())
-		if err := t.ReconnectSilently(); err != nil { return nil, err }
+		log.Printf("[%s] [QUIC-TUNNEL] [AUTO-RECONNECT] Mất kết nối QUIC. Đang khôi phục...", GetTimestamp())
+		if err := t.ReconnectSilently(); err != nil { 
+			log.Printf("[QUIC-ERR] Không thể Reconnect: %v", err)
+			return nil, err 
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	stream, err := t.Session.OpenStreamSync(ctx)
 	if err != nil {
+		log.Printf("[QUIC-ERR] OpenStreamSync lỗi: %v", err)
 		if err := t.ReconnectSilently(); err == nil {
 			ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel2()
@@ -143,7 +149,10 @@ func (t *QuicTunnel) SendFsCommandRaw(payload []byte) ([]byte, error) {
 	stream.Close()
 
 	data, err := io.ReadAll(stream)
-	if err != nil { return nil, err }
+	if err != nil { 
+		log.Printf("[QUIC-ERR] Đọc luồng dữ liệu lỗi: %v", err)
+		return nil, err 
+	}
 
 	if len(data) < 27 { return nil, fmt.Errorf("QUIC packet broken") }
 	if data[4] == OP_ERROR { return nil, fmt.Errorf("Server VFS Error") }
@@ -151,13 +160,11 @@ func (t *QuicTunnel) SendFsCommandRaw(payload []byte) ([]byte, error) {
 	return data[27:], nil
 }
 
-// 🔥 FIX: Thay đổi var pingConn *quic.Conn để qua ải go build
 func (t *QuicTunnel) StartHeartbeat() {
 	tlsConf := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"zhiauth-raw-quic"}}
 	config := &quic.Config{MaxIdleTimeout: 120 * time.Second, KeepAlivePeriod: 10 * time.Second}
 
 	var pingConn *quic.Conn
-	var err error
 
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -165,11 +172,11 @@ func (t *QuicTunnel) StartHeartbeat() {
 	for range ticker.C {
 		if pingConn == nil || (*pingConn).Context().Err() != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			pingConn, err = quic.DialAddr(ctx, net.JoinHostPort(t.activeIp, t.authPort), tlsConf, config)
+			newConn, errDial := quic.DialAddr(ctx, net.JoinHostPort(t.activeIp, t.authPort), tlsConf, config)
 			cancel()
-			if err != nil {
-				continue 
-			}
+			if errDial != nil { continue }
+			// 🔥 GÁN ĐÚNG TYPE CHO CONNECTIONS CỦA NÝ
+			pingConn = newConn
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

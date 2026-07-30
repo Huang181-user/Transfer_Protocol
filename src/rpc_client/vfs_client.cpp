@@ -41,7 +41,7 @@ static size_t calculateAbsoluteMaxSocketBuffer() {
 
 VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu)
     : socket_(io_context_, udp::endpoint(udp::v4(), 0)), is_running_(false), 
-      recv_buffer_(4194304), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu) // 🔥 BUFF 4MB
+      recv_buffer_(4194304), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu)
 {
     asio::ip::udp::resolver resolver(io_context_);
     server_endpoint_ = *resolver.resolve(udp::v4(), server_ip, std::to_string(port)).begin();
@@ -64,12 +64,12 @@ bool VfsClient::start() {
     int safe_mtu = (mtu_ > 100) ? (mtu_ - 56) : 1350; 
     
     ikcp_wndsize(kcp_cb_, 65535, 65535); 
-    kcp_cb_->stream = 1; // 🔥 BẬT CHẾ ĐỘ TRUYỀN STREAM LUỒNG LIÊN TỤC
+    kcp_cb_->stream = 1; 
     
     ikcp_setmtu(kcp_cb_, safe_mtu); 
     kcp_cb_->rx_minrto = 2;
 
-    std::cout << "[" << getRealtimeLog() << "] [AUTO_TUNER_CLIENT] Dynamic Engine Initialized | Safe MTU: " << safe_mtu << std::endl;
+    std::cout << "[" << getRealtimeLog() << "] [SPEED_TUNER_CLIENT] KCP Engine Turbo Mode Initialized | MTU: " << safe_mtu << std::endl;
 
     io_thread_ = std::thread([this]() { receive_loop(); io_context_.run(); });
     timer_thread_ = std::thread(&VfsClient::kcp_update_loop, this);
@@ -107,7 +107,6 @@ void VfsClient::receive_loop() {
                     if (plaintext.size() >= sizeof(VfsPacketHeader)) {
                         VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
                         uint64_t req_id = hdr->session_id;
-                        // 🔥 ĐÁP THẲNG LÊN GO KHÔNG CẦN TÌM MAP NỮA!
                         zhiauth_cgo_on_response(req_id, plaintext.data(), plaintext.size());
                     }
                 }
@@ -119,7 +118,7 @@ void VfsClient::receive_loop() {
 
 void VfsClient::kcp_update_loop() {
     while (is_running_) {
-        std::this_thread::sleep_for(std::chrono::microseconds(5));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
         uint32_t current_clock = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         std::lock_guard<std::mutex> lock(kcp_mutex_);
         if (kcp_cb_) ikcp_update(kcp_cb_, current_clock);
@@ -127,7 +126,6 @@ void VfsClient::kcp_update_loop() {
 }
 
 void VfsClient::kcp_adaptive_tuner_loop() {
-    uint32_t last_acked_len = 0;
     while (is_running_) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         std::lock_guard<std::mutex> lock(kcp_mutex_);
@@ -136,31 +134,15 @@ void VfsClient::kcp_adaptive_tuner_loop() {
         int current_rtt = kcp_cb_->rx_srtt;
         if (current_rtt <= 0) current_rtt = 1;
 
-        uint32_t current_acked = kcp_cb_->ackedlen;
-        uint32_t bytes_per_sec = (current_acked >= last_acked_len) ? (current_acked - last_acked_len) : current_acked;
-        last_acked_len = current_acked;
-
-        double rtt_seconds = static_cast<double>(current_rtt) / 1000.0;
-        uint32_t bdp_bytes = static_cast<uint32_t>(bytes_per_sec * rtt_seconds);
-        int bdp_packets = (bdp_bytes / kcp_cb_->mss) + 128;
-        bdp_packets = std::clamp(bdp_packets, 256, 65535);
-
-        if (current_rtt < 10) {
-            ikcp_nodelay(kcp_cb_, 1, 1, 1, 1);
-            kcp_cb_->rx_minrto = 2;
-            ikcp_wndsize(kcp_cb_, bdp_packets, bdp_packets);
-        } else {
-            ikcp_nodelay(kcp_cb_, 1, 1, 2, 1);
-            kcp_cb_->rx_minrto = std::clamp(current_rtt * 2, 20, 200);
-            ikcp_wndsize(kcp_cb_, bdp_packets, bdp_packets);
-        }
+        // 🔥 THÁO XÍCH KCP: Ép Window bung nắp cực đại không giới hạn, RTO mượt mà!
+        ikcp_nodelay(kcp_cb_, 1, 1, 2, 1);
+        kcp_cb_->rx_minrto = std::clamp(current_rtt, 10, 100);
+        ikcp_wndsize(kcp_cb_, 65535, 65535); 
     }
 }
 
-// 🔥 FIX: Đổi trả về void, không return {} nữa!
 void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
     if (request_payload.size() < sizeof(VfsPacketHeader)) return;
-    
     std::vector<uint8_t> encrypted_payload;
     if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) return;
     {
