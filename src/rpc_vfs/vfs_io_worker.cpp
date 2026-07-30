@@ -10,7 +10,6 @@
 
 namespace fs = std::filesystem;
 
-// BỘ ĐỆM CACHE FILE DESCRIPTOR TỰ ĐỘNG
 static std::unordered_map<std::string, int> g_fd_cache;
 static std::mutex g_fd_mutex;
 
@@ -22,7 +21,6 @@ static int get_or_open_fd(const std::string& path, int flags, mode_t mode = 0) {
     }
     int fd = open(path.c_str(), flags, mode);
     if (fd >= 0) {
-        // Giới hạn cache tối đa 50 file mở cùng lúc
         if (g_fd_cache.size() > 50) {
             auto first_it = g_fd_cache.begin();
             close(first_it->second);
@@ -65,7 +63,12 @@ bool VfsIoWorker::list_directory(const std::string& path, std::string& out_list)
     try {
         std::string list_res = "";
         for (const auto& entry : fs::directory_iterator(path)) {
-            list_res += entry.path().filename().string() + "," + (entry.is_directory() ? "DIR" : "REG") + "|";
+            std::error_code ec;
+            // 🔥 ÉP SERVER TRẢ VỀ DUNG LƯỢNG CHO CLIENT RAM CACHE
+            uint64_t size = entry.is_regular_file(ec) ? entry.file_size(ec) : 0;
+            list_res += entry.path().filename().string() + "," + 
+                        (entry.is_directory(ec) ? "DIR" : "REG") + "," +
+                        std::to_string(size) + ",33188|";
         }
         out_list = list_res;
         return true;
