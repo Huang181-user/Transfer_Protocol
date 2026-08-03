@@ -4,27 +4,26 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"time"
 )
 
 type ClientConfig struct {
-	ServerPort   string `json:"server_port"`
 	AuthPort     string `json:"auth_port"`
-	KcpPort      string `json:"kcp_port"`
 	LocalPort    string `json:"local_port"`
 	ServerLanIp  string `json:"server_lan_ip"`
 	ServerTsIp   string `json:"server_ts_ip"`
 	SniDomain    string `json:"sni_domain"`
 	CustomMtu    int    `json:"custom_mtu"`
 	MasterSymKey string `json:"master_sym_key"`
-	ClientLanIp  string 
-	ClientTsIp   string 
+	ClientLanIp  string
+	ClientTsIp   string
 }
 
 func LoadClientConfig(filepath string) (*ClientConfig, error) {
-	log.Printf("[DEBUG] [config_handler.go:LoadClientConfig] -> Attempting to parse descriptor node on disk: %s", filepath)
+	log.Printf("[%s] [DEBUG] [config_handler.go:LoadClientConfig] -> Attempting to parse descriptor node on disk: %s", time.Now().Format("2006-01-02 15:04:05.000"), filepath)
 	file, err := os.Open(filepath)
 	if err != nil {
-		log.Printf("[ERROR] [config_handler.go:LoadClientConfig] -> Target json matrix configuration unreadable.")
+		log.Printf("[%s] [ERROR] [config_handler.go:LoadClientConfig] -> Target json matrix configuration unreadable.", time.Now().Format("2006-01-02 15:04:05.000"))
 		return nil, err
 	}
 	defer file.Close()
@@ -35,6 +34,6 @@ func LoadClientConfig(filepath string) (*ClientConfig, error) {
 		return nil, err
 	}
 
-	log.Printf("[SUCCESS] [config_handler.go:LoadClientConfig] -> Struct aligned. Target Server -> LAN: %s | TS: %s | QUIC Data Port: %s", cfg.ServerLanIp, cfg.ServerTsIp, cfg.ServerPort)
+	log.Printf("[%s] [SUCCESS] [config_handler.go:LoadClientConfig] -> Struct aligned. Target Server -> LAN: %s | TS: %s | Auth Port: %s", time.Now().Format("2006-01-02 15:04:05.000"), cfg.ServerLanIp, cfg.ServerTsIp, cfg.AuthPort)
 	return &cfg, nil
 }

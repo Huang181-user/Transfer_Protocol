@@ -39,7 +39,7 @@ func main() {
 	cfg.ClientLanIp, cfg.ClientTsIp, _ = AutoDetectClientIPs()
 	activeIp := DiscoverBestRoute(cfg)
 	if activeIp == "" {
-		log.Fatal("[FATAL] Server biệt tích!")
+		log.Fatalf("[%s] [FATAL] Server biệt tích!", time.Now().Format("2006-01-02 15:04:05.000"))
 	}
 
 	pingFunc := func(targetSize int) bool {
@@ -51,19 +51,20 @@ func main() {
 		return cmd.Run() == nil
 	}
 	bestMtu := DiscoverBestHuangMTU(pingFunc)
-	log.Printf("[%s] [MTU-LOCKED] Chốt sổ cấu hình MTU toàn hệ thống: %d bytes", ts, bestMtu)
+	log.Printf("[%s] [MTU-LOCKED] Chốt sổ cấu hình MTU toàn hệ thống: %d bytes", time.Now().Format("2006-01-02 15:04:05.000"), bestMtu)
 
 	hwID := GetHardwareFingerprint()
 	authCmd := fmt.Sprintf("AUTH_REQ|USER:%s|PASS:%s|LAN:%s|TS:%s|HWID:%s", user, pass, cfg.ClientLanIp, cfg.ClientTsIp, hwID)
 
-	tunnel := NewQuicTunnel(activeIp, cfg.AuthPort, cfg.ServerPort, authCmd)
+	// KHỞI TẠO ĐƯỜNG HẦM (Bỏ tham số Port tĩnh)
+	tunnel := NewQuicTunnel(activeIp, cfg.AuthPort, authCmd)
 	err := tunnel.ReconnectSilently()
 	if err != nil {
 		os.Remove(sessionPath)
-		log.Fatalf("❌ [ACCESS_DENIED] Xác thực sập: %v", err)
+		log.Fatalf("[%s] ❌ [ACCESS_DENIED] Xác thực sập: %v", time.Now().Format("2006-01-02 15:04:05.000"), err)
 	}
 
-	// 🔥 Kích nổ luồng nhịp tim ưu tiên chạy ngầm
+	// Kích nổ luồng nhịp tim
 	go tunnel.StartHeartbeat()
 
 	if !exists {
@@ -72,9 +73,10 @@ func main() {
 
 	log.Printf("[%s] [CGO-INIT] Đang kích hoạt động cơ C++ KCP...", time.Now().Format("2006-01-02 15:04:05.000000"))
 
-	kcpPortInt, _ := strconv.Atoi(cfg.KcpPort)
+	// 🔥 TRÍCH XUẤT PORT KCP VỪA NHẬN TỪ SERVER ĐỂ NẠP CHO LÕI C++
+	kcpPortInt, _ := strconv.Atoi(tunnel.AssignedKcpPort)
 	if !InitCppSDK(activeIp, kcpPortInt, cfg.MasterSymKey, bestMtu) {
-		log.Fatal("[FATAL] Lõi C++ từ chối khởi động!")
+		log.Fatalf("[%s] [FATAL] Lõi C++ từ chối khởi động!", time.Now().Format("2006-01-02 15:04:05.000"))
 	}
 
 	vfsPath := filepath.Join(mountPath, "VFS_DRIVE")
@@ -88,7 +90,7 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		log.Println("\n[SHUTDOWN] Đang dọn dẹp hệ thống. Tháo đĩa an toàn...")
+		log.Printf("\n[%s] [SHUTDOWN] Đang dọn dẹp hệ thống. Tháo đĩa an toàn...", time.Now().Format("2006-01-02 15:04:05.000"))
 		ShutdownCppSDK()
 		exec.Command("sudo", "fusermount", "-uz", vfsPath).Run()
 		exec.Command("sudo", "fusermount", "-uz", quicPath).Run()
@@ -98,15 +100,12 @@ func main() {
 	log.Printf("[%s] [SYSTEM-READY] Trục kép VFS đã sẵn sàng. Tiến hành nổ máy Dual-Mount!", time.Now().Format("2006-01-02 15:04:05.000000"))
 	StartDualFuseSubsystem(mountPath, tunnel.AssignedPath, tunnel)
 
-	// =========================================================================
-	// 🔥 QUÉT LỆNH TỪ TERMINAL ĐỂ ĐĂNG XUẤT
-	// =========================================================================
 	fmt.Println("\n✅ Hệ thống đã chạy ngầm. Gõ 'logout' hoặc 'exit' để đăng xuất an toàn.")
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		cmd := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		if cmd == "logout" || cmd == "exit" {
-			log.Println("\n[LOGOUT] Đang tiến hành đăng xuất và xóa thẻ bài Token...")
+			log.Printf("\n[%s] [LOGOUT] Đang tiến hành đăng xuất và xóa thẻ bài Token...", time.Now().Format("2006-01-02 15:04:05.000"))
 			os.Remove(sessionPath)
 			sigChan <- syscall.SIGTERM
 			break

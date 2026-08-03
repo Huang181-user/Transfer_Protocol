@@ -33,7 +33,10 @@ const IUINT32 IKCP_CMD_WINS = 84;		// cmd: window size (tell)
 const IUINT32 IKCP_ASK_SEND = 1;		// need to send IKCP_CMD_WASK
 const IUINT32 IKCP_ASK_TELL = 2;		// need to send IKCP_CMD_WINS
 const IUINT32 IKCP_WND_SND = 32;
-const IUINT32 IKCP_WND_RCV = 128;       // must >= max fragment size
+
+// 🔥 NÂNG TỪ 128 LÊN 4096 ĐỂ KCP CHO PHÉP GỬI FILE VƯỢT QUÁ 128KB!
+const IUINT32 IKCP_WND_RCV = 4096;       // must >= max fragment size
+
 const IUINT32 IKCP_MTU_DEF = 1400;
 const IUINT32 IKCP_ACK_FAST	= 3;
 const IUINT32 IKCP_INTERVAL	= 100;
