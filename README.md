@@ -105,7 +105,7 @@ chmod +x build_client.sh
 
 ```
 
-[⬆ Về đầu trang](https://www.google.com/search?q=%23top)
+[⬆ Về đầu trang]#top
 
 ---
 
