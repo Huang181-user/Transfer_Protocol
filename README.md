@@ -289,5 +289,3 @@ git checkout Client_Android
 ./gradlew assembleDebug
 
 ```
-
-```
