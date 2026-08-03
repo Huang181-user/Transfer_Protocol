@@ -3,9 +3,8 @@
 <div align="center">
 
 # 🚀 ZhiAuth Hybrid Dual-Mount Client v6.0
-### (`Client_Linux` Branch)
 
-**High-Performance, Zero-Latency C++/Go VFS Client for Linux Environment**
+### **High-Performance, Zero-Latency C++/Go VFS Client for Linux Environment**
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![C++ Standard](https://img.shields.io/badge/C%2B%2B-20-emerald.svg)](https://en.cppreference.com/w/cpp/20)
