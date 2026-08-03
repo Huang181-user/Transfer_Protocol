@@ -1,4 +1,3 @@
-```markdown
 # 🚀 Transfer Protocol / ZhiAuth Ecosystem
 
 [ vi **Tiếng Việt**](#vietnamese) | [ en **English**](#english) | [ cn **中文**](#chinese)
@@ -44,7 +43,6 @@
 * **Go Mobile Integration**: Đóng gói thư viện Go Mobile (`quicdroid.aar`) giúp xử lý kết nối QUIC mượt mà trên môi trường di động.
 * **Storage Access Framework (SAF)**: Tích hợp `HuangDocumentsProvider` giúp duyệt, đọc/ghi và quản lý tệp từ xa trực tiếp trong ứng dụng Quản lý tệp (Files) gốc của Android.
 
----
 
 ### 🛠️ Hướng dẫn biên dịch & Cài đặt
 
