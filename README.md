@@ -105,7 +105,7 @@ chmod +x build_client.sh
 
 ```
 
-[⬆ Về đầu trang]#top
+
 
 ---
 
@@ -181,7 +181,7 @@ chmod +x build_client.sh
 
 ```
 
-[⬆ Back to Top](https://www.google.com/search?q=%23top)
+
 
 ---
 
@@ -257,6 +257,6 @@ chmod +x build_client.sh
 
 ```
 
-[⬆ 返回顶部](https://www.google.com/search?q=%23top)
+
 
 ---
