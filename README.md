@@ -108,6 +108,7 @@ git checkout Client_Android
 
 ---
 
+<a id="english"></a>
 ## en English
 
 ### 📖 Overview
@@ -199,6 +200,7 @@ git checkout Client_Android
 
 ---
 
+<a id="chinese"></a>
 ## 🇨🇳 中文
 
 ### 📖 项目简介
