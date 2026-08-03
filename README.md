@@ -20,7 +20,7 @@
 | **`Client_Linux`** | **Linux Client** | Client chạy trên Linux, hỗ trợ FUSE/VFS, giao thức KCP/QUIC Tunneling, tương thích daemon/systemd. |
 | **`Client_Android`** | **Android Client** | Client di động phát triển bằng Jetpack Compose, C++ NDK (`zhiauth_jni`, Libsodium, KCP), Go Mobile (`quicdroid.aar`), tích hợp Storage Access Framework (`HuangDocumentsProvider`). |
 
----
+
 
 ### ✨ Tính năng nổi bật
 
@@ -43,6 +43,7 @@
 * **Go Mobile Integration**: Đóng gói thư viện Go Mobile (`quicdroid.aar`) giúp xử lý kết nối QUIC mượt mà trên môi trường di động.
 * **Storage Access Framework (SAF)**: Tích hợp `HuangDocumentsProvider` giúp duyệt, đọc/ghi và quản lý tệp từ xa trực tiếp trong ứng dụng Quản lý tệp (Files) gốc của Android.
 
+---
 
 ### 🛠️ Hướng dẫn biên dịch & Cài đặt
 
