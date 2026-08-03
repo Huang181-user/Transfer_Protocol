@@ -291,5 +291,3 @@ git checkout Client_Android
 ```
 
 ```
-
-```
