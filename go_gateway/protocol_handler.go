@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -37,17 +38,18 @@ type UserContext struct {
 
 var sessionCache sync.Map
 
+// 🔥 GẮN LẠI DẤU CON TRỎ (*) CHO CHUẨN VỚI QUIC-GO
 func HandleIncomingStream(stream *quic.Stream, port string, conn *quic.Conn) {
-	// Sửa (*stream) thành stream nguyên gốc!
-	defer stream.Close()
-	defer stream.CancelRead(0)
+	defer (*stream).Close()
+	defer (*stream).CancelRead(0)
 
+	// Stream vốn dĩ là con trỏ, nên truyền thẳng vào ReadAll
 	data, err := io.ReadAll(stream)
 	if err != nil && err != io.EOF {
 		return
 	}
 
-	remoteIP := conn.RemoteAddr().(*net.UDPAddr).IP.String()
+	remoteIP := (*conn).RemoteAddr().(*net.UDPAddr).IP.String()
 
 	if ctxVal, exists := sessionCache.Load(remoteIP); exists {
 		userCtx := ctxVal.(*UserContext)
@@ -58,7 +60,7 @@ func HandleIncomingStream(stream *quic.Stream, port string, conn *quic.Conn) {
 	quicDataPortStr := strconv.Itoa(globalConfig.Network.QuicDataPort)
 
 	if port == authPortStr && string(data) == "AUTH_REQ|PING" {
-		stream.Write([]byte("PONG"))
+		(*stream).Write([]byte("PONG"))
 		return
 	}
 
@@ -68,7 +70,7 @@ func HandleIncomingStream(stream *quic.Stream, port string, conn *quic.Conn) {
 		ctxVal, exists := sessionCache.Load(remoteIP)
 		if !exists {
 			log.Printf("[SECURITY-ALERT] Ngắt luồng VFS trái phép từ IP: %s", remoteIP)
-			stream.Write([]byte("FS_ERR|EACCES"))
+			(*stream).Write([]byte("FS_ERR|EACCES"))
 			return
 		}
 
@@ -96,7 +98,7 @@ func HandleIncomingStream(stream *quic.Stream, port string, conn *quic.Conn) {
 		if err := binary.Read(connUDS, binary.LittleEndian, &respSz); err == nil {
 			respData := make([]byte, respSz)
 			io.ReadFull(connUDS, respData)
-			stream.Write(respData)
+			(*stream).Write(respData)
 		}
 	}
 }
@@ -123,37 +125,6 @@ func handleSecurityAuthentication(stream *quic.Stream, payload string, remoteIP 
 	defer C.free(unsafe.Pointer(cTs))
 	defer C.free(unsafe.Pointer(cHwid))
 
-	isReconnect := false
-	if ctxVal, exists := sessionCache.Load(remoteIP); exists {
-		oldCtx := ctxVal.(*UserContext)
-		if oldCtx.Username == user { 
-			isReconnect = true
-			atomic.StoreInt64(&oldCtx.LastActive, time.Now().Unix())
-			log.Printf("[AUTH-RENEW] Hầm KCP vắt kiệt băng thông làm rớt QUIC. Đã cứu nạn thành công đường truyền QUIC cho User %s!", user)
-		}
-	}
-
-	if !isReconnect {
-		if ctxVal, exists := sessionCache.Load(lan); exists {
-			oldCtx := ctxVal.(*UserContext)
-			exec.Command("sudo", "pkill", "-9", "-u", oldCtx.Username, "-f", "zhiauth_kcp_worker").Run()
-
-			cOldPath := C.CString(oldCtx.SharedPath)
-			defer C.free(unsafe.Pointer(cOldPath))
-
-			if oldCtx.LanIP != "" && oldCtx.LanIP != "NONE" {
-				cOldLan := C.CString(oldCtx.LanIP)
-				C.zhiauth_revoke_access(cOldLan, cOldPath)
-				C.free(unsafe.Pointer(cOldLan))
-			}
-			if oldCtx.TsIP != "" && oldCtx.TsIP != "NONE" {
-				cOldTs := C.CString(oldCtx.TsIP)
-				C.zhiauth_revoke_access(cOldTs, cOldPath)
-				C.free(unsafe.Pointer(cOldTs))
-			}
-		}
-	}
-
 	resultCStr := C.zhiauth_authenticate_and_trigger(cUser, cPass, cLan, cTs, cHwid)
 	resultStr := C.GoString(resultCStr)
 
@@ -162,18 +133,21 @@ func handleSecurityAuthentication(stream *quic.Stream, payload string, remoteIP 
 		if len(resParts) >= 3 {
 			dbUser, dbPath := resParts[1], resParts[2]
 
-			if isReconnect {
-				stream.Write([]byte("AUTH_SUCCESS|" + dbPath))
-				return
-			}
-
 			udsPath := "/tmp/zhiauth_kcp_" + dbUser + ".sock"
-			os.Remove(udsPath)
-			kcpWorkerCmd := exec.Command("sudo", "-n", "-u", dbUser, "/usr/local/bin/zhiauth_kcp_worker", udsPath)
-			if err := kcpWorkerCmd.Start(); err != nil {
-				log.Printf("[KCP-WORKER-FAIL] ❌ Lỗi gọi tiến trình con: %v", err)
-				stream.Write([]byte("AUTH_FAILED"))
-				return
+			// 🔥 MULTI-CLIENT: Khám xét xem Worker đã có mặt chưa, nếu có thì xài chung!
+			connTest, errTest := net.DialTimeout("unix", udsPath, 500*time.Millisecond)
+			if errTest == nil {
+				connTest.Close()
+				log.Printf("[%s] [MULTI-CLIENT] 🤝 Worker cho user '%s' đã khởi chạy. Cho phép Client IP %s dùng chung tiến trình!", time.Now().Format("2006-01-02 15:04:05.000"), dbUser, remoteIP)
+			} else {
+				os.Remove(udsPath)
+				kcpWorkerCmd := exec.Command("sudo", "-n", "-u", dbUser, "/usr/local/bin/zhiauth_kcp_worker", udsPath)
+				if err := kcpWorkerCmd.Start(); err != nil {
+					log.Printf("[%s] [KCP-WORKER-FAIL] ❌ Lỗi gọi tiến trình con: %v", time.Now().Format("2006-01-02 15:04:05.000"), err)
+					(*stream).Write([]byte("AUTH_FAILED"))
+					return
+				}
+				log.Printf("[%s] [MULTI-CLIENT] 🚀 Đã spawn KCP Worker tiên phong cho user '%s'", time.Now().Format("2006-01-02 15:04:05.000"), dbUser)
 			}
 
 			newCtx := &UserContext{
@@ -187,42 +161,42 @@ func handleSecurityAuthentication(stream *quic.Stream, payload string, remoteIP 
 			sessionCache.Store(ts, newCtx)
 			sessionCache.Store(remoteIP, newCtx)
 
-			log.Printf("[AUTH-SUCCESS] Phê duyệt IP: %s | User: %s", remoteIP, dbUser)
-			stream.Write([]byte("AUTH_SUCCESS|" + dbPath))
+			// 🔥 CẬP NHẬT: Nhét Port QUIC và KCP vào gói tin trả về
+			log.Printf("[%s] [AUTH-SUCCESS] Phê duyệt IP: %s | User: %s | Cấp phát Port Động: QUIC=%d, KCP=%d", time.Now().Format("2006-01-02 15:04:05.000"), remoteIP, dbUser, globalConfig.Network.QuicDataPort, globalConfig.Network.KcpDataPort)
+			authResp := fmt.Sprintf("AUTH_SUCCESS|%s|%d|%d", dbPath, globalConfig.Network.QuicDataPort, globalConfig.Network.KcpDataPort)
+			(*stream).Write([]byte(authResp))
 		}
 	} else {
-		log.Printf("[AUTH-FAILED] Từ chối xác thực IP: %s", remoteIP)
-		stream.Write([]byte("AUTH_FAILED"))
+		log.Printf("[%s] [AUTH-FAILED] Từ chối xác thực IP: %s", time.Now().Format("2006-01-02 15:04:05.000"), remoteIP)
+		(*stream).Write([]byte("AUTH_FAILED"))
 	}
 }
 
-func ExecuteSessionKill(userCtx *UserContext) {
-	exec.Command("sudo", "pkill", "-9", "-u", userCtx.Username, "-f", "zhiauth_kcp_worker").Run()
-	os.Remove("/tmp/zhiauth_kcp_" + userCtx.Username + ".sock")
+func ExecuteSessionKill(username string, sharedPath string) {
+	exec.Command("sudo", "pkill", "-9", "-u", username, "-f", "zhiauth_kcp_worker").Run()
+	os.Remove("/tmp/zhiauth_kcp_" + username + ".sock")
 
-	cPath := C.CString(userCtx.SharedPath)
+	cPath := C.CString(sharedPath)
 	defer C.free(unsafe.Pointer(cPath))
 
-	if userCtx.LanIP != "" && userCtx.LanIP != "NONE" {
-		cLan := C.CString(userCtx.LanIP)
-		C.zhiauth_revoke_access(cLan, cPath)
-		C.free(unsafe.Pointer(cLan))
-		sessionCache.Delete(userCtx.LanIP)
-	}
-	if userCtx.TsIP != "" && userCtx.TsIP != "NONE" {
-		cTs := C.CString(userCtx.TsIP)
-		C.zhiauth_revoke_access(cTs, cPath)
-		C.free(unsafe.Pointer(cTs))
-		sessionCache.Delete(userCtx.TsIP)
-	}
-	
 	sessionCache.Range(func(key, value interface{}) bool {
-		if value.(*UserContext) == userCtx {
+		userCtx := value.(*UserContext)
+		if userCtx.Username == username {
+			if userCtx.LanIP != "" && userCtx.LanIP != "NONE" {
+				cLan := C.CString(userCtx.LanIP)
+				C.zhiauth_revoke_access(cLan, cPath)
+				C.free(unsafe.Pointer(cLan))
+			}
+			if userCtx.TsIP != "" && userCtx.TsIP != "NONE" {
+				cTs := C.CString(userCtx.TsIP)
+				C.zhiauth_revoke_access(cTs, cPath)
+				C.free(unsafe.Pointer(cTs))
+			}
 			sessionCache.Delete(key)
 		}
 		return true
 	})
-	log.Printf("[WATCHDOG-EXEC] 💀 Đã tiêu diệt KCP và BÍT KÍN UFW đối với user: %s", userCtx.Username)
+	log.Printf("[WATCHDOG-EXEC] 💀 Đã tiêu diệt KCP Worker và BÍT KÍN UFW đối với toàn bộ truy cập của user: %s", username)
 }
 
 func TriggerServerSessionCleanup(remoteIP string) {
@@ -236,13 +210,11 @@ func StartGlobalWatchdog() {
 			time.Sleep(30 * time.Second)
 			now := time.Now().Unix()
 			
-			checked := make(map[*UserContext]bool)
+			userMaxActive := make(map[string]int64)
+			userPaths := make(map[string]string)
 			
 			sessionCache.Range(func(key, value interface{}) bool {
 				userCtx := value.(*UserContext)
-				if checked[userCtx] { return true }
-				checked[userCtx] = true
-				
 				lastActQUIC := atomic.LoadInt64(&userCtx.LastActive)
 				
 				cLan := C.CString(userCtx.LanIP)
@@ -258,12 +230,19 @@ func StartGlobalWatchdog() {
 				latestActivity := lastActQUIC
 				if lastActKCP > latestActivity { latestActivity = lastActKCP }
 
-				if now - latestActivity > 120 {
-					log.Printf("[WATCHDOG-ALERT] 🚨 Mất hoàn toàn tín hiệu từ User %s (Cả QUIC lẫn KCP). Tiến hành càn quét!", userCtx.Username)
-					ExecuteSessionKill(userCtx)
+				if currentMax, exists := userMaxActive[userCtx.Username]; !exists || latestActivity > currentMax {
+					userMaxActive[userCtx.Username] = latestActivity
+					userPaths[userCtx.Username] = userCtx.SharedPath
 				}
 				return true
 			})
+			
+			for username, latestAct := range userMaxActive {
+				if now - latestAct > 120 {
+					log.Printf("[WATCHDOG-ALERT] 🚨 Mất tín hiệu TOÀN BỘ Clients của User '%s'. Tiến hành càn quét!", username)
+					ExecuteSessionKill(username, userPaths[username])
+				}
+			}
 		}
 	}()
 }

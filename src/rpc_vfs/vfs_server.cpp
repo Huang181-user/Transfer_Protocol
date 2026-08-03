@@ -35,11 +35,6 @@ static bool recv_all(int fd, void* buf, size_t len) {
     while (len > 0) { ssize_t n = recv(fd, p, len, MSG_WAITALL); if (n <= 0) return false; p += n; len -= n; }
     return true;
 }
-static size_t calculateAbsoluteMaxServerBuffer() {
-    struct sysinfo info; size_t free_ram_buf = 1073741824;
-    if (sysinfo(&info) == 0) { free_ram_buf = info.freeram * info.mem_unit * 0.80; }
-    return std::clamp(free_ram_buf, static_cast<size_t>(512 * 1024 * 1024), static_cast<size_t>(2048ULL * 1024 * 1024));
-}
 
 void vfs_register_ip_uds(const std::string& ip, const std::string& uds_path) {
     std::lock_guard<std::mutex> lock(g_kcp_ip_uds_mutex); g_kcp_ip_uds_map[ip] = uds_path;
@@ -48,14 +43,13 @@ std::string vfs_get_uds_by_ip(const std::string& ip) {
     std::lock_guard<std::mutex> lock(g_kcp_ip_uds_mutex); return g_kcp_ip_uds_map.count(ip) ? g_kcp_ip_uds_map[ip] : "";
 }
 
-VfsServer::VfsServer(uint16_t port, const std::string& master_sym_key) : socket_(io_context_, udp::endpoint(udp::v4(), port)), is_running_(false), recv_buffer_(4194304) {
+VfsServer::VfsServer(uint16_t port, const std::string& master_sym_key) : socket_(io_context_, udp::endpoint(udp::v4(), port)), is_running_(false), recv_buffer_(65536) {
     master_sym_key_ = master_sym_key;
-    size_t auto_buf = calculateAbsoluteMaxServerBuffer();
-    try { socket_.set_option(asio::socket_base::receive_buffer_size(auto_buf)); socket_.set_option(asio::socket_base::send_buffer_size(auto_buf)); } catch (...) {}
+    // Tăng kịch kim bộ đệm OS Socket lên 16MB để hứng bão KCP
+    try { socket_.set_option(asio::socket_base::receive_buffer_size(16777216)); socket_.set_option(asio::socket_base::send_buffer_size(16777216)); } catch (...) {}
 }
 VfsServer::~VfsServer() { stop(); }
 
-// HÀM MỚI: Go hỏi C++ xem IP này có hoạt động KCP không?
 uint64_t VfsServer::get_last_active_time(const std::string& ip) {
     std::lock_guard<std::mutex> lock(session_mutex_);
     uint64_t max_time = 0;
@@ -68,7 +62,7 @@ uint64_t VfsServer::get_last_active_time(const std::string& ip) {
 }
 
 static void start_task_worker() {
-    if (g_task_running) return; g_task_running = true; size_t num_threads = 16;
+    if (g_task_running) return; g_task_running = true; size_t num_threads = 8;
     for (size_t i = 0; i < num_threads; ++i) {
         g_worker_pool.emplace_back([]() {
             while (g_task_running) {
@@ -91,13 +85,13 @@ static void stop_task_worker() {
 }
 
 void VfsServer::start() {
-    if (is_running_) return; is_running_ = true; sessions_.reserve(1000); start_task_worker();
-    ZHI_LOG_INFO("Kích nổ Gateway UDP Proxy (Port " + std::to_string(socket_.local_endpoint().port()) + ") - HYPER KCP Engine Operational");
-    io_thread_ = std::thread([this]() { receive_loop(); io_context_.run(); });
+    if (is_running_) return; is_running_ = true; sessions_.reserve(100); start_task_worker();
+    ZHI_LOG_INFO("Kích nổ Gateway UDP Proxy (Blocking I/O Mode) - HYPER KCP Engine Operational");
+    io_thread_ = std::thread(&VfsServer::receive_loop, this);
     timer_thread_ = std::thread(&VfsServer::kcp_update_loop, this);
 }
 void VfsServer::stop() {
-    is_running_ = false; io_context_.stop();
+    is_running_ = false; socket_.close();
     if (io_thread_.joinable()) io_thread_.join();
     if (timer_thread_.joinable()) timer_thread_.join(); stop_task_worker();
 }
@@ -108,43 +102,51 @@ int VfsServer::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* 
     return 0;
 }
 
+// 🔥 VÒNG LẶP HÚT CẠN THẦN THÁNH: Bỏ Async, dùng Blocking Recv bắt từng gói trong vòng 0.001 ms!
 void VfsServer::receive_loop() {
-    socket_.async_receive_from(asio::buffer(recv_buffer_), sender_endpoint_, [this](std::error_code ec, std::size_t bytes_recvd) {
-        if (!ec && bytes_recvd > 0) {
-            std::string client_key = sender_endpoint_.address().to_string() + ":" + std::to_string(sender_endpoint_.port());
-            std::lock_guard<std::mutex> lock(session_mutex_);
-            auto it = sessions_.find(client_key);
-            if (it == sessions_.end()) {
-                KcpSession new_session;
-                new_session.user_ctx = std::make_shared<KcpUserContext>(KcpUserContext{this, sender_endpoint_});
-                new_session.kcp_cb = ikcp_create(0x11223344, new_session.user_ctx.get());
-                new_session.kcp_cb->output = kcp_output_callback;
-                ikcp_nodelay(new_session.kcp_cb, 1, 10, 2, 1); ikcp_wndsize(new_session.kcp_cb, 65535, 65535);
-                ikcp_setmtu(new_session.kcp_cb, 1350); new_session.kcp_cb->rx_minrto = 30; new_session.kcp_cb->dead_link = 200;
-                new_session.uds_path = vfs_get_uds_by_ip(sender_endpoint_.address().to_string());
-                sessions_[client_key] = new_session; 
-                it = sessions_.find(client_key);
-            }
-            
-            // 🎯 LÝ THUYẾT CỦA NÝ ĐƯỢC ÁP DỤNG TẠI ĐÂY: Có DATA là Cập nhật nhịp tim!
-            it->second.last_active_time = time(NULL);
-            
-            ikcp_input(it->second.kcp_cb, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
-            
-            int len;
-            while ((len = ikcp_peeksize(it->second.kcp_cb)) > 0) {
-                std::vector<uint8_t> encrypted_payload(len);
-                ikcp_recv(it->second.kcp_cb, reinterpret_cast<char*>(encrypted_payload.data()), len);
-                KcpSession sess_copy = it->second;
-                {
-                    std::lock_guard<std::mutex> tlock(g_task_mutex);
-                    g_task_queue.push([this, sess_copy, encrypted_payload]() { process_kcp_payload(sess_copy, encrypted_payload); });
-                }
-                g_task_cv.notify_one();
-            }
+    while (is_running_) {
+        std::error_code ec;
+        size_t bytes_recvd = socket_.receive_from(asio::buffer(recv_buffer_), sender_endpoint_, 0, ec);
+        
+        if (ec || bytes_recvd == 0) {
+            if (ec == asio::error::would_block || ec == asio::error::try_again) continue;
+            break; 
         }
-        if (is_running_) receive_loop();
-    });
+
+        std::string client_key = sender_endpoint_.address().to_string() + ":" + std::to_string(sender_endpoint_.port());
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        auto it = sessions_.find(client_key);
+        if (it == sessions_.end()) {
+            KcpSession new_session;
+            new_session.user_ctx = std::make_shared<KcpUserContext>(KcpUserContext{this, sender_endpoint_});
+            new_session.kcp_cb = ikcp_create(0x11223344, new_session.user_ctx.get());
+            new_session.kcp_cb->output = kcp_output_callback;
+            
+            // 🔥 Tối ưu siêu tốc, mở toang cửa sổ!
+            ikcp_nodelay(new_session.kcp_cb, 1, 10, 2, 1); 
+            ikcp_wndsize(new_session.kcp_cb, 4096, 4096);
+            
+            ikcp_setmtu(new_session.kcp_cb, 1350); new_session.kcp_cb->rx_minrto = 10; new_session.kcp_cb->dead_link = 200;
+            new_session.uds_path = vfs_get_uds_by_ip(sender_endpoint_.address().to_string());
+            sessions_[client_key] = new_session; 
+            it = sessions_.find(client_key);
+        }
+        
+        it->second.last_active_time = time(NULL);
+        ikcp_input(it->second.kcp_cb, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
+        
+        int len;
+        while ((len = ikcp_peeksize(it->second.kcp_cb)) > 0) {
+            std::vector<uint8_t> encrypted_payload(len);
+            ikcp_recv(it->second.kcp_cb, reinterpret_cast<char*>(encrypted_payload.data()), len);
+            KcpSession sess_copy = it->second;
+            {
+                std::lock_guard<std::mutex> tlock(g_task_mutex);
+                g_task_queue.push([this, sess_copy, encrypted_payload]() { process_kcp_payload(sess_copy, encrypted_payload); });
+            }
+            g_task_cv.notify_one();
+        }
+    }
 }
 
 void VfsServer::process_kcp_payload(KcpSession session_copy, std::vector<uint8_t> encrypted_payload) {
@@ -173,7 +175,7 @@ void VfsServer::process_kcp_payload(KcpSession session_copy, std::vector<uint8_t
     struct sockaddr_un addr; memset(&addr, 0, sizeof(addr)); addr.sun_family = AF_UNIX; 
     strncpy(addr.sun_path, session_copy.uds_path.c_str(), sizeof(addr.sun_path) - 1);
     
-    struct timeval tv; tv.tv_sec = 30; tv.tv_usec = 0;
+    struct timeval tv; tv.tv_sec = 10; tv.tv_usec = 0;
     setsockopt(uds_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
     setsockopt(uds_fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 
