@@ -1,10 +1,10 @@
 <a id="top"></a>
 
 <div align="center">
-# 📱 Transfer Protocol / ZhiAuth - Client Android
+# 🚀 ZhiAuth Hybrid Dual-Mount Client v6.0
 
+**High-Performance, Zero-Latency C++/Go VFS Client for Linux Environment**
 
- 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![C++ Standard](https://img.shields.io/badge/C%2B%2B-20-emerald.svg)](https://en.cppreference.com/w/cpp/20)
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8.svg)](https://golang.org/)
