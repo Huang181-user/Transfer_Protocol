@@ -1,0 +1,36 @@
+*.iml
+.gradle
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Chặn toàn bộ các file txt
+*.txt
+# !README.txt (Bỏ comment dòng này nếu muốn giữ lại file README.txt)
+
+# ===== BẢO MẬT GIAO THỨC ZHIAUTH =====
+# Chặn rác NDK Libsodium
+app/src/main/cpp/libsodium/lib/
+app/src/main/cpp/libsodium/include/
+
+# Chặn file cấu hình tĩnh
+app/src/main/assets/config.json
+
+# Chặn toàn bộ chìa khóa, chứng chỉ, chữ ký Android
+*.jks
+*.keystore
+*.key
+*.pem
+
+# Chặn file giấu thông số
+**/AppSecrets.kt
+google-services.json
