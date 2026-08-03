@@ -1,5 +1,5 @@
 <div align="center">
-# 🚀Transfer Protocol / ZhiAuth Ecosystem
+# 🚀 Transfer Protocol / ZhiAuth Ecosystem
 
 ### **High-Performance, Zero-Latency C++/Go VFS Client for MAIN SERVER**
 
