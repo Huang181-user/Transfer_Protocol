@@ -122,7 +122,7 @@ void VfsServer::receive_loop() {
             new_session.kcp_cb = ikcp_create(0x11223344, new_session.user_ctx.get());
             new_session.kcp_cb->output = kcp_output_callback;
             
-            // 🔥 Tối ưu siêu tốc, mở toang cửa sổ!
+            // 🔥 TỐI ƯU SIÊU TỐC, MỞ TOANG CỬA SỔ!
             ikcp_nodelay(new_session.kcp_cb, 1, 10, 2, 1); 
             ikcp_wndsize(new_session.kcp_cb, 4096, 4096);
             

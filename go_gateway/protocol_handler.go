@@ -128,7 +128,7 @@ func handleSecurityAuthentication(stream *quic.Stream, payload string, remoteIP 
 	resultCStr := C.zhiauth_authenticate_and_trigger(cUser, cPass, cLan, cTs, cHwid)
 	resultStr := C.GoString(resultCStr)
 
-	if strings.HasPrefix(resultStr, "1|") {
+        if strings.HasPrefix(resultStr, "1|") {
 		resParts := strings.Split(resultStr, "|")
 		if len(resParts) >= 3 {
 			dbUser, dbPath := resParts[1], resParts[2]
@@ -142,11 +142,24 @@ func handleSecurityAuthentication(stream *quic.Stream, payload string, remoteIP 
 			} else {
 				os.Remove(udsPath)
 				kcpWorkerCmd := exec.Command("sudo", "-n", "-u", dbUser, "/usr/local/bin/zhiauth_kcp_worker", udsPath)
+				
+				// 🔥 FIX CỰC MẠNH: NỐI ỐNG XẢ LOG CỦA TIẾN TRÌNH CON VÀO FILE LOG CHUNG!
+				logFile, errLog := os.OpenFile(globalConfig.Paths.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+				if errLog == nil {
+					kcpWorkerCmd.Stdout = logFile
+					kcpWorkerCmd.Stderr = logFile
+				}
+
 				if err := kcpWorkerCmd.Start(); err != nil {
 					log.Printf("[%s] [KCP-WORKER-FAIL] ❌ Lỗi gọi tiến trình con: %v", time.Now().Format("2006-01-02 15:04:05.000"), err)
 					(*stream).Write([]byte("AUTH_FAILED"))
+					if logFile != nil { logFile.Close() }
 					return
 				}
+				
+				// Đóng file fd ở tiến trình mẹ để tránh rò rỉ RAM (Tiến trình con đã giữ bản sao)
+				if logFile != nil { logFile.Close() }
+				
 				log.Printf("[%s] [MULTI-CLIENT] 🚀 Đã spawn KCP Worker tiên phong cho user '%s'", time.Now().Format("2006-01-02 15:04:05.000"), dbUser)
 			}
 
@@ -156,8 +169,7 @@ func handleSecurityAuthentication(stream *quic.Stream, payload string, remoteIP 
 				LanIP:      lan,
 				TsIP:       ts,
 				LastActive: time.Now().Unix(),
-			}
-			sessionCache.Store(lan, newCtx)
+			}			sessionCache.Store(lan, newCtx)
 			sessionCache.Store(ts, newCtx)
 			sessionCache.Store(remoteIP, newCtx)
 
