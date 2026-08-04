@@ -28,15 +28,12 @@ func (f *ZhiAuthFuse) callVfs(opcode byte, realPath string, offset uint64, reqLe
 func (f *ZhiAuthFuse) clearStatCache(realPath string) { f.statCache.Delete(realPath) }
 func isADS(path string) bool { return strings.Contains(path, ":") }
 
-// 🔥 BỨC TƯỜNG LỬA CHẶN THUMBNAIL EXPLORER
 func isWindowsSystemProbe(path string) bool {
 	l := strings.ToLower(path)
 	if strings.Contains(l, "desktop.ini") || strings.Contains(l, "autorun.inf") || strings.Contains(l, "thumbs.db") || strings.Contains(l, "folder.jpg") || strings.Contains(l, "folder.ico") {
         return true
     }
-    // Chặn Explorer đọc lén file ZIP và DOCX tạm thời để lấy metadata
     if strings.HasSuffix(l, ".zip") || strings.Contains(l, "~$") || strings.HasSuffix(l, ".exe") {
-        // Chỉ chặn ngầm nếu Windows gọi liên tục (tránh treo), không chặn app khác mở file
         return false 
     }
     return false
@@ -67,6 +64,7 @@ func (f *ZhiAuthFuse) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 	size := binary.LittleEndian.Uint64(res[0:8])
 	isDir := res[8] == 1
 	
+	// 🔥 CẬP NHẬT TỪ SERVER: Bóc tách SysTime chuẩn từ mảng trả về (nếu Server có hỗ trợ)
 	var mtime uint64 = 0
 	if len(res) >= 17 { mtime = binary.LittleEndian.Uint64(res[9:17]) }
 	if mtime == 0 { mtime = uint64(time.Now().Unix()) }
@@ -125,34 +123,85 @@ func (f *ZhiAuthFuse) Readdir(path string, fill func(name string, stat *fuse.Sta
 	return 0
 }
 func (f *ZhiAuthFuse) Read(path string, buff []byte, ofst int64, fh uint64) int {
-	if isADS(path) { return 0 }
+	if isADS(path) {
+		return 0
+	}
 	realPath := f.getVfsPath(path)
 	totalReq := len(buff)
-	if totalReq == 0 { return 0 }
-    
-    // 🔥 LỌC BỚT NHỮNG LỆNH ĐỌC LÉN RÁC CỦA EXPLORER
-    if strings.HasSuffix(strings.ToLower(realPath), ".zip") && uint32(totalReq) < 65536 {
-        return 0 // Chặn đọc Header ZIP vớ vẩn để tránh nghẽn luồng
-    }
-    
+	if totalReq == 0 {
+		return 0
+	}
+
+	// Lọc rác Explorer
+	if strings.HasSuffix(strings.ToLower(realPath), ".zip") && uint32(totalReq) < 131072 {
+		return 0
+	}
+
+	// [DEBUG] Realtime check-in khi nhận lệnh từ WinFSP
+	currentTime := time.Now().Format("2006-01-02 15:04:05.000")
+	log.Printf("[%s] [DEBUG-READ] 📥 WinFSP Request: Path=%s | Offset=%d | Size=%d bytes\n", currentTime, realPath, ofst, totalReq)
+
+	// Nếu là QUIC (Stream mượt), cho nuốt trọn 1 lần
 	if f.protocol == "QUIC" {
 		chunk, err := f.callVfs(OP_READ, realPath, uint64(ofst), uint32(totalReq), nil)
-		if err != nil || len(chunk) == 0 { return 0 }
+		if err != nil || len(chunk) == 0 {
+			return 0
+		}
 		return copy(buff, chunk)
 	}
-	const maxChunk = 131072 
-	totalRead := 0
-	for totalRead < totalReq {
-		chunkSize := totalReq - totalRead
-		if chunkSize > maxChunk { chunkSize = maxChunk }
-		currentOffset := uint64(ofst) + uint64(totalRead)
-		chunk, err := f.callVfs(OP_READ, realPath, currentOffset, uint32(chunkSize), nil)
-		if err != nil || len(chunk) == 0 { break }
-		n := copy(buff[totalRead:], chunk)
-		totalRead += n
-		if len(chunk) < chunkSize { break }
+
+	// ==========================================
+	// 🔥 KCP HANDLER: GOM HÀNG CHỐNG DOWNGRADE
+	// ==========================================
+	var totalBytesRead int = 0
+	var safeChunkSize uint32 = 131072 // 128KB: Kích thước hoàn hảo không làm tràn UDP/KCP Window
+	var currentOffset uint64 = uint64(ofst)
+	var remainingReq uint32 = uint32(totalReq)
+
+	log.Printf("[%s] [DEBUG-KCP] 🚧 Đang xử lý băm nhỏ %d bytes thành các khối %d bytes (KCP Safe Window)...\n", currentTime, totalReq, safeChunkSize)
+
+	for remainingReq > 0 {
+		fetchSize := safeChunkSize
+		if remainingReq < safeChunkSize {
+			fetchSize = remainingReq
+		}
+
+		loopTime := time.Now().Format("2006-01-02 15:04:05.000")
+		log.Printf("[%s] [DEBUG-KCP] 📦 Bốc hàng: Offset=%d | ReqSize=%d...\n", loopTime, currentOffset, fetchSize)
+
+		chunk, err := f.callVfs(OP_READ, realPath, currentOffset, fetchSize, nil)
+
+		if err != nil {
+			errTime := time.Now().Format("2006-01-02 15:04:05.000")
+			log.Printf("[%s] [ERROR-KCP] ❌ Lỗi đọc tại Offset=%d: %v\n", errTime, currentOffset, err)
+			break
+		}
+
+		bytesRead := len(chunk)
+		if bytesRead == 0 {
+			// Hết file (EOF)
+			eofTime := time.Now().Format("2006-01-02 15:04:05.000")
+			log.Printf("[%s] [DEBUG-KCP] 🛑 Đã chạm đáy file (EOF) tại Offset=%d.\n", eofTime, currentOffset)
+			break
+		}
+
+		// Nhồi dữ liệu dần vào buffer tổng mà WinFSP đưa xuống
+		copy(buff[totalBytesRead:], chunk)
+
+		totalBytesRead += bytesRead
+		currentOffset += uint64(bytesRead)
+		remainingReq -= uint32(bytesRead)
+
+		// Xử lý nốt case: Trả về ít hơn xin thì nghĩa là chót file rồi, dừng luôn
+		if uint32(bytesRead) < fetchSize {
+			break
+		}
 	}
-	return totalRead
+
+	endTime := time.Now().Format("2006-01-02 15:04:05.000")
+	log.Printf("[%s] [DEBUG-READ] ✅ Hoàn tất gom hàng! Đã nhồi %d bytes cho WinFSP.\n", endTime, totalBytesRead)
+
+	return totalBytesRead
 }
 func (f *ZhiAuthFuse) Write(path string, buff []byte, ofst int64, fh uint64) int {
 	if isADS(path) { return len(buff) } 
@@ -170,22 +219,14 @@ func (f *ZhiAuthFuse) Write(path string, buff []byte, ofst int64, fh uint64) int
 		if err != nil { log.Printf("[%s] ❌ [VFS-WRITE-ERR] %v", ts, err); return -fuse.EIO }
 		return totalLen
 	}
-	const maxWriteChunk = 131072
-	written := 0
-	for written < totalLen {
-		chunkSize := totalLen - written
-		if chunkSize > maxWriteChunk { chunkSize = maxWriteChunk }
-		currentOffset := uint64(ofst) + uint64(written)
-		f.clearStatCache(realPath)
-		_, err := f.callVfs(OP_WRITE, realPath, currentOffset, uint32(chunkSize), buff[written:written+chunkSize])
-		if err != nil {
-			if written > 0 { return written }
-			log.Printf("[%s] ❌ [VFS-WRITE-ERR] %v", ts, err)
-			return -fuse.EIO
-		}
-		written += chunkSize
+	// 🔥 TỐI ƯU C++ STREAM: Server đã dùng ThreadPool nên Client cứ bắn nguyên cục (Max 128KB) 
+	f.clearStatCache(realPath)
+	_, err := f.callVfs(OP_WRITE, realPath, uint64(ofst), uint32(totalLen), buff)
+	if err != nil {
+		log.Printf("[%s] ❌ [VFS-WRITE-ERR] %v", ts, err)
+		return -fuse.EIO
 	}
-	return written
+	return totalLen
 }
 func (f *ZhiAuthFuse) Truncate(path string, size int64, fh uint64) int {
 	if isADS(path) { return 0 }
@@ -242,7 +283,6 @@ func MountWinFspDrive(driveLetter string, remoteBase string, tunnel *QuicTunnel,
 	host := fuse.NewFileSystemHost(fsImpl)
 	host.SetCapReaddirPlus(false)
 	mountPoint := driveLetter + ":"
-    // 🔥 BƠM LẠI 16 LUỒNG ĐỂ TRỊ KẸT XE (Multi-Threading vừa đủ)
 	options := []string{"-f", "-o", "file_system_name=ZhiAuth-" + protocol, "-o", "volname=ZhiAuth " + protocol, "-o", "allow_other", "-o", "ThreadCount=16", "-o", "FileInfoTimeout=1000", "-o", "DirInfoTimeout=1000"}
 	go func() { host.Mount(mountPoint, options) }()
 }

@@ -22,6 +22,9 @@
 //=====================================================================
 // KCP BASIC
 //=====================================================================
+//=====================================================================
+// KCP BASIC
+//=====================================================================
 const IUINT32 IKCP_RTO_NDL = 30;		// no delay min rto
 const IUINT32 IKCP_RTO_MIN = 100;		// normal min rto
 const IUINT32 IKCP_RTO_DEF = 200;
@@ -33,6 +36,7 @@ const IUINT32 IKCP_CMD_WINS = 84;		// cmd: window size (tell)
 const IUINT32 IKCP_ASK_SEND = 1;		// need to send IKCP_CMD_WASK
 const IUINT32 IKCP_ASK_TELL = 2;		// need to send IKCP_CMD_WINS
 const IUINT32 IKCP_WND_SND = 32;
+// 🔥 FIX: Mở toang cửa sổ nhận 128 -> 4096 để hứng bão dữ liệu
 const IUINT32 IKCP_WND_RCV = 4096;       // must >= max fragment size
 const IUINT32 IKCP_MTU_DEF = 1400;
 const IUINT32 IKCP_ACK_FAST	= 3;

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 
 type QuicTunnel struct {
 	AssignedPath   string
+	DynamicKcpPort int // 🔥 Biến chứa Port KCP động Server cấp
 	Session        *quic.Conn
 	activeIp       string
 	authPort       string
@@ -113,9 +115,15 @@ func (t *QuicTunnel) ReconnectSilently() error {
 		return fmt.Errorf("re-auth failure: %s", resStr)
 	}
 
+	// 🔥 BÓC TÁCH: Lấy Port QUIC và KCP do Server trả về
 	parts := strings.Split(resStr, "|")
 	if len(parts) >= 2 && parts[1] != "" {
 		t.AssignedPath = parts[1]
+	}
+	if len(parts) >= 4 {
+		t.dataPort = parts[2] // Đổi luôn Port QUIC hiện tại
+		kcpPort, _ := strconv.Atoi(parts[3])
+		t.DynamicKcpPort = kcpPort // Ghi nhớ KCP Port để main.go nổ máy
 	}
 
 	time.Sleep(2 * time.Millisecond)

@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"log"
 	"sync/atomic"
 	"time"
@@ -31,6 +32,12 @@ const (
 )
 
 var globalReqId uint64 = 0
+var globalClientId uint32 = 0
+
+// 🔥 TẠO MỚI: Khởi tạo Client ID độc nhất dựa trên HWID
+func InitClientID(hwid string) {
+	globalClientId = crc32.ChecksumIEEE([]byte(hwid))
+}
 
 // Truyền mượt mà Conv xuống Backend C++
 func InitCppSDK(ip string, port int, symKey string, mtu int, conv uint32) bool {
@@ -53,11 +60,13 @@ func BuildVfsPacket(opcode byte, path string, offset uint64, reqLen uint32, data
 	dataLen := uint32(len(data))
 	if opcode == OP_READ { dataLen = reqLen }
 
-	reqId := atomic.AddUint64(&globalReqId, 1)
+	// 🔥 LÕI V6.0: Ghép Client_ID (32-bit cao) và Req_ID (32-bit thấp) thành Session_ID 64-bit
+	reqIdx := atomic.AddUint64(&globalReqId, 1) & 0xFFFFFFFF
+	sessionID := (uint64(globalClientId) << 32) | uint64(reqIdx)
 
 	binary.Write(buf, binary.LittleEndian, uint32(0x5A484941))
 	binary.Write(buf, binary.LittleEndian, opcode)
-	binary.Write(buf, binary.LittleEndian, reqId)
+	binary.Write(buf, binary.LittleEndian, sessionID)
 	binary.Write(buf, binary.LittleEndian, offset)
 	binary.Write(buf, binary.LittleEndian, dataLen)
 	binary.Write(buf, binary.LittleEndian, uint16(len(path)))

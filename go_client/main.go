@@ -70,12 +70,19 @@ func main() {
 	}
 
 	hwID := GetHardwareFingerprint()
+	InitClientID(hwID) // 🔥 Gắn cứng HWID thành Client_ID
+
 	authCmd := fmt.Sprintf("AUTH_REQ|USER:%s|PASS:%s|LAN:%s|TS:%s|HWID:%s", user, pass, cfg.ClientLanIp, cfg.ClientTsIp, hwID)
 
 	// Lấy cổng, ổ đĩa và Conv động 100% từ file config.json
 	tunnel := NewQuicTunnel(activeIp, cfg.AuthPort, cfg.ServerPort, authCmd, cfg.MountKcpDrive, cfg.MountQuicDrive)
 	if err := tunnel.ReconnectSilently(); err != nil {
 		log.Fatalf("❌ [ACCESS_DENIED] Authentication failed from Server: %v", err)
+	}
+
+	// 🔥 LẤY CỔNG KCP ĐỘNG TỪ SERVER (Chống Server đổi cổng mà Client không biết)
+	if tunnel.DynamicKcpPort > 0 {
+		cfg.KcpPort = tunnel.DynamicKcpPort
 	}
 
 	log.Printf("[%s] [CGO-INIT] Đánh thức C++ KCP Engine (Port: %d, MTU TỐI ƯU: %d, CONV ID: %d)...", time.Now().Format("2006-01-02 15:04:05.000"), cfg.KcpPort, cfg.KcpMtu, cfg.KcpConv)
