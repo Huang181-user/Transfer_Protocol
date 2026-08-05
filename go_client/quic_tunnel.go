@@ -20,6 +20,12 @@ import (
 type QuicTunnel struct {
 	AssignedPath   string
 	DynamicKcpPort int // 🔥 Biến chứa Port KCP động Server cấp
+	KcpNoDelay     int
+	KcpInterval    int
+	KcpResend      int
+	KcpNc          int
+	KcpSndWnd      int
+	KcpRcvWnd      int
 	Session        *quic.Conn
 	activeIp       string
 	authPort       string
@@ -115,7 +121,7 @@ func (t *QuicTunnel) ReconnectSilently() error {
 		return fmt.Errorf("re-auth failure: %s", resStr)
 	}
 
-	// 🔥 BÓC TÁCH: Lấy Port QUIC và KCP do Server trả về
+	// 🔥 BÓC TÁCH CHUỖI ĐỘNG: AUTH_SUCCESS|sharedPath|quicPort|kcpPort|nodelay|interval|resend|nc|snd_wnd|rcv_wnd
 	parts := strings.Split(resStr, "|")
 	if len(parts) >= 2 && parts[1] != "" {
 		t.AssignedPath = parts[1]
@@ -124,6 +130,19 @@ func (t *QuicTunnel) ReconnectSilently() error {
 		t.dataPort = parts[2] // Đổi luôn Port QUIC hiện tại
 		kcpPort, _ := strconv.Atoi(parts[3])
 		t.DynamicKcpPort = kcpPort // Ghi nhớ KCP Port để main.go nổ máy
+	}
+
+	// Giá trị mặc định an toàn (fallback)
+	t.KcpNoDelay = 1; t.KcpInterval = 10; t.KcpResend = 2; t.KcpNc = 0; t.KcpSndWnd = 512; t.KcpRcvWnd = 512
+
+	// Nắn bóc các tham số KCP Tuning nếu Server trả về đủ 10 phần
+	if len(parts) >= 10 {
+		if nd, err := strconv.Atoi(parts[4]); err == nil { t.KcpNoDelay = nd }
+		if it, err := strconv.Atoi(parts[5]); err == nil { t.KcpInterval = it }
+		if rs, err := strconv.Atoi(parts[6]); err == nil { t.KcpResend = rs }
+		if nc, err := strconv.Atoi(parts[7]); err == nil { t.KcpNc = nc }
+		if sw, err := strconv.Atoi(parts[8]); err == nil { t.KcpSndWnd = sw }
+		if rw, err := strconv.Atoi(parts[9]); err == nil { t.KcpRcvWnd = rw }
 	}
 
 	time.Sleep(2 * time.Millisecond)

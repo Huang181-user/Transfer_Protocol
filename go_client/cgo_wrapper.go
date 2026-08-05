@@ -40,15 +40,18 @@ func InitClientID(hwid string) {
 }
 
 // Truyền mượt mà Conv xuống Backend C++
-func InitCppSDK(ip string, port int, symKey string, mtu int, conv uint32) bool {
+func InitCppSDK(ip string, port int, symKey string, mtu int, conv uint32, nodelay, interval, resend, nc, sndWnd, rcvWnd int) bool {
 	ts := time.Now().Format("2006-01-02 15:04:05.000")
-	log.Printf("[%s] [CGO-WRAPPER] Đang đánh thức quái vật KCP C++ (Conv: %d)...", ts, conv)
+	log.Printf("[%s] [CGO-WRAPPER] Đang đánh thức KCP C++ Engine (Conv: %d | Wnd: %d/%d | NoDelay: %d)...", ts, conv, sndWnd, rcvWnd, nodelay)
 
 	cIP, cKey := C.CString(ip), C.CString(symKey)
 	defer C.free(unsafe.Pointer(cIP))
 	defer C.free(unsafe.Pointer(cKey))
-	
-	return C.zhiauth_client_init(cIP, C.int(port), cKey, C.int(mtu), C.uint32_t(conv)) == 0
+
+	return C.zhiauth_client_init(
+		cIP, C.int(port), cKey, C.int(mtu), C.uint32_t(conv),
+		C.int(nodelay), C.int(interval), C.int(resend), C.int(nc), C.int(sndWnd), C.int(rcvWnd),
+	) == 0
 }
 
 func ShutdownCppSDK() { 

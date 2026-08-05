@@ -39,7 +39,9 @@ static void bridge_realtime_log(const char *fmt, ...) {
 }
 
 static int udp_output_callback(const char *buf, int len, ikcpcb *kcp, void *user) {
-    if (g_udp_sock != INVALID_SOCKET) { return sendto(g_udp_sock, buf, len, 0, (struct sockaddr*)&g_server_addr, sizeof(g_server_addr)); }
+    if (g_udp_sock != INVALID_SOCKET) { 
+        return sendto(g_udp_sock, buf, len, 0, (struct sockaddr*)&g_server_addr, sizeof(g_server_addr)); 
+    }
     return -1;
 }
 
@@ -49,10 +51,18 @@ static void kcp_background_worker() {
 
     while (g_is_running) {
         uint32_t current_clock = GetTickCount();
-        { std::lock_guard<std::mutex> lock(g_kcp_mutex); if (g_kcp) ikcp_update(g_kcp, current_clock); }
 
-        int n = recvfrom(g_udp_sock, udp_buf.data(), static_cast<int>(udp_buf.size()), 0, NULL, NULL);
-        if (n > 0) {
+        { 
+            std::lock_guard<std::mutex> lock(g_kcp_mutex); 
+            if (g_kcp) ikcp_update(g_kcp, current_clock); 
+        }
+
+        bool got_packet = false;
+        int n;
+        
+        // Hút sạch bộ đệm UDP
+        while ((n = recvfrom(g_udp_sock, udp_buf.data(), static_cast<int>(udp_buf.size()), 0, NULL, NULL)) > 0) {
+            got_packet = true;
             std::lock_guard<std::mutex> lock(g_kcp_mutex);
             if (g_kcp) {
                 ikcp_input(g_kcp, udp_buf.data(), n);
@@ -71,7 +81,11 @@ static void kcp_background_worker() {
                             uint64_t req_id = hdr->session_id;
 
                             std::shared_ptr<BridgeRpcContext> ctx;
-                            { std::lock_guard<std::mutex> reg_lock(g_registry_mutex); auto it = g_rpc_registry.find(req_id); if (it != g_rpc_registry.end()) ctx = it->second; }
+                            { 
+                                std::lock_guard<std::mutex> reg_lock(g_registry_mutex); 
+                                auto it = g_rpc_registry.find(req_id); 
+                                if (it != g_rpc_registry.end()) ctx = it->second; 
+                            }
 
                             if (ctx) {
                                 std::lock_guard<std::mutex> ctx_lock(ctx->mtx);
@@ -82,16 +96,24 @@ static void kcp_background_worker() {
                         }
                     }
                 }
+                // 🔥 ÉP BẮN ACK VỀ SERVER NGAY LẬP TỨC
+                ikcp_flush(g_kcp);
             }
-        } else { std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+        }
+
+        if (!got_packet) { 
+            std::this_thread::sleep_for(std::chrono::microseconds(200)); 
+        }
     }
 }
 
-extern "C" int zhiauth_client_init(const char* ip, int port, const char* sym_key, int mtu, uint32_t conv) {
+extern "C" int zhiauth_client_init(const char* ip, int port, const char* sym_key, int mtu, uint32_t conv,
+                                  int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
     if (g_is_running) return 0;
     WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
     g_udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (g_udp_sock == INVALID_SOCKET) return -1;
+    
     u_long mode = 1; ioctlsocket(g_udp_sock, FIONBIO, &mode);
     int win_buf_sz = 128 * 1024 * 1024;
     setsockopt(g_udp_sock, SOL_SOCKET, SO_RCVBUF, (const char*)&win_buf_sz, sizeof(win_buf_sz));
@@ -103,17 +125,18 @@ extern "C" int zhiauth_client_init(const char* ip, int port, const char* sym_key
     g_sym_key = sym_key;
     if (!CryptoBox::initialize()) return -3;
 
-    // Gán Conv động từ file cấu hình Json 
     g_kcp = ikcp_create(conv, NULL);
     g_kcp->output = udp_output_callback;
     ikcp_setmtu(g_kcp, mtu);
-    ikcp_wndsize(g_kcp, 4096, 4096);
-    ikcp_nodelay(g_kcp, 1, 10, 2, 1);
-    g_kcp->rx_minrto = 30; g_kcp->dead_link = 200;
+    ikcp_wndsize(g_kcp, snd_wnd, rcv_wnd);
+    ikcp_nodelay(g_kcp, nodelay, interval, resend, nc);
+    g_kcp->rx_minrto = 10; 
+    g_kcp->dead_link = 200;
 
     g_is_running = true;
     g_worker_thread = std::thread(kcp_background_worker);
-    bridge_realtime_log("🚀 HYPER KCP CLIENT ENGINE STARTED (CONV: %u, WND: 4096, MIN_RTO: 5ms)", conv);
+    bridge_realtime_log("🚀 HYPER KCP CLIENT ENGINE STARTED (CONV: %u, WND: %d/%d, NODELAY: %d/%d/%d/%d)", 
+                        conv, snd_wnd, rcv_wnd, nodelay, interval, resend, nc);
     return 0;
 }
 
@@ -147,24 +170,21 @@ extern "C" uint8_t* zhiauth_send_vfs_command(const uint8_t* payload, size_t len,
 
         {
             std::lock_guard<std::mutex> lock(g_kcp_mutex);
-            int send_ret = ikcp_send(g_kcp, (const char*)enc_req.data(), enc_req.size());
-            if (send_ret < 0) {
-                bridge_realtime_log("❌ [KCP-FATAL] Cảnh báo! ikcp_send từ chối gửi gói tin ReqID %llu! Mã lỗi: %d", req_id, send_ret);
-            }
+            ikcp_send(g_kcp, (const char*)enc_req.data(), enc_req.size());
             ikcp_flush(g_kcp);
         }
 
         uint8_t* out_buf = NULL;
         {
             std::unique_lock<std::mutex> ctx_lock(ctx->mtx);
-            if (ctx->cv.wait_for(ctx_lock, std::chrono::seconds(120), [&] { return ctx->is_done; })) {
+            if (ctx->cv.wait_for(ctx_lock, std::chrono::seconds(15), [&] { return ctx->is_done; })) {
                 if (!ctx->response_payload.empty()) {
                     *out_len = ctx->response_payload.size();
                     out_buf = (uint8_t*)malloc(ctx->response_payload.size());
                     if (out_buf) memcpy(out_buf, ctx->response_payload.data(), ctx->response_payload.size());
                 }
             } else {
-                bridge_realtime_log("❌ [KCP-TIMEOUT] Hủy giao dịch ReqID: %llu do Server im lặng quá 120s!", req_id);
+                bridge_realtime_log("❌ [KCP-TIMEOUT] Hủy giao dịch ReqID: %llu do Server im lặng quá 15s!", req_id);
             }
         }
 

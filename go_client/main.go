@@ -58,7 +58,7 @@ func main() {
 	
 	// Ép ngược MTU động tìm được vào hệ thống thay cho số tĩnh trong config.json
 	optimalMTU := DiscoverBestHuangMTU(pingFunc)
-	cfg.KcpMtu = optimalMTU 
+	cfg.KcpMtu = optimalMTU - 28
 
 	user, pass, _, exists := LoadDeviceSession(sessionPath)
 	if !exists {
@@ -86,7 +86,10 @@ func main() {
 	}
 
 	log.Printf("[%s] [CGO-INIT] Đánh thức C++ KCP Engine (Port: %d, MTU TỐI ƯU: %d, CONV ID: %d)...", time.Now().Format("2006-01-02 15:04:05.000"), cfg.KcpPort, cfg.KcpMtu, cfg.KcpConv)
-	if !InitCppSDK(activeIp, cfg.KcpPort, cfg.KcpKey, cfg.KcpMtu, cfg.KcpConv) {
+
+	// 🔥 ĐÃ CHUYỂN SANG DÙNG CẤU HÌNH ĐỘNG HỨNG TỪ SERVER QUA TUNNEL
+	if !InitCppSDK(activeIp, cfg.KcpPort, cfg.KcpKey, cfg.KcpMtu, cfg.KcpConv, 
+		tunnel.KcpNoDelay, tunnel.KcpInterval, tunnel.KcpResend, tunnel.KcpNc, tunnel.KcpSndWnd, tunnel.KcpRcvWnd) {
 		log.Fatal("❌ [FATAL] C++ Core Engine failed to initialize!")
 	}
 	defer ShutdownCppSDK()
