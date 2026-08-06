@@ -63,13 +63,19 @@ object KcpNative {
         val realPath = resolvePath(path)
         val res = sendRawKcp(0x01, realPath, 0, 0, null) ?: return formatError("Timeout hoặc Lỗi NDK")
 
-        // C++ trả về 17 bytes: Size (8) + isDir (1) + mtime (8)
-        if (res.size < 17) return formatError("Packet too short")
+        // 🔥 Server C++ dội bom 37 bytes: [Size:8] [IsDir:1] [Mtime:8] [Ctime:8] [Atime:8] [Mode:4]
+        if (res.size < 37) return formatError("Packet too short (Cần 37 bytes, nhận được ${res.size})")
 
         val buffer = ByteBuffer.wrap(res).order(ByteOrder.LITTLE_ENDIAN)
+
         val size = buffer.long
         val isDir = buffer.get().toInt() == 1
-        val mtime = buffer.long * 1000L // Nhân 1000 để đổi từ giây (C++) sang mili-giây (Java/Android)
+
+        // Nhân 1000 để đổi từ giây (Unix Timestamp) sang mili-giây cho Java
+        val mtime = buffer.long * 1000L
+        val ctime = buffer.long * 1000L
+        val atime = buffer.long * 1000L
+        val mode = buffer.int
 
         var name = path.substringAfterLast("/")
         if (name.isEmpty() || path == "/") {
@@ -77,8 +83,8 @@ object KcpNative {
             if (name.isEmpty()) name = "/"
         }
 
-        // Trả về JSON kèm theo biến last_modified
-        return "{\"name\":\"$name\", \"size\":$size, \"is_dir\":$isDir, \"last_modified\":$mtime}"
+        // Tống hết bộ đồ lòng vào JSON
+        return "{\"name\":\"$name\", \"size\":$size, \"is_dir\":$isDir, \"last_modified\":$mtime, \"ctime\":$ctime, \"atime\":$atime, \"mode\":$mode}"
     }
 
     fun vfsList(path: String): String {

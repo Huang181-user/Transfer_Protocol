@@ -115,8 +115,8 @@ class HuangDocumentsProvider : DocumentsProvider() {
 
             val isDir = obj.getBoolean("is_dir")
 
-            // 🔥 Đọc biến last_modified nếu có
-            val mtime = if (obj.has("last_modified")) obj.getLong("last_modified") else null
+            // Hứng mtime từ JSON (Ctime, Atime, Mode hiện tại Android SAF không có cột chuẩn để hiện)
+            val mtime = if (obj.has("last_modified")) obj.getLong("last_modified") else 0L
 
             var flags = DocumentsContract.Document.FLAG_SUPPORTS_DELETE or
                     DocumentsContract.Document.FLAG_SUPPORTS_RENAME or
@@ -130,14 +130,17 @@ class HuangDocumentsProvider : DocumentsProvider() {
             val size = obj.getLong("size")
             val mime = if(isDir) DocumentsContract.Document.MIME_TYPE_DIR else getMimeType(name)
 
-            // 🔥 Bơm cột thời gian vào MatrixCursor
             cursor.newRow().apply {
                 add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, safeDocId)
                 add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, name)
                 add(DocumentsContract.Document.COLUMN_MIME_TYPE, mime)
                 add(DocumentsContract.Document.COLUMN_SIZE, size)
                 add(DocumentsContract.Document.COLUMN_FLAGS, flags)
-                mtime?.let { add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, it) }
+
+                // 🔥 Đẩy thời gian sửa đổi (mtime) vào giao diện Android
+                if (mtime > 0L) {
+                    add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, mtime)
+                }
             }
         } catch (e: Exception) { Log.e(TAG, "[QUERY_DOC] Lỗi parse JSON: ${e.message} | Payload: $json") }
         return cursor
