@@ -101,8 +101,7 @@ class HuangDocumentsProvider : DocumentsProvider() {
         val safeDocId = documentId ?: "quic_/"
 
         val (isQuic, realPath) = extractPathInfo(safeDocId)
-        
-        // Gọi thẳng xuống API theo đúng Protocol (không mượn danh)
+
         val json = HuangTransport.getStat(isQuic, realPath)
 
         if (!json.trim().startsWith("{")) return cursor
@@ -115,6 +114,10 @@ class HuangDocumentsProvider : DocumentsProvider() {
             }
 
             val isDir = obj.getBoolean("is_dir")
+
+            // 🔥 Đọc biến last_modified nếu có
+            val mtime = if (obj.has("last_modified")) obj.getLong("last_modified") else null
+
             var flags = DocumentsContract.Document.FLAG_SUPPORTS_DELETE or
                     DocumentsContract.Document.FLAG_SUPPORTS_RENAME or
                     DocumentsContract.Document.FLAG_SUPPORTS_MOVE or
@@ -127,12 +130,14 @@ class HuangDocumentsProvider : DocumentsProvider() {
             val size = obj.getLong("size")
             val mime = if(isDir) DocumentsContract.Document.MIME_TYPE_DIR else getMimeType(name)
 
+            // 🔥 Bơm cột thời gian vào MatrixCursor
             cursor.newRow().apply {
                 add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, safeDocId)
                 add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, name)
                 add(DocumentsContract.Document.COLUMN_MIME_TYPE, mime)
                 add(DocumentsContract.Document.COLUMN_SIZE, size)
                 add(DocumentsContract.Document.COLUMN_FLAGS, flags)
+                mtime?.let { add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, it) }
             }
         } catch (e: Exception) { Log.e(TAG, "[QUERY_DOC] Lỗi parse JSON: ${e.message} | Payload: $json") }
         return cursor

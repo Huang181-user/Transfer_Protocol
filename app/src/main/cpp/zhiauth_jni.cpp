@@ -54,7 +54,8 @@ static std::map<uint64_t, std::shared_ptr<RequestWait>> g_pending_requests;
 
 static int udp_output(const char *buf, int len, ikcpcb *kcp, void *user) {
     if (g_socket_fd >= 0) {
-        sendto(g_socket_fd, buf, len, 0, (struct sockaddr*)&g_server_addr, sizeof(g_server_addr));
+        // 🔥 FIX: Đã connect nên vã lệnh send thẳng tay, cực kỳ nhẹ và tránh lạc IP
+        send(g_socket_fd, buf, len, 0);
     }
     return 0;
 }
@@ -202,10 +203,15 @@ Java_com_example_transfer_1server_KcpNative_initKcp(
     g_server_addr.sin_port = htons(port);
     inet_pton(AF_INET, ip, &g_server_addr.sin_addr);
 
+    // 🔥 TRÓI CỔ SOCKET: Ép Android định tuyến qua VPN (Tailscale) và chốt IP nguồn
+    if (connect(g_socket_fd, (struct sockaddr*)&g_server_addr, sizeof(g_server_addr)) < 0) {
+        LOGE("❌ Lỗi ép kết nối Socket UDP! Lệch đường ray VPN!");
+        return JNI_FALSE;
+    }
+
     g_kcp = ikcp_create(0x11223344, nullptr);
     g_kcp->output = udp_output;
 
-    // 🔥 ÁP DỤNG THÔNG SỐ CẤP PHÁT ĐỘNG TỪ SERVER VÀO KCP CONTROL BLOCK
     ikcp_nodelay(g_kcp, nodelay, interval, resend, nc);
     ikcp_wndsize(g_kcp, sndWnd, rcvWnd);
     ikcp_setmtu(g_kcp, mtu - 107);
@@ -214,7 +220,7 @@ Java_com_example_transfer_1server_KcpNative_initKcp(
     g_recv_thread = std::thread(kcp_recv_loop);
     g_update_thread = std::thread(kcp_update_loop);
 
-    LOGI("🚀 C++ NDK ENGINE KÍCH HOẠT THÀNH CÔNG!");
+    LOGI("🚀 C++ NDK ENGINE KÍCH HOẠT THÀNH CÔNG! ĐÃ CONNECT SOCKET CHỐNG RỚT GÓI.");
     LOGI("📊 [KCP TUNING DYNAMIC] NoDelay=%d, Interval=%dms, Resend=%d, NC=%d, SND_WND=%d, RCV_WND=%d | MTU=%d",
          nodelay, interval, resend, nc, sndWnd, rcvWnd, mtu);
 

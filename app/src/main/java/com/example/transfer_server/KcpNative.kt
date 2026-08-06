@@ -62,46 +62,55 @@ object KcpNative {
     fun vfsStat(path: String): String {
         val realPath = resolvePath(path)
         val res = sendRawKcp(0x01, realPath, 0, 0, null) ?: return formatError("Timeout hoặc Lỗi NDK")
-        if (res.size < 9) return formatError("Packet too short")
+
+        // C++ trả về 17 bytes: Size (8) + isDir (1) + mtime (8)
+        if (res.size < 17) return formatError("Packet too short")
+
         val buffer = ByteBuffer.wrap(res).order(ByteOrder.LITTLE_ENDIAN)
         val size = buffer.long
         val isDir = buffer.get().toInt() == 1
+        val mtime = buffer.long * 1000L // Nhân 1000 để đổi từ giây (C++) sang mili-giây (Java/Android)
 
         var name = path.substringAfterLast("/")
         if (name.isEmpty() || path == "/") {
             name = if (path == "/") remoteRoot.substringAfterLast("/") else "/"
             if (name.isEmpty()) name = "/"
         }
-        return "{\"name\":\"$name\", \"size\":$size, \"is_dir\":$isDir}"
+
+        // Trả về JSON kèm theo biến last_modified
+        return "{\"name\":\"$name\", \"size\":$size, \"is_dir\":$isDir, \"last_modified\":$mtime}"
     }
 
     fun vfsList(path: String): String {
         val realPath = resolvePath(path)
         val res = sendRawKcp(0x02, realPath, 0, 0, null) ?: return "[]"
-        val cleanStr = String(res).trimEnd('\u0000').trim()
         val arr = mutableListOf<String>()
         val vSlash = if (path.endsWith("/")) path else "$path/"
 
-        cleanStr.split("|").forEach { t ->
-            if (t.isNotBlank()) {
-                // 🔥 FIX: Tên file có thể chứa dấu phẩy, nên ta cắt chuỗi từ dưới lên!
-                // Format C++ gửi: FileName,DIR/REG,Size,33188
-                val modeIdx = t.lastIndexOf(",")
-                val sizeIdx = t.lastIndexOf(",", modeIdx - 1)
-                val typeIdx = t.lastIndexOf(",", sizeIdx - 1)
+        val buffer = ByteBuffer.wrap(res).order(ByteOrder.LITTLE_ENDIAN)
 
-                if (typeIdx > 0 && sizeIdx > typeIdx && modeIdx > sizeIdx) {
-                    val fileName = t.substring(0, typeIdx).replace("\"", "").trim()
-                    val typeStr = t.substring(typeIdx + 1, sizeIdx).trim()
-                    val sizeStr = t.substring(sizeIdx + 1, modeIdx).trim()
+        // Trình tự 15 bytes: [NameLen: 2] [IsDir: 1] [Size: 8] [Mode: 4]
+        while (buffer.remaining() >= 15) {
+            val nameLen = buffer.short.toInt() and 0xFFFF
+            val isDirByte = buffer.get().toInt()
+            val size = buffer.long
+            val mode = buffer.int // Không xài nhưng vẫn phải bốc ra để con trỏ chạy tiếp
 
-                    val isDir = if (typeStr == "DIR") "true" else "false"
-                    val fileSize = if (sizeStr.toLongOrNull() != null) sizeStr else "0"
-
-                    arr.add("{\"name\":\"$fileName\",\"is_dir\":$isDir,\"size\":$fileSize,\"path\":\"$vSlash$fileName\"}")
-                }
+            // Bảo vệ lỡ packet bị cắt xén
+            if (buffer.remaining() < nameLen) {
+                Log.e(TAG, "Lỗi phân tích vfsList: Packet bị hụt dữ liệu!")
+                break
             }
+
+            // Đọc tên file
+            val nameBytes = ByteArray(nameLen)
+            buffer.get(nameBytes)
+            val fileName = String(nameBytes, Charsets.UTF_8).replace("\"", "\\\"")
+
+            val isDirStr = if (isDirByte == 1) "true" else "false"
+            arr.add("{\"name\":\"$fileName\",\"is_dir\":$isDirStr,\"size\":$size,\"path\":\"$vSlash$fileName\"}")
         }
+
         return "[${arr.joinToString(",")}]"
     }
 
