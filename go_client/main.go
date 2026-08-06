@@ -74,8 +74,9 @@ func main() {
 	log.Printf("[%s] [CGO-INIT] Đang kích hoạt động cơ C++ KCP...", time.Now().Format("2006-01-02 15:04:05.000000"))
 
 	// 🔥 TRÍCH XUẤT PORT KCP VỪA NHẬN TỪ SERVER ĐỂ NẠP CHO LÕI C++
+	// Tìm tới dòng InitCppSDK trong go_client/main.go và sửa lại:
 	kcpPortInt, _ := strconv.Atoi(tunnel.AssignedKcpPort)
-	if !InitCppSDK(activeIp, kcpPortInt, cfg.MasterSymKey, bestMtu) {
+	if !InitCppSDK(activeIp, kcpPortInt, cfg.MasterSymKey, bestMtu, tunnel.Tuning) {
 		log.Fatalf("[%s] [FATAL] Lõi C++ từ chối khởi động!", time.Now().Format("2006-01-02 15:04:05.000"))
 	}
 

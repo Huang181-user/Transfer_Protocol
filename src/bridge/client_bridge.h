@@ -5,7 +5,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, int mtu);
+int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, int mtu,
+                        int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
 // Gọi cái này là trả lời qua hàm callback, siêu mượt!
 void zhiauth_send_vfs_command_async(const uint8_t* payload, size_t payload_len);
 void zhiauth_client_shutdown();

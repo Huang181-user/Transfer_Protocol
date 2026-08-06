@@ -27,9 +27,11 @@ static size_t calculateAbsoluteMaxSocketBuffer() {
     return 16777216; // Chơi khô máu, phang thẳng 16MB bộ đệm cho chắc cốp
 }
 
-VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu)
+VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
+                     int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd)
     : socket_(io_context_, udp::endpoint(udp::v4(), 0)), is_running_(false), 
-      recv_buffer_(65536), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu)
+      recv_buffer_(65536), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu),
+      nodelay_(nodelay), interval_(interval), resend_(resend), nc_(nc), snd_wnd_(snd_wnd), rcv_wnd_(rcv_wnd)
 {
     asio::ip::udp::resolver resolver(io_context_);
     server_endpoint_ = *resolver.resolve(udp::v4(), server_ip, std::to_string(port)).begin();
@@ -48,15 +50,17 @@ bool VfsClient::start() {
     kcp_cb_ = ikcp_create(0x11223344, this);
     kcp_cb_->output = kcp_output_callback;
     
-    // 🔥 BẬT MAX SPEED CHO CLIENT
-    ikcp_nodelay(kcp_cb_, 1, 10, 2, 1);
+    // 🔥 ÉP THAM SỐ KCP TUNING ĐỘNG ĐƯỢC NHẬN TỪ SERVER HOẶC FALLBACK
+    ikcp_nodelay(kcp_cb_, nodelay_, interval_, resend_, nc_);
     int safe_mtu = (mtu_ > 100) ? (mtu_ - 56) : 1350; 
-    ikcp_wndsize(kcp_cb_, 4096, 4096); 
+    ikcp_wndsize(kcp_cb_, snd_wnd_, rcv_wnd_); 
     kcp_cb_->stream = 0; 
     ikcp_setmtu(kcp_cb_, safe_mtu); 
     kcp_cb_->rx_minrto = 10;
 
-    std::cout << "[" << getRealtimeLog() << "] [SPEED_TUNER_CLIENT] KCP Engine Turbo (Blocking) Initialized | MTU: " << safe_mtu << std::endl;
+    std::cout << "[" << getRealtimeLog() << "] [DYNAMIC_SPEED_CLIENT] KCP Engine Operational | Tuning Params -> NoDelay: " 
+              << nodelay_ << ", Interval: " << interval_ << "ms, Resend: " << resend_ << ", NC: " << nc_ 
+              << ", WND (SND/RCV): " << snd_wnd_ << "/" << rcv_wnd_ << " | Safe MTU: " << safe_mtu << std::endl;
 
     io_thread_ = std::thread(&VfsClient::receive_loop, this);
     timer_thread_ = std::thread(&VfsClient::kcp_update_loop, this);

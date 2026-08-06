@@ -19,7 +19,8 @@ struct RpcContext {
 
 class VfsClient {
 public:
-    VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu);
+    VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
+              int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
     ~VfsClient();
     bool start();
     void stop();
@@ -41,6 +42,7 @@ private:
     std::mutex kcp_mutex_;
     std::string sym_key_;
     int mtu_; 
+    int nodelay_, interval_, resend_, nc_, snd_wnd_, rcv_wnd_;
 
     std::unordered_map<uint64_t, std::shared_ptr<RpcContext>> rpc_map_;
     std::mutex rpc_map_mutex_;

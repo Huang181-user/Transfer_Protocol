@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,11 +17,22 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+type KcpTuningParams struct {
+	NoDelay   int
+	Interval  int
+	Resend    int
+	Nc        int
+	SndWnd    int
+	RcvWnd    int
+	IsDynamic bool // Đánh dấu xem có phải do Server cấp động hay không
+}
+
 type QuicTunnel struct {
 	AssignedPath     string
 	AssignedQuicPort string
 	AssignedKcpPort  string
-	Session          *quic.Conn // 🔥 Đã khôi phục con trỏ
+	Tuning           KcpTuningParams // 🔥 LƯU THAM SỐ DYNAMIC KCP
+	Session          *quic.Conn
 	activeIp         string
 	authPort         string
 	authCmd          string
@@ -104,9 +116,23 @@ func (t *QuicTunnel) ReconnectSilently() error {
 		t.AssignedPath = parts[1]
 		t.AssignedQuicPort = parts[2]
 		t.AssignedKcpPort = parts[3]
-		log.Printf("[%s] [ROUTING-ACK] Đã tiếp nhận Port động từ Server. Định tuyến Data tới: QUIC [%s] | KCP [%s]", GetTimestamp(), t.AssignedQuicPort, t.AssignedKcpPort)
-	} else {
-		return fmt.Errorf("invalid auth payload structure")
+
+		// 🔥 KIỂM TRA XEM SERVER CÓ GỬI KCP TUNING DYNAMIC KHÔNG (Phiên bản >= 10 parts)
+		if len(parts) >= 10 {
+			t.Tuning.NoDelay, _ = strconv.Atoi(parts[4])
+			t.Tuning.Interval, _ = strconv.Atoi(parts[5])
+			t.Tuning.Resend, _ = strconv.Atoi(parts[6])
+			t.Tuning.Nc, _ = strconv.Atoi(parts[7])
+			t.Tuning.SndWnd, _ = strconv.Atoi(parts[8])
+			t.Tuning.RcvWnd, _ = strconv.Atoi(parts[9])
+			t.Tuning.IsDynamic = true
+
+			log.Printf("[%s] [DYNAMIC-KCP] 🎯 Đã tiếp nhận KCP Tuning từ Server: NoDelay=%d, Interval=%dms, Resend=%d, NC=%d, SND_WND=%d, RCV_WND=%d",
+				GetTimestamp(), t.Tuning.NoDelay, t.Tuning.Interval, t.Tuning.Resend, t.Tuning.Nc, t.Tuning.SndWnd, t.Tuning.RcvWnd)
+		} else {
+			log.Printf("[%s] [DYNAMIC-KCP] ⚠️ Server không gửi Tuning params. Client sẽ xài cấu hình mặc định/hardcode!", GetTimestamp())
+			t.Tuning.IsDynamic = false
+		}
 	}
 
 	time.Sleep(2 * time.Millisecond)

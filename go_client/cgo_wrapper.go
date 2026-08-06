@@ -35,11 +35,28 @@ var globalReqId uint32 = 0
 var pendingRequests sync.Map
 var appClientID uint32 = uint32(time.Now().UnixNano() & 0xFFFFFFFF)
 
-func InitCppSDK(ip string, port int, symKey string, mtu int) bool {
+// Sửa hàm InitCppSDK trong go_client/cgo_wrapper.go
+func InitCppSDK(ip string, port int, symKey string, mtu int, tuning KcpTuningParams) bool {
 	cIP, cKey := C.CString(ip), C.CString(symKey)
 	defer C.free(unsafe.Pointer(cIP))
 	defer C.free(unsafe.Pointer(cKey))
-	return C.zhiauth_client_init(cIP, C.int(port), cKey, C.int(mtu)) == 0
+
+	// Nếu Server cấp động -> Dùng tuning từ Server. Ngược lại -> Dùng mặc định Wi-Fi Safe Mode (1, 10, 2, 0, 512, 512)
+	noDelay, interval, resend, nc, sndWnd, rcvWnd := 1, 10, 2, 0, 512, 512
+	if tuning.IsDynamic {
+		noDelay = tuning.NoDelay
+		interval = tuning.Interval
+		resend = tuning.Resend
+		nc = tuning.Nc
+		sndWnd = tuning.SndWnd
+		rcvWnd = tuning.RcvWnd
+	}
+
+	return C.zhiauth_client_init(
+		cIP, C.int(port), cKey, C.int(mtu),
+		C.int(noDelay), C.int(interval), C.int(resend), C.int(nc),
+		C.int(sndWnd), C.int(rcvWnd),
+	) == 0
 }
 
 func ShutdownCppSDK() { C.zhiauth_client_shutdown() }

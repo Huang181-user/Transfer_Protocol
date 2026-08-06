@@ -1,10 +1,14 @@
 #!/bin/bash
 set -e
 
-echo -e "\n🧹 [1/3] Đang dọn dẹp và đúc lại lõi C++ (Client)..."
+echo -e "\n🧹 [1/3] Đang dọn dẹp và đúc lại lõi C++ (Client trong thư mục build)..."
 cd ~/zhiauth_client
-make clean 2>/dev/null || true
-cmake .
+# Tiêu diệt tàn dư ở thư mục gốc
+rm -rf CMakeCache.txt CMakeFiles cmake_install.cmake Makefile libzhiauth_client_core.a build/
+
+mkdir -p build
+cd build
+cmake ..
 make -j$(nproc)
 
 echo -e "\n🐹 [2/3] Đang đúc lại Go Client..."

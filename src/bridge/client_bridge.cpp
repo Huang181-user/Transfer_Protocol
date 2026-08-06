@@ -5,10 +5,12 @@
 static VfsClient* g_vfs_client = nullptr;
 
 extern "C" {
-int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, int mtu) {
+int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, int mtu,
+                        int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
     if (!CryptoBox::initialize()) return -1;
     if (g_vfs_client != nullptr) delete g_vfs_client;
-    g_vfs_client = new VfsClient(server_ip, port, sym_key, mtu);
+    
+    g_vfs_client = new VfsClient(server_ip, port, sym_key, mtu, nodelay, interval, resend, nc, snd_wnd, rcv_wnd);
     g_vfs_client->start();
     return 0;
 }
