@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -26,7 +25,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppSecrets.init(this)
-        
+
         NetworkConfig.LOCAL_IP = AppSecrets.LOCAL_IP
         NetworkConfig.TS_IP = AppSecrets.TS_IP
         NetworkConfig.AUTH_PORT = AppSecrets.AUTH_PORT
@@ -86,13 +85,41 @@ fun QuicSuperScreen() {
                         NetworkConfig.QUIC_PORT = parts[3]
                         NetworkConfig.KCP_PORT = parts[4]
                         if (parts.size > 5) KcpNative.remoteRoot = parts[5]
-                        
-                        // 🔥 KÍCH HOẠT C++ NDK SAU KHI GO GÕ CỬA XONG
-                        val kcpInit = KcpNative.initKcp(NetworkConfig.SERVER_IP, NetworkConfig.KCP_PORT.toInt(), NetworkConfig.MASTER_SYM_KEY, NetworkConfig.QUIC_MTU)
-                        
+
+                        // 🔥 PARSE 6 THÔNG SỐ KCP TUNING DỰA TRÊN PHẢN HỒI V6.1 CỦA SERVER:
+                        // AUTH_SUCCESS|SharedPath|QuicPort|KcpPort|NoDelay|Interval|Resend|Nc|SndWnd|RcvWnd
+                        if (parts.size >= 12) {
+                            NetworkConfig.KCP_NODELAY = parts[6].toIntOrNull() ?: 1
+                            NetworkConfig.KCP_INTERVAL = parts[7].toIntOrNull() ?: 10
+                            NetworkConfig.KCP_RESEND = parts[8].toIntOrNull() ?: 2
+                            NetworkConfig.KCP_NC = parts[9].toIntOrNull() ?: 1
+                            NetworkConfig.KCP_SND_WND = parts[10].toIntOrNull() ?: 4096
+                            NetworkConfig.KCP_RCV_WND = parts[11].toIntOrNull() ?: 4096
+                        }
+
+                        // 🔥 TRUYỀN CÁC THÔNG SỐ ĐỘNG NÀY XUỐNG C++ NDK
+                        val kcpInit = KcpNative.initKcp(
+                            NetworkConfig.SERVER_IP,
+                            NetworkConfig.KCP_PORT.toInt(),
+                            NetworkConfig.MASTER_SYM_KEY,
+                            NetworkConfig.QUIC_MTU,
+                            NetworkConfig.KCP_NODELAY,
+                            NetworkConfig.KCP_INTERVAL,
+                            NetworkConfig.KCP_RESEND,
+                            NetworkConfig.KCP_NC,
+                            NetworkConfig.KCP_SND_WND,
+                            NetworkConfig.KCP_RCV_WND
+                        )
+
                         context.startService(Intent(context, ZhiAuthService::class.java))
 
-                        logMsg = "✅ ĐĂNG NHẬP THÀNH CÔNG!\nHost: ${NetworkConfig.SERVER_IP}\nQ-Port: ${NetworkConfig.QUIC_PORT} | K-Port: ${NetworkConfig.KCP_PORT}\nC++ KCP Engine: $kcpInit"
+                        logMsg = """
+                            ✅ ĐĂNG NHẬP THÀNH CÔNG!
+                            Host: ${NetworkConfig.SERVER_IP}
+                            Q-Port: ${NetworkConfig.QUIC_PORT} | K-Port: ${NetworkConfig.KCP_PORT}
+                            KCP Tuning: NoDelay=${NetworkConfig.KCP_NODELAY}, Int=${NetworkConfig.KCP_INTERVAL}ms, Resend=${NetworkConfig.KCP_RESEND}, NC=${NetworkConfig.KCP_NC}, SND_WND=${NetworkConfig.KCP_SND_WND}, RCV_WND=${NetworkConfig.KCP_RCV_WND}
+                            C++ KCP Engine: $kcpInit
+                        """.trimIndent()
                     } else {
                         logMsg = "❌ Lỗi đăng nhập:\n$result"
                     }
@@ -105,8 +132,8 @@ fun QuicSuperScreen() {
                 NetworkConfig.QUIC_USER = ""; NetworkConfig.QUIC_PASS = ""
 
                 scope.launch {
-                    withContext(Dispatchers.IO) { 
-                        Quicclient.logout() 
+                    withContext(Dispatchers.IO) {
+                        Quicclient.logout()
                         KcpNative.shutdownKcp()
                     }
                     context.stopService(Intent(context, ZhiAuthService::class.java))

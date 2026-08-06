@@ -40,7 +40,7 @@ static std::thread g_recv_thread;
 static std::thread g_update_thread;
 static std::atomic<bool> g_running{false};
 static std::atomic<uint32_t> g_req_id{0};
-static uint32_t g_client_id = 0; // ĐỊNH DANH ĐỘC NHẤT CHO THIẾT BỊ NÀY
+static uint32_t g_client_id = 0;
 
 static std::mutex g_kcp_mutex;
 static std::mutex g_promise_mutex;
@@ -63,7 +63,7 @@ static void kcp_update_loop() {
     auto last_heartbeat = std::chrono::steady_clock::now();
     while (g_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        
+
         auto now = std::chrono::steady_clock::now();
         bool send_ping = false;
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat).count() >= 10) {
@@ -76,13 +76,13 @@ static void kcp_update_loop() {
             if (send_ping) {
                 std::vector<uint8_t> vfs_packet;
                 uint32_t magic = 0x5A484941;
-                uint64_t reqId = 0; 
+                uint64_t reqId = 0;
                 uint64_t offset = 0;
                 uint32_t data_len = 0;
                 uint16_t path_len = 0;
-                
+
                 vfs_packet.insert(vfs_packet.end(), (uint8_t*)&magic, ((uint8_t*)&magic) + 4);
-                vfs_packet.push_back(0x00); // ĐỒNG BỘ VỚI OP_PING CỦA SERVER MỚI (0x00)
+                vfs_packet.push_back(0x00); // OP_PING (0x00)
                 vfs_packet.insert(vfs_packet.end(), (uint8_t*)&reqId, ((uint8_t*)&reqId) + 8);
                 vfs_packet.insert(vfs_packet.end(), (uint8_t*)&offset, ((uint8_t*)&offset) + 8);
                 vfs_packet.insert(vfs_packet.end(), (uint8_t*)&data_len, ((uint8_t*)&data_len) + 4);
@@ -96,15 +96,15 @@ static void kcp_update_loop() {
             }
 
             uint32_t current_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count() & 0xFFFFFFFF;
+                    std::chrono::system_clock::now().time_since_epoch()).count() & 0xFFFFFFFF;
             ikcp_update(g_kcp, current_ms);
         }
     }
 }
 
 static void kcp_recv_loop() {
-    uint8_t udp_buffer[65535]; 
-    std::vector<uint8_t> kcp_payload(2 * 1024 * 1024); 
+    uint8_t udp_buffer[65535];
+    std::vector<uint8_t> kcp_payload(2 * 1024 * 1024);
 
     while (g_running) {
         struct timeval tv;
@@ -114,40 +114,40 @@ static void kcp_recv_loop() {
         struct sockaddr_in src_addr;
         socklen_t src_len = sizeof(src_addr);
         int n = recvfrom(g_socket_fd, udp_buffer, sizeof(udp_buffer), 0, (struct sockaddr*)&src_addr, &src_len);
-        
+
         if (n > 0) {
             std::lock_guard<std::mutex> lock(g_kcp_mutex);
             if (g_kcp && g_running) {
                 ikcp_input(g_kcp, (const char*)udp_buffer, n);
-                
+
                 while (true) {
                     int peek_size = ikcp_peeksize(g_kcp);
-                    if (peek_size < 0) break; 
+                    if (peek_size < 0) break;
 
                     if (peek_size > kcp_payload.size()) {
-                        LOGE("⚠️ Kích thước gói KCP quá lơn (%d bytes)! Tự động nới túi...", peek_size);
+                        LOGE("⚠️ Kích thước gói KCP quá lớn (%d bytes)! Tự động nới túi...", peek_size);
                         kcp_payload.resize(peek_size + 1024);
                     }
 
                     int read_len = ikcp_recv(g_kcp, (char*)kcp_payload.data(), kcp_payload.size());
                     if (read_len < 0) {
-                        LOGE("❌ ikcp_recv LỖI DƯỚI ĐÁY! Mã lỗi: %d | Peek_size dự kiến: %d", read_len, peek_size);
+                        LOGE("❌ ikcp_recv LỖI! Mã lỗi: %d | Peek_size dự kiến: %d", read_len, peek_size);
                         break;
                     }
 
                     LOGI("📥 KCP Reassembly Xong! Bốc được %d bytes. Đưa Libsodium xử lý...", read_len);
-                    
+
                     std::vector<uint8_t> ciphertext(kcp_payload.data(), kcp_payload.data() + read_len);
                     std::vector<uint8_t> plaintext;
-                    
+
                     if (CryptoBox::decrypt_payload(ciphertext, g_master_key, plaintext)) {
                         if (plaintext.size() >= 27 && plaintext[4] != 0xFF) {
                             uint64_t session_id = 0;
                             memcpy(&session_id, &plaintext[5], 8);
-                            
-                            if (session_id == 0) continue; 
-                            
-                            LOGI("✅ Libsodium giải mã thành công! Trả về Session ID (Bao gồm Req ID): %llu | Size: %zu bytes", session_id, plaintext.size());
+
+                            if (session_id == 0) continue;
+
+                            LOGI("✅ Libsodium giải mã thành công! Trả về Session ID: %llu | Size: %zu bytes", session_id, plaintext.size());
 
                             std::lock_guard<std::mutex> plock(g_promise_mutex);
                             auto it = g_pending_requests.find(session_id);
@@ -164,7 +164,7 @@ static void kcp_recv_loop() {
                             LOGE("❌ Cấu trúc JSON/VFS Server gửi về dị thường! Size: %zu", plaintext.size());
                         }
                     } else {
-                        LOGE("❌ Libsodium ngã ngựa! Giải mã thất bại. Có thể do rác mạng hoặc nhiễu chìa khóa.");
+                        LOGE("❌ Libsodium giải mã thất bại!");
                     }
                 }
             }
@@ -172,11 +172,15 @@ static void kcp_recv_loop() {
     }
 }
 
+// 🔥 CẬP NHẬT HÀM JNI: Hứng 6 thông số KCP Tuning động
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_transfer_1server_KcpNative_initKcp(JNIEnv *env, jobject thiz, jstring serverIp, jint port, jstring masterKey, jint mtu) {
+Java_com_example_transfer_1server_KcpNative_initKcp(
+        JNIEnv *env, jobject thiz,
+        jstring serverIp, jint port, jstring masterKey, jint mtu,
+        jint nodelay, jint interval, jint resend, jint nc, jint sndWnd, jint rcvWnd
+) {
     if (g_running) return JNI_TRUE;
 
-    // KHỞI TẠO CLIENT_ID RANDOM ĐỂ CHỐNG XUNG ĐỘT FILE LOCK TRÊN SERVER
     if (g_client_id == 0) {
         srand(time(NULL));
         g_client_id = (uint32_t)(std::chrono::system_clock::now().time_since_epoch().count() & 0xFFFFFFFF);
@@ -189,9 +193,8 @@ Java_com_example_transfer_1server_KcpNative_initKcp(JNIEnv *env, jobject thiz, j
     CryptoBox::initialize();
 
     g_socket_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    
-    // NỚI RỘNG TÚI DẠ DÀY UDP LÊN 16MB ĐỂ ĐỒNG BỘ VỚI ASIO SERVER
-    int rcv_buf_size = 16777216; 
+
+    int rcv_buf_size = 16777216;
     setsockopt(g_socket_fd, SOL_SOCKET, SO_RCVBUF, &rcv_buf_size, sizeof(rcv_buf_size));
 
     memset(&g_server_addr, 0, sizeof(g_server_addr));
@@ -201,15 +204,19 @@ Java_com_example_transfer_1server_KcpNative_initKcp(JNIEnv *env, jobject thiz, j
 
     g_kcp = ikcp_create(0x11223344, nullptr);
     g_kcp->output = udp_output;
-    ikcp_nodelay(g_kcp, 1, 10, 2, 1);
-    ikcp_wndsize(g_kcp, 4096, 4096); // Đồng bộ Window Size với server
+
+    // 🔥 ÁP DỤNG THÔNG SỐ CẤP PHÁT ĐỘNG TỪ SERVER VÀO KCP CONTROL BLOCK
+    ikcp_nodelay(g_kcp, nodelay, interval, resend, nc);
+    ikcp_wndsize(g_kcp, sndWnd, rcvWnd);
     ikcp_setmtu(g_kcp, mtu - 107);
 
     g_running = true;
     g_recv_thread = std::thread(kcp_recv_loop);
     g_update_thread = std::thread(kcp_update_loop);
 
-    LOGI("🚀 C++ NDK ENGINE KÍCH HOẠT MỸ MÃN! Target: %s:%d | MTU: %d | ClientID: %u", ip, port, mtu, g_client_id);
+    LOGI("🚀 C++ NDK ENGINE KÍCH HOẠT THÀNH CÔNG!");
+    LOGI("📊 [KCP TUNING DYNAMIC] NoDelay=%d, Interval=%dms, Resend=%d, NC=%d, SND_WND=%d, RCV_WND=%d | MTU=%d",
+         nodelay, interval, resend, nc, sndWnd, rcvWnd, mtu);
 
     env->ReleaseStringUTFChars(serverIp, ip);
     env->ReleaseStringUTFChars(masterKey, mk);
@@ -224,18 +231,17 @@ Java_com_example_transfer_1server_KcpNative_sendRawKcp(JNIEnv *env, jobject thiz
     uint16_t path_len = strlen(c_path);
     uint32_t data_len = 0;
     jbyte* c_data = nullptr;
-    
+
     if (data != nullptr) {
         data_len = env->GetArrayLength(data);
         c_data = env->GetByteArrayElements(data, 0);
     }
     if (opcode == 0x03) data_len = reqLen;
 
-    // ĐÓNG GÓI CLIENT ID VÀO 32-BIT CAO, REQUEST ID VÀO 32-BIT THẤP
     uint32_t current_req = ++g_req_id;
     uint64_t session_id = ((uint64_t)g_client_id << 32) | current_req;
 
-    LOGI("📤 [SEND] Đang bọc giáp cho lệnh 0x%02X | Path: %s | SessionID: %llu | Size: %d", opcode, c_path, session_id, data_len);
+    LOGI("out [SEND] Opcode: 0x%02X | Path: %s | SessionID: %llu | Size: %d", opcode, c_path, session_id, data_len);
 
     std::vector<uint8_t> vfs_packet;
     uint32_t magic = 0x5A484941;
@@ -246,7 +252,7 @@ Java_com_example_transfer_1server_KcpNative_sendRawKcp(JNIEnv *env, jobject thiz
     vfs_packet.insert(vfs_packet.end(), (uint8_t*)&data_len, ((uint8_t*)&data_len) + 4);
     vfs_packet.insert(vfs_packet.end(), (uint8_t*)&path_len, ((uint8_t*)&path_len) + 2);
     vfs_packet.insert(vfs_packet.end(), c_path, c_path + path_len);
-    
+
     if (data != nullptr && opcode != 0x03) {
         vfs_packet.insert(vfs_packet.end(), c_data, c_data + data_len);
     }
@@ -283,7 +289,7 @@ Java_com_example_transfer_1server_KcpNative_sendRawKcp(JNIEnv *env, jobject thiz
         return retArray;
     } else {
         g_pending_requests.erase(session_id);
-        LOGE("❌ [TIMEOUT] Lệnh 0x%02X SessionID %llu chờ mòn mỏi 15s không có hồi âm!", opcode, session_id);
+        LOGE("❌ [TIMEOUT] Lệnh 0x%02X SessionID %llu chờ 15s không có hồi âm!", opcode, session_id);
         return nullptr;
     }
 }
@@ -293,7 +299,7 @@ Java_com_example_transfer_1server_KcpNative_shutdownKcp(JNIEnv *env, jobject thi
     g_running = false;
     if (g_recv_thread.joinable()) g_recv_thread.join();
     if (g_update_thread.joinable()) g_update_thread.join();
-    
+
     std::lock_guard<std::mutex> lock(g_kcp_mutex);
     if (g_kcp) { ikcp_release(g_kcp); g_kcp = nullptr; }
     if (g_socket_fd >= 0) { close(g_socket_fd); g_socket_fd = -1; }

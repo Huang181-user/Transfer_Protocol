@@ -6,7 +6,7 @@ import time
 MAX_LINES_PER_FILE = 3000
 IGNORE_DIRS = {
     'build', '.gradle', '.idea', '.git', '__pycache__', 
-    'captures', '.externalNativeBuild', '.cxx', 'app/build'
+    'captures', '.externalNativeBuild', '.cxx', 'app/build','libsodium', 'libsodium-stable'
 }
 VALID_EXTENSIONS = {
     '.kt', '.java', '.xml', '.gradle', '.kts', 
