@@ -11,16 +11,22 @@ static UFWManager ufw_manager;
 static VfsServer* kcp_server = nullptr;
 static int g_kcp_port = 0;
 static int g_quic_port = 0;
+static int g_nodelay = 1, g_interval = 10, g_resend = 2, g_nc = 0, g_snd_wnd = 512, g_rcv_wnd = 512;
 
 void vfs_register_ip_uds(const std::string& ip, const std::string& uds_path);
 
 extern "C" {
-int zhiauth_core_init(const char* db_path, const char* master_key, int kcp_port, int quic_port) {
+int zhiauth_core_init(const char* db_path, const char* master_key, int kcp_port, int quic_port,
+                      int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
     g_kcp_port = kcp_port; g_quic_port = quic_port;
+    g_nodelay = nodelay; g_interval = interval; g_resend = resend; g_nc = nc;
+    g_snd_wnd = snd_wnd; g_rcv_wnd = rcv_wnd;
+
     if (!db_handler.initialize_database(db_path ? db_path : "")) return -1;
     ufw_manager.start_worker();
     if (!CryptoBox::initialize()) return -1;
-    kcp_server = new VfsServer(g_kcp_port, master_key ? master_key : "");
+    
+    kcp_server = new VfsServer(g_kcp_port, master_key ? master_key : "", g_nodelay, g_interval, g_resend, g_nc, g_snd_wnd, g_rcv_wnd);
     kcp_server->start();
     return 0;
 }

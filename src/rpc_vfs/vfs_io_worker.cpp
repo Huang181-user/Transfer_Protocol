@@ -61,16 +61,47 @@ bool VfsIoWorker::stat_file(const std::string& path, uint64_t& out_size, bool& o
 
 bool VfsIoWorker::list_directory(const std::string& path, std::string& out_list) {
     try {
-        std::string list_res = "";
+        out_list.clear();
         for (const auto& entry : fs::directory_iterator(path)) {
             std::error_code ec;
-            // 🔥 ÉP SERVER TRẢ VỀ DUNG LƯỢNG CHO CLIENT RAM CACHE
             uint64_t size = entry.is_regular_file(ec) ? entry.file_size(ec) : 0;
-            list_res += entry.path().filename().string() + "," + 
-                        (entry.is_directory(ec) ? "DIR" : "REG") + "," +
-                        std::to_string(size) + ",33188|";
+            uint8_t is_dir = entry.is_directory(ec) ? 1 : 0;
+            uint32_t mode = 33188; // Mặc định mode (0100000 | 0644)
+            
+            std::string name = entry.path().filename().string();
+            uint16_t name_len = static_cast<uint16_t>(name.length());
+
+            // ĐÓNG GÓI NHỊ PHÂN TRỰC TIẾP (15 bytes Header)
+            // Trình tự: [NameLen: 2 bytes] [IsDir: 1 byte] [Size: 8 bytes] [Mode: 4 bytes]
+            char buf[15];
+            
+            // Name Length (Little Endian)
+            buf[0] = name_len & 0xFF;
+            buf[1] = (name_len >> 8) & 0xFF;
+            
+            // Is Directory
+            buf[2] = is_dir;
+            
+            // File Size (Little Endian)
+            buf[3] = size & 0xFF;
+            buf[4] = (size >> 8) & 0xFF;
+            buf[5] = (size >> 16) & 0xFF;
+            buf[6] = (size >> 24) & 0xFF;
+            buf[7] = (size >> 32) & 0xFF;
+            buf[8] = (size >> 40) & 0xFF;
+            buf[9] = (size >> 48) & 0xFF;
+            buf[10] = (size >> 56) & 0xFF;
+
+            // Mode (Little Endian)
+            buf[11] = mode & 0xFF;
+            buf[12] = (mode >> 8) & 0xFF;
+            buf[13] = (mode >> 16) & 0xFF;
+            buf[14] = (mode >> 24) & 0xFF;
+
+            // Nạp Header 15 bytes + Chuỗi tên file thẳng vào Payload
+            out_list.append(buf, 15);
+            out_list.append(name);
         }
-        out_list = list_res;
         return true;
     } catch (...) { return false; }
 }

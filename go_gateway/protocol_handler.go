@@ -38,12 +38,10 @@ type UserContext struct {
 
 var sessionCache sync.Map
 
-// 🔥 GẮN LẠI DẤU CON TRỎ (*) CHO CHUẨN VỚI QUIC-GO
 func HandleIncomingStream(stream *quic.Stream, port string, conn *quic.Conn) {
 	defer (*stream).Close()
 	defer (*stream).CancelRead(0)
 
-	// Stream vốn dĩ là con trỏ, nên truyền thẳng vào ReadAll
 	data, err := io.ReadAll(stream)
 	if err != nil && err != io.EOF {
 		return
@@ -128,13 +126,12 @@ func handleSecurityAuthentication(stream *quic.Stream, payload string, remoteIP 
 	resultCStr := C.zhiauth_authenticate_and_trigger(cUser, cPass, cLan, cTs, cHwid)
 	resultStr := C.GoString(resultCStr)
 
-        if strings.HasPrefix(resultStr, "1|") {
+	if strings.HasPrefix(resultStr, "1|") {
 		resParts := strings.Split(resultStr, "|")
 		if len(resParts) >= 3 {
 			dbUser, dbPath := resParts[1], resParts[2]
 
 			udsPath := "/tmp/zhiauth_kcp_" + dbUser + ".sock"
-			// 🔥 MULTI-CLIENT: Khám xét xem Worker đã có mặt chưa, nếu có thì xài chung!
 			connTest, errTest := net.DialTimeout("unix", udsPath, 500*time.Millisecond)
 			if errTest == nil {
 				connTest.Close()
@@ -143,7 +140,6 @@ func handleSecurityAuthentication(stream *quic.Stream, payload string, remoteIP 
 				os.Remove(udsPath)
 				kcpWorkerCmd := exec.Command("sudo", "-n", "-u", dbUser, "/usr/local/bin/zhiauth_kcp_worker", udsPath)
 				
-				// 🔥 FIX CỰC MẠNH: NỐI ỐNG XẢ LOG CỦA TIẾN TRÌNH CON VÀO FILE LOG CHUNG!
 				logFile, errLog := os.OpenFile(globalConfig.Paths.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 				if errLog == nil {
 					kcpWorkerCmd.Stdout = logFile
@@ -157,9 +153,7 @@ func handleSecurityAuthentication(stream *quic.Stream, payload string, remoteIP 
 					return
 				}
 				
-				// Đóng file fd ở tiến trình mẹ để tránh rò rỉ RAM (Tiến trình con đã giữ bản sao)
 				if logFile != nil { logFile.Close() }
-				
 				log.Printf("[%s] [MULTI-CLIENT] 🚀 Đã spawn KCP Worker tiên phong cho user '%s'", time.Now().Format("2006-01-02 15:04:05.000"), dbUser)
 			}
 
@@ -169,13 +163,24 @@ func handleSecurityAuthentication(stream *quic.Stream, payload string, remoteIP 
 				LanIP:      lan,
 				TsIP:       ts,
 				LastActive: time.Now().Unix(),
-			}			sessionCache.Store(lan, newCtx)
+			}
+			
+			sessionCache.Store(lan, newCtx)
 			sessionCache.Store(ts, newCtx)
 			sessionCache.Store(remoteIP, newCtx)
 
-			// 🔥 CẬP NHẬT: Nhét Port QUIC và KCP vào gói tin trả về
-			log.Printf("[%s] [AUTH-SUCCESS] Phê duyệt IP: %s | User: %s | Cấp phát Port Động: QUIC=%d, KCP=%d", time.Now().Format("2006-01-02 15:04:05.000"), remoteIP, dbUser, globalConfig.Network.QuicDataPort, globalConfig.Network.KcpDataPort)
-			authResp := fmt.Sprintf("AUTH_SUCCESS|%s|%d|%d", dbPath, globalConfig.Network.QuicDataPort, globalConfig.Network.KcpDataPort)
+			log.Printf("[%s] [AUTH-SUCCESS] Phê duyệt IP: %s | User: %s | Cấp Dynamic Ports (QUIC=%d, KCP=%d) & KCP Tuning (NoDelay=%d, Int=%d, Resend=%d, Nc=%d, SND=%d, RCV=%d)", 
+				time.Now().Format("2006-01-02 15:04:05.000"), remoteIP, dbUser, 
+				globalConfig.Network.QuicDataPort, globalConfig.Network.KcpDataPort,
+				globalConfig.KcpTuning.NoDelay, globalConfig.KcpTuning.Interval, globalConfig.KcpTuning.Resend, 
+				globalConfig.KcpTuning.Nc, globalConfig.KcpTuning.SndWnd, globalConfig.KcpTuning.RcvWnd)
+
+			// Chuỗi Auth trả về bản v6.1: AUTH_SUCCESS|SharedPath|QuicPort|KcpPort|NoDelay|Interval|Resend|Nc|SndWnd|RcvWnd
+			authResp := fmt.Sprintf("AUTH_SUCCESS|%s|%d|%d|%d|%d|%d|%d|%d|%d", 
+				dbPath, globalConfig.Network.QuicDataPort, globalConfig.Network.KcpDataPort,
+				globalConfig.KcpTuning.NoDelay, globalConfig.KcpTuning.Interval, globalConfig.KcpTuning.Resend, 
+				globalConfig.KcpTuning.Nc, globalConfig.KcpTuning.SndWnd, globalConfig.KcpTuning.RcvWnd)
+			
 			(*stream).Write([]byte(authResp))
 		}
 	} else {

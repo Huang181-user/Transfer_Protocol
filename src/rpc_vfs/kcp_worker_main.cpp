@@ -84,13 +84,26 @@ void handle_client_connection(int client_fd) {
             auto start_time = std::chrono::high_resolution_clock::now();
 
             if (header->opcode == VfsOpcode::OP_STAT) {
-                uint64_t size = 0; bool is_dir = false;
-                if (VfsIoWorker::stat_file(target_path, size, is_dir)) {
-                    uint64_t mtime = 0; struct stat st;
-                    if (stat(target_path.c_str(), &st) == 0) mtime = st.st_mtime;
-                    file_data.resize(17); std::memcpy(file_data.data(), &size, 8); 
-                    file_data[8] = is_dir ? 1 : 0; std::memcpy(file_data.data() + 9, &mtime, 8); 
-                } else { resp_opcode = VfsOpcode::OP_ERROR; }
+                struct stat st;
+                if (stat(target_path.c_str(), &st) == 0) {
+                    uint64_t size = st.st_size;
+                    uint8_t is_dir = S_ISDIR(st.st_mode) ? 1 : 0;
+                    uint64_t mtime = st.st_mtime;
+                    uint64_t ctime = st.st_ctime;
+                    uint64_t atime = st.st_atime;
+                    uint32_t mode = st.st_mode;
+
+                    // Dội bom đủ 37 bytes: [Size:8] [IsDir:1] [Mtime:8] [Ctime:8] [Atime:8] [Mode:4]
+                    file_data.resize(37); 
+                    std::memcpy(file_data.data(), &size, 8); 
+                    file_data[8] = is_dir; 
+                    std::memcpy(file_data.data() + 9, &mtime, 8); 
+                    std::memcpy(file_data.data() + 17, &ctime, 8);
+                    std::memcpy(file_data.data() + 25, &atime, 8);
+                    std::memcpy(file_data.data() + 33, &mode, 4);
+                } else { 
+                    resp_opcode = VfsOpcode::OP_ERROR; 
+                }
                 ZHI_LOG_DEBUG("[OP_STAT] Path: " + target_path + " | Success: " + (resp_opcode == VfsOpcode::OP_ERROR ? "NO" : "YES"));
 
             } else if (header->opcode == VfsOpcode::OP_LIST) {

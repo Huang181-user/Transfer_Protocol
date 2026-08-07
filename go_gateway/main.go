@@ -39,8 +39,17 @@ func main() {
 	defer C.free(unsafe.Pointer(cDbPath))
 	defer C.free(unsafe.Pointer(cMasterKey))
 
-	C.zhiauth_core_init(cDbPath, cMasterKey, C.int(globalConfig.Network.KcpDataPort), C.int(globalConfig.Network.QuicDataPort))
-
+	// Cập nhật lệnh gọi CGO trong main.go
+	C.zhiauth_core_init(cDbPath, cMasterKey, 
+		C.int(globalConfig.Network.KcpDataPort), 
+		C.int(globalConfig.Network.QuicDataPort),
+		C.int(globalConfig.KcpTuning.NoDelay),
+		C.int(globalConfig.KcpTuning.Interval),
+		C.int(globalConfig.KcpTuning.Resend),
+		C.int(globalConfig.KcpTuning.Nc),
+		C.int(globalConfig.KcpTuning.SndWnd),
+		C.int(globalConfig.KcpTuning.RcvWnd),
+	)
 	go StartGlobalWatchdog()
 	go StartRawQuicListener()
 

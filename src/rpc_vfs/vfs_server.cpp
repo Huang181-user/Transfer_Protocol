@@ -43,9 +43,9 @@ std::string vfs_get_uds_by_ip(const std::string& ip) {
     std::lock_guard<std::mutex> lock(g_kcp_ip_uds_mutex); return g_kcp_ip_uds_map.count(ip) ? g_kcp_ip_uds_map[ip] : "";
 }
 
-VfsServer::VfsServer(uint16_t port, const std::string& master_sym_key) : socket_(io_context_, udp::endpoint(udp::v4(), port)), is_running_(false), recv_buffer_(65536) {
-    master_sym_key_ = master_sym_key;
-    // Tăng kịch kim bộ đệm OS Socket lên 16MB để hứng bão KCP
+VfsServer::VfsServer(uint16_t port, const std::string& master_sym_key, int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) 
+    : socket_(io_context_, udp::endpoint(udp::v4(), port)), is_running_(false), recv_buffer_(65536),
+      master_sym_key_(master_sym_key), nodelay_(nodelay), interval_(interval), resend_(resend), nc_(nc), snd_wnd_(snd_wnd), rcv_wnd_(rcv_wnd) {
     try { socket_.set_option(asio::socket_base::receive_buffer_size(16777216)); socket_.set_option(asio::socket_base::send_buffer_size(16777216)); } catch (...) {}
 }
 VfsServer::~VfsServer() { stop(); }
@@ -122,11 +122,13 @@ void VfsServer::receive_loop() {
             new_session.kcp_cb = ikcp_create(0x11223344, new_session.user_ctx.get());
             new_session.kcp_cb->output = kcp_output_callback;
             
-            // 🔥 TỐI ƯU SIÊU TỐC, MỞ TOANG CỬA SỔ!
-            ikcp_nodelay(new_session.kcp_cb, 1, 10, 2, 1); 
-            ikcp_wndsize(new_session.kcp_cb, 4096, 4096);
+            // 🔥 ĐÃ CHUYỂN SANG ĐỌC ĐỘNG TỪ CONFIG.JSON CỦA SERVER
+            ikcp_nodelay(new_session.kcp_cb, nodelay_, interval_, resend_, nc_); 
+            ikcp_wndsize(new_session.kcp_cb, snd_wnd_, rcv_wnd_);
             
-            ikcp_setmtu(new_session.kcp_cb, 1350); new_session.kcp_cb->rx_minrto = 10; new_session.kcp_cb->dead_link = 200;
+            ikcp_setmtu(new_session.kcp_cb, 1350); 
+            new_session.kcp_cb->rx_minrto = 10; 
+            new_session.kcp_cb->dead_link = 200;
             new_session.uds_path = vfs_get_uds_by_ip(sender_endpoint_.address().to_string());
             sessions_[client_key] = new_session; 
             it = sessions_.find(client_key);

@@ -66,25 +66,23 @@ void UFWManager::worker_loop() {
 void UFWManager::execute_system_command(const UFWTask& task) {
     std::ostringstream oss;
     
-    // Ráp chuỗi lệnh hệ thống dựa trên tệp đường dẫn nhị phân đã cấu hình trong sudoers
+    // Sử dụng bộ quy tắc mặc định của Debian: bảng 'inet filter', chuỗi 'input'
+    // nftables hỗ trợ xóa rule bằng cách gọi lại chính xác câu lệnh add thay bằng chữ delete!
     if (task.is_allow_action) {
-        oss << "sudo /usr/sbin/ufw allow from " << task.ip_address 
-            << " to any port " << task.port 
-            << " proto " << task.protocol;
+        oss << "sudo /usr/sbin/nft add rule inet filter input ip saddr " << task.ip_address 
+            << " " << task.protocol << " dport " << task.port << " accept";
     } else {
-        oss << "sudo /usr/sbin/ufw delete allow from " << task.ip_address 
-            << " to any port " << task.port 
-            << " proto " << task.protocol;
+        oss << "sudo /usr/sbin/nft delete rule inet filter input ip saddr " << task.ip_address 
+            << " " << task.protocol << " dport " << task.port << " accept";
     }
 
     std::string cmd = oss.str();
     ZHI_LOG_INFO("Worker thread executing system infrastructure rule command: '" + cmd + "'");
     
-    // Ném thẳng lệnh xuống nhân Linux Kernel
     int status = std::system(cmd.c_str());
     
     if (status == 0) {
-        ZHI_LOG_INFO("Firewall modification successfully applied to OS environment network table.");
+        ZHI_LOG_INFO("Nftables modification successfully applied to OS environment network table.");
     } else {
         ZHI_LOG_ERR("OS firewall command execution failed with system status error code: " + std::to_string(status));
     }

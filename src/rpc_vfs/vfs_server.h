@@ -27,8 +27,7 @@ struct KcpSession {
 
 class VfsServer {
 public:
-    VfsServer(uint16_t port, const std::string& master_sym_key);
-    ~VfsServer();
+    VfsServer(uint16_t port, const std::string& master_sym_key, int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);    ~VfsServer();
     void start();
     void stop();
     static int kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user);
@@ -43,6 +42,7 @@ private:
     void kcp_update_loop();
     void process_kcp_payload(KcpSession session_copy, std::vector<uint8_t> encrypted_payload);
     
+    int nodelay_, interval_, resend_, nc_, snd_wnd_, rcv_wnd_;
     asio::ip::udp::endpoint sender_endpoint_;
     std::vector<uint8_t> recv_buffer_;
     std::thread io_thread_;
