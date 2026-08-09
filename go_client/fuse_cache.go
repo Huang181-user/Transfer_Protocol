@@ -1,9 +1,8 @@
 package main
 
 import (
+	"encoding/binary"
 	"log"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -15,48 +14,53 @@ type FileMeta struct {
 	Exp   time.Time
 }
 
-// 🛡️ BẢO BỐI: Bản đồ RAM an toàn cho hệ đa luồng (Thread-safe Map)
+// 🛡️ BẢO BỐI: Bản đồ RAM an toàn cho hệ đa luồng
 var ramCache = struct {
 	sync.RWMutex
 	m map[string]FileMeta
 }{m: make(map[string]FileMeta)}
 
-func InjectBulkCache(parentPath string, bulkData string) {
+// NHẬN TRỰC TIẾP MẢNG BYTE TỪ C++
+func InjectBulkCache(parentPath string, bulkData []byte) {
 	ramCache.Lock()
 	defer ramCache.Unlock()
 
-	log.Printf("[RAM-CACHE] ⚡ Mở khóa đa luồng: Bơm hàng loạt Metadata vào RAM cho thư mục: [%s]", parentPath)
-	count := 0
+	offset := 0
+	totalLen := len(bulkData)
 
-	tokens := strings.Split(bulkData, "|")
-	for _, token := range tokens {
-		if token == "" {
-			continue
+	// Quét qua mảng byte cho đến khi hết dữ liệu
+	for offset+15 <= totalLen {
+		// Bóc 15 bytes Header
+		nameLen := int(binary.LittleEndian.Uint16(bulkData[offset : offset+2]))
+		isDirVal := bulkData[offset+2]
+		size := binary.LittleEndian.Uint64(bulkData[offset+3 : offset+11])
+		mode64 := binary.LittleEndian.Uint32(bulkData[offset+11 : offset+15])
+
+		offset += 15
+
+		// Check an toàn chống lỗi tràn bộ nhớ (Out of bounds)
+		if offset+nameLen > totalLen {
+			log.Println("[CACHE-WARNING] Cảnh báo: Gói tin thư mục bị cắt xén!")
+			break
 		}
-		parts := strings.Split(token, ",")
-		if len(parts) < 4 {
-			continue
-		}
 
-		name := parts[0]
-		isDir := parts[1] == "DIR"
-		size, _ := strconv.ParseUint(parts[2], 10, 64)
-		mode64, _ := strconv.ParseUint(parts[3], 10, 32)
+		// Bóc Tên file theo độ dài NameLen
+		name := string(bulkData[offset : offset+nameLen])
+		offset += nameLen
 
+		isDir := isDirVal == 1
 		fullPath := parentPath + "/" + name
 		if parentPath == "/" {
 			fullPath = "/" + name
-		} // Xử lý méo dấu slash
+		}
 
 		ramCache.m[fullPath] = FileMeta{
 			IsDir: isDir,
 			Size:  size,
-			Mode:  uint32(mode64),
+			Mode:  mode64,
 			Exp:   time.Now().Add(60 * time.Second),
 		}
-		count++
 	}
-	log.Printf("[RAM-CACHE] 🎯 Đã nén thành công %d Object vào bộ nhớ đệm nội bộ (Zero-Latency)!", count)
 }
 
 func CheckRAMCache(fullPath string) (FileMeta, bool) {
@@ -65,13 +69,12 @@ func CheckRAMCache(fullPath string) (FileMeta, bool) {
 
 	meta, exists := ramCache.m[fullPath]
 	if exists && time.Now().Before(meta.Exp) {
-		log.Printf("[CACHE-HIT] 🚀 Tốc độ ánh sáng! Truy xuất trực tiếp từ RAM không qua mạng: %s", fullPath)
+		log.Printf("[CACHE-HIT] 🚀 Tốc độ ánh sáng! Truy xuất trực tiếp từ RAM: %s", fullPath)
 		return meta, true
 	}
 	return FileMeta{}, false
 }
 
-// Thêm hàm này vào cuối file fuse_cache.go
 func RemoveFromRAMCache(fullPath string) {
 	ramCache.Lock()
 	defer ramCache.Unlock()
