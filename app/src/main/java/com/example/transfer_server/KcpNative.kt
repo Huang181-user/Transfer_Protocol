@@ -25,24 +25,15 @@ object KcpNative {
     init {
         try {
             System.loadLibrary("zhiauth_kcp_jni")
-            logRealtime("INFO", "✅ Đã nạp thành công NDK libzhiauth_kcp_jni.so!")
+            logRealtime("INFO", "✅ Đã nạp NDK libzhiauth_kcp_jni.so!")
         } catch (e: Exception) {
             logRealtime("ERROR", "❌ Lỗi nạp C++: ${e.message}")
         }
     }
 
-    // 🔥 CẬP NHẬT: Nhận đầy đủ 6 thông số KCP Tuning từ Server
     external fun initKcp(
-        serverIp: String,
-        port: Int,
-        masterKey: String,
-        mtu: Int,
-        nodelay: Int,
-        interval: Int,
-        resend: Int,
-        nc: Int,
-        sndWnd: Int,
-        rcvWnd: Int
+        serverIp: String, port: Int, masterKey: String, mtu: Int,
+        nodelay: Int, interval: Int, resend: Int, nc: Int, sndWnd: Int, rcvWnd: Int
     ): Boolean
 
     external fun sendRawKcp(opcode: Byte, path: String, offset: Long, reqLen: Int, data: ByteArray?): ByteArray?
@@ -63,15 +54,11 @@ object KcpNative {
         val realPath = resolvePath(path)
         val res = sendRawKcp(0x01, realPath, 0, 0, null) ?: return formatError("Timeout hoặc Lỗi NDK")
 
-        // 🔥 Server C++ dội bom 37 bytes: [Size:8] [IsDir:1] [Mtime:8] [Ctime:8] [Atime:8] [Mode:4]
-        if (res.size < 37) return formatError("Packet too short (Cần 37 bytes, nhận được ${res.size})")
+        if (res.size < 37) return formatError("Packet too short (Cần 37 bytes)")
 
         val buffer = ByteBuffer.wrap(res).order(ByteOrder.LITTLE_ENDIAN)
-
         val size = buffer.long
         val isDir = buffer.get().toInt() == 1
-
-        // Nhân 1000 để đổi từ giây (Unix Timestamp) sang mili-giây cho Java
         val mtime = buffer.long * 1000L
         val ctime = buffer.long * 1000L
         val atime = buffer.long * 1000L
@@ -83,7 +70,6 @@ object KcpNative {
             if (name.isEmpty()) name = "/"
         }
 
-        // Tống hết bộ đồ lòng vào JSON
         return "{\"name\":\"$name\", \"size\":$size, \"is_dir\":$isDir, \"last_modified\":$mtime, \"ctime\":$ctime, \"atime\":$atime, \"mode\":$mode}"
     }
 
@@ -92,23 +78,19 @@ object KcpNative {
         val res = sendRawKcp(0x02, realPath, 0, 0, null) ?: return "[]"
         val arr = mutableListOf<String>()
         val vSlash = if (path.endsWith("/")) path else "$path/"
-
         val buffer = ByteBuffer.wrap(res).order(ByteOrder.LITTLE_ENDIAN)
 
-        // Trình tự 15 bytes: [NameLen: 2] [IsDir: 1] [Size: 8] [Mode: 4]
         while (buffer.remaining() >= 15) {
             val nameLen = buffer.short.toInt() and 0xFFFF
             val isDirByte = buffer.get().toInt()
             val size = buffer.long
-            val mode = buffer.int // Không xài nhưng vẫn phải bốc ra để con trỏ chạy tiếp
+            buffer.int // bypass mode
 
-            // Bảo vệ lỡ packet bị cắt xén
             if (buffer.remaining() < nameLen) {
-                Log.e(TAG, "Lỗi phân tích vfsList: Packet bị hụt dữ liệu!")
+                logRealtime("ERROR", "Packet hụt dữ liệu khi đang đọc tên file!")
                 break
             }
 
-            // Đọc tên file
             val nameBytes = ByteArray(nameLen)
             buffer.get(nameBytes)
             val fileName = String(nameBytes, Charsets.UTF_8).replace("\"", "\\\"")
@@ -116,7 +98,6 @@ object KcpNative {
             val isDirStr = if (isDirByte == 1) "true" else "false"
             arr.add("{\"name\":\"$fileName\",\"is_dir\":$isDirStr,\"size\":$size,\"path\":\"$vSlash$fileName\"}")
         }
-
         return "[${arr.joinToString(",")}]"
     }
 
@@ -145,12 +126,13 @@ object KcpNative {
             return false
         }
 
+        // 🔥 CHUẨN 256KB CỦA NÝ: Do Server C++ đã mở KCP_WND_RCV=4096
         val chunkSize = 256 * 1024L
         val isSuccess = AtomicBoolean(true)
         val numThreads = 8
         val executor = Executors.newFixedThreadPool(numThreads)
 
-        logRealtime("INFO", "🚀 Kích hoạt Tải Song Song: 8 Luồng | Kích thước: $size bytes")
+        logRealtime("INFO", "🚀 Tải Song Song (8 Threads) | Chunk 256KB | Size: $size bytes")
 
         var offset = 0L
         while (offset < size) {
@@ -172,12 +154,12 @@ object KcpNative {
                         chunkSuccess = true
                     } else {
                         retry++
-                        logRealtime("WARN", "⚠️ Lỗi chunk offset $currentOffset, đang retry $retry/3...")
+                        logRealtime("WARN", "⚠️ Lỗi chunk $currentOffset, retry $retry/3...")
                     }
                 }
 
                 if (!chunkSuccess) {
-                    logRealtime("ERROR", "❌ Chunk offset $currentOffset thất bại hoàn toàn sau 3 lần thử!")
+                    logRealtime("ERROR", "❌ Chunk offset $currentOffset sụp đổ sau 3 lần thử!")
                     isSuccess.set(false)
                 }
             }
@@ -185,19 +167,14 @@ object KcpNative {
         }
 
         executor.shutdown()
-        try {
-            executor.awaitTermination(1, TimeUnit.HOURS)
-        } catch (e: Exception) {
-            isSuccess.set(false)
-        }
-
+        try { executor.awaitTermination(1, TimeUnit.HOURS) } catch (e: Exception) { isSuccess.set(false) }
         try { raf.close() } catch (e: Exception) {}
 
         if (!isSuccess.get()) {
             File(localP).delete()
-            logRealtime("ERROR", "❌ Tiến trình tải Multi-part thất bại: $localP")
+            logRealtime("ERROR", "❌ Tải Multi-part THẤT BẠI: $localP")
         } else {
-            logRealtime("INFO", "🎉 Tải song song HOÀN TẤT: $localP ($size bytes)")
+            logRealtime("INFO", "🎉 HOÀN TẤT: $localP ($size bytes)")
         }
 
         return isSuccess.get()

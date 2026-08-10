@@ -31,6 +31,25 @@ static void real_log(int prio, const char* fmt, ...) {
 #define LOGI(...) real_log(ANDROID_LOG_INFO, __VA_ARGS__)
 #define LOGE(...) real_log(ANDROID_LOG_ERROR, __VA_ARGS__)
 
+// =====================================================================
+// 🔥 CHE GIẤU ĐƯỜNG DẪN C++ KHÔNG DÙNG REGEX
+// =====================================================================
+static std::string mask_sensitive_path(const std::string& path) {
+    if (path.empty()) return path;
+
+    // Tìm vị trí dấu '/' cuối cùng
+    size_t last_slash = path.find_last_of('/');
+    if (last_slash == std::string::npos || last_slash == 0) {
+        return path; // Trả về gốc nếu ko phải chuỗi đường dẫn lồng nhau
+    }
+
+    // Cắt lấy tên file cuối cùng để dễ debug
+    std::string filename = path.substr(last_slash + 1);
+
+    // Nối với lớp mặt nạ
+    return "/***/***/" + filename;
+}
+
 static int g_socket_fd = -1;
 static ikcpcb* g_kcp = nullptr;
 static std::string g_master_key;
@@ -54,7 +73,7 @@ static std::map<uint64_t, std::shared_ptr<RequestWait>> g_pending_requests;
 
 static int udp_output(const char *buf, int len, ikcpcb *kcp, void *user) {
     if (g_socket_fd >= 0) {
-        // 🔥 FIX: Đã connect nên vã lệnh send thẳng tay, cực kỳ nhẹ và tránh lạc IP
+        // Đã connect nên vã lệnh send thẳng tay, cực kỳ nhẹ và tránh lạc IP
         send(g_socket_fd, buf, len, 0);
     }
     return 0;
@@ -105,7 +124,7 @@ static void kcp_update_loop() {
 
 static void kcp_recv_loop() {
     uint8_t udp_buffer[65535];
-    std::vector<uint8_t> kcp_payload(2 * 1024 * 1024);
+    std::vector<uint8_t> kcp_payload(6 * 1024 * 1024); // Đệm lớn 6MB cho Window Size 4096
 
     while (g_running) {
         struct timeval tv;
@@ -127,7 +146,7 @@ static void kcp_recv_loop() {
 
                     if (peek_size > kcp_payload.size()) {
                         LOGE("⚠️ Kích thước gói KCP quá lớn (%d bytes)! Tự động nới túi...", peek_size);
-                        kcp_payload.resize(peek_size + 1024);
+                        kcp_payload.resize(peek_size + 1024 * 1024);
                     }
 
                     int read_len = ikcp_recv(g_kcp, (char*)kcp_payload.data(), kcp_payload.size());
@@ -135,8 +154,6 @@ static void kcp_recv_loop() {
                         LOGE("❌ ikcp_recv LỖI! Mã lỗi: %d | Peek_size dự kiến: %d", read_len, peek_size);
                         break;
                     }
-
-                    LOGI("📥 KCP Reassembly Xong! Bốc được %d bytes. Đưa Libsodium xử lý...", read_len);
 
                     std::vector<uint8_t> ciphertext(kcp_payload.data(), kcp_payload.data() + read_len);
                     std::vector<uint8_t> plaintext;
@@ -147,8 +164,6 @@ static void kcp_recv_loop() {
                             memcpy(&session_id, &plaintext[5], 8);
 
                             if (session_id == 0) continue;
-
-                            LOGI("✅ Libsodium giải mã thành công! Trả về Session ID: %llu | Size: %zu bytes", session_id, plaintext.size());
 
                             std::lock_guard<std::mutex> plock(g_promise_mutex);
                             auto it = g_pending_requests.find(session_id);
@@ -162,7 +177,7 @@ static void kcp_recv_loop() {
                         } else if (plaintext.size() >= 27 && plaintext[4] == 0xFF) {
                             LOGE("❌ Server trả về mã lỗi 0xFF (Lỗi I/O hoặc File bị khóa)!");
                         } else {
-                            LOGE("❌ Cấu trúc JSON/VFS Server gửi về dị thường! Size: %zu", plaintext.size());
+                            LOGE("❌ Cấu trúc VFS Server gửi về dị thường! Size: %zu", plaintext.size());
                         }
                     } else {
                         LOGE("❌ Libsodium giải mã thất bại!");
@@ -173,7 +188,6 @@ static void kcp_recv_loop() {
     }
 }
 
-// 🔥 CẬP NHẬT HÀM JNI: Hứng 6 thông số KCP Tuning động
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_transfer_1server_KcpNative_initKcp(
         JNIEnv *env, jobject thiz,
@@ -203,7 +217,6 @@ Java_com_example_transfer_1server_KcpNative_initKcp(
     g_server_addr.sin_port = htons(port);
     inet_pton(AF_INET, ip, &g_server_addr.sin_addr);
 
-    // 🔥 TRÓI CỔ SOCKET: Ép Android định tuyến qua VPN (Tailscale) và chốt IP nguồn
     if (connect(g_socket_fd, (struct sockaddr*)&g_server_addr, sizeof(g_server_addr)) < 0) {
         LOGE("❌ Lỗi ép kết nối Socket UDP! Lệch đường ray VPN!");
         return JNI_FALSE;
@@ -247,7 +260,9 @@ Java_com_example_transfer_1server_KcpNative_sendRawKcp(JNIEnv *env, jobject thiz
     uint32_t current_req = ++g_req_id;
     uint64_t session_id = ((uint64_t)g_client_id << 32) | current_req;
 
-    LOGI("out [SEND] Opcode: 0x%02X | Path: %s | SessionID: %llu | Size: %d", opcode, c_path, session_id, data_len);
+    // 🔥 GỌI HÀM LÀM MỜ ĐƯỜNG DẪN TRƯỚC KHI IN RA LOGCAT
+    std::string masked_path = mask_sensitive_path(c_path);
+    LOGI("📤 [SEND] Opcode: 0x%02X | Path: %s | SessionID: %llu | Size: %d", opcode, masked_path.c_str(), session_id, data_len);
 
     std::vector<uint8_t> vfs_packet;
     uint32_t magic = 0x5A484941;
@@ -288,21 +303,32 @@ Java_com_example_transfer_1server_KcpNative_sendRawKcp(JNIEnv *env, jobject thiz
     }
 
     std::unique_lock<std::mutex> wait_lock(g_promise_mutex);
-    if (waiter->cv.wait_for(wait_lock, std::chrono::seconds(15), [&]{ return waiter->done; })) {
+    if (waiter->cv.wait_for(wait_lock, std::chrono::seconds(25), [&]{ return waiter->done; })) {
         g_pending_requests.erase(session_id);
         jbyteArray retArray = env->NewByteArray(waiter->data.size());
         env->SetByteArrayRegion(retArray, 0, waiter->data.size(), (jbyte*)waiter->data.data());
         return retArray;
     } else {
         g_pending_requests.erase(session_id);
-        LOGE("❌ [TIMEOUT] Lệnh 0x%02X SessionID %llu chờ 15s không có hồi âm!", opcode, session_id);
+        LOGE("❌ [TIMEOUT] Lệnh 0x%02X SessionID %llu mất tín hiệu sau 25s!", opcode, session_id);
         return nullptr;
     }
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_transfer_1server_KcpNative_shutdownKcp(JNIEnv *env, jobject thiz) {
+    LOGI("🛑 Chuẩn bị Shutdown KCP, đánh thức các luồng đang đợi...");
     g_running = false;
+
+    // 🔥 GIẢI PHÓNG DEADLOCK: Đánh thức tất cả các thread đang chờ Wait_For dậy để thoái lui!
+    {
+        std::lock_guard<std::mutex> lock(g_promise_mutex);
+        for (auto& pair : g_pending_requests) {
+            pair.second->done = true;
+            pair.second->cv.notify_all();
+        }
+    }
+
     if (g_recv_thread.joinable()) g_recv_thread.join();
     if (g_update_thread.joinable()) g_update_thread.join();
 

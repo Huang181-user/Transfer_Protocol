@@ -2,7 +2,8 @@ package com.example.transfer_server
 
 import quicclient.Quicclient
 import java.io.InputStream
-import android.util.Log
+// 🔥 SỬ DỤNG LÕI REALTIME LOGGER ĐỂ ĐƯỢC TỰ ĐỘNG CHE MỜ ĐƯỜNG DẪN NHẠY CẢM
+import com.example.app.network.RealtimeLogger
 
 object HuangTransport {
     private const val TAG = "HUANG_TRANSPORT"
@@ -19,19 +20,21 @@ object HuangTransport {
     }
 
     fun uploadStream(isQuic: Boolean, path: String, inputStream: InputStream) {
-        Log.d(TAG, "Bắt đầu upload luồng dữ liệu tới: $path (isQuic=$isQuic)")
+        RealtimeLogger.d(TAG, "Bắt đầu upload stream tới: $path (isQuic=$isQuic)")
         if(isQuic) Quicclient.vfsCreate(path) else KcpNative.vfsCreate(path)
-        
+
         val buffer = ByteArray(256 * 1024)
         var offset: Long = 0
         var bytesRead: Int
+
         while (inputStream.read(buffer).also { bytesRead = it } != -1) {
             if (bytesRead > 0) {
                 val chunk = buffer.copyOfRange(0, bytesRead)
                 if(isQuic) Quicclient.vfsWrite(path, offset, chunk) else KcpNative.vfsWrite(path, offset, chunk)
                 offset += bytesRead.toLong()
+                RealtimeLogger.d(TAG, "Đã up được: $offset bytes")
             }
         }
-        Log.d(TAG, "Upload thành công mĩ mãn: $path ($offset bytes)")
+        RealtimeLogger.d(TAG, "🚀 Upload nguyên con hoàn tất: $path (Total: $offset bytes)")
     }
 }

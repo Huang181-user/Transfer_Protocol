@@ -25,6 +25,10 @@ app/src/main/cpp/libsodium/include/
 # Chặn file cấu hình tĩnh
 app/src/main/assets/config.json
 
+# Chặn log mạng Cronet
+cronet_netlog.json
+*.log
+
 # Chặn toàn bộ chìa khóa, chứng chỉ, chữ ký Android
 *.jks
 *.keystore
