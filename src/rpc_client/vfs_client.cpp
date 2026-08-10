@@ -69,7 +69,13 @@ bool VfsClient::start() {
 
 void VfsClient::stop() {
     if (!is_running_) return;
-    is_running_ = false; socket_.close();
+    is_running_ = false;
+
+    // 🔥 FIX TREO: Ép ngắt toàn bộ luồng Socket UDP lập tức để giải phóng receive_from()
+    std::error_code ec;
+    socket_.shutdown(asio::ip::udp::socket::shutdown_both, ec);
+    socket_.close(ec);
+
     if (io_thread_.joinable()) io_thread_.join();
     if (timer_thread_.joinable()) timer_thread_.join();
     if (kcp_cb_) { ikcp_release(kcp_cb_); kcp_cb_ = nullptr; }

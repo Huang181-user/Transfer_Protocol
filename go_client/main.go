@@ -50,8 +50,8 @@ func main() {
 		cmd := exec.Command("ping", "-c", "1", "-W", "1", "-M", "do", "-s", fmt.Sprintf("%d", payloadSize), activeIp)
 		return cmd.Run() == nil
 	}
-	bestMtu := DiscoverBestHuangMTU(pingFunc)
-	log.Printf("[%s] [MTU-LOCKED] Chốt sổ cấu hình MTU toàn hệ thống: %d bytes", time.Now().Format("2006-01-02 15:04:05.000"), bestMtu)
+	// bestMtu := DiscoverBestHuangMTU(pingFunc)
+	// log.Printf("[%s] [MTU-LOCKED] Chốt sổ cấu hình MTU toàn hệ thống: %d bytes", time.Now().Format("2006-01-02 15:04:05.000"), bestMtu)
 
 	hwID := GetHardwareFingerprint()
 	authCmd := fmt.Sprintf("AUTH_REQ|USER:%s|PASS:%s|LAN:%s|TS:%s|HWID:%s", user, pass, cfg.ClientLanIp, cfg.ClientTsIp, hwID)
@@ -63,6 +63,9 @@ func main() {
 		os.Remove(sessionPath)
 		log.Fatalf("[%s] ❌ [ACCESS_DENIED] Xác thực sập: %v", time.Now().Format("2006-01-02 15:04:05.000"), err)
 	}
+
+	bestMtu := DiscoverBestHuangMTU(pingFunc)
+	log.Printf("[%s] [MTU-LOCKED] Chốt sổ cấu hình MTU toàn hệ thống: %d bytes", time.Now().Format("2006-01-02 15:04:05.000"), bestMtu)
 
 	// Kích nổ luồng nhịp tim
 	go tunnel.StartHeartbeat()
@@ -87,6 +90,20 @@ func main() {
 	exec.Command("sudo", "umount", "-l", vfsPath).Run()
 	exec.Command("sudo", "umount", "-l", quicPath).Run()
 
+	cleanupAndExit := func() {
+		log.Printf("\n[%s] [SHUTDOWN] Đang dọn dẹp hệ thống. Tháo đĩa an toàn...", time.Now().Format("2006-01-02 15:04:05.000"))
+
+		// 1. Tháo FUSE đĩa ảo TRƯỚC (Bỏ sudo để unmount nhanh gọn không bị nghẽn)
+		exec.Command("fusermount", "-uz", vfsPath).Run()
+		exec.Command("fusermount", "-uz", quicPath).Run()
+
+		// 2. Shutdown C++ SDK SAU
+		ShutdownCppSDK()
+
+		log.Printf("[%s] [EXIT] Đã ngắt kết nối an toàn. Bật bãi!", time.Now().Format("2006-01-02 15:04:05.000"))
+		os.Exit(0)
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -108,7 +125,7 @@ func main() {
 		if cmd == "logout" || cmd == "exit" {
 			log.Printf("\n[%s] [LOGOUT] Đang tiến hành đăng xuất và xóa thẻ bài Token...", time.Now().Format("2006-01-02 15:04:05.000"))
 			os.Remove(sessionPath)
-			sigChan <- syscall.SIGTERM
+			cleanupAndExit()
 			break
 		}
 	}
