@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <unordered_map>
 #include <atomic>
+#include <algorithm> // 🔥 Bổ sung thư viện algorithm cho hàm std::max
 
 struct BridgeRpcContext {
     std::mutex mtx;
@@ -30,6 +31,28 @@ static std::atomic<bool> g_is_running(false);
 static std::mutex g_kcp_mutex;
 static std::unordered_map<uint64_t, std::shared_ptr<BridgeRpcContext>> g_rpc_registry;
 static std::mutex g_registry_mutex;
+
+// =====================================================================
+// 🔥 CHE GIẤU ĐƯỜNG DẪN C++ KHÔNG DÙNG REGEX
+// =====================================================================
+static std::string mask_sensitive_path(const std::string& path) {
+    if (path.empty()) return path;
+    
+    size_t last_slash = path.find_last_of('/');
+    size_t last_backslash = path.find_last_of('\\');
+    size_t split_pos = std::string::npos;
+    
+    if (last_slash != std::string::npos && last_backslash != std::string::npos) {
+        split_pos = std::max(last_slash, last_backslash); // 🔥 FIX: Thêm std::max
+    } else if (last_slash != std::string::npos) {
+        split_pos = last_slash;
+    } else {
+        split_pos = last_backslash;
+    }
+    
+    if (split_pos == std::string::npos || split_pos == 0) return path;
+    return "/***/***/" + path.substr(split_pos + 1);
+}
 
 static void bridge_realtime_log(const char *fmt, ...) {
     SYSTEMTIME st; GetLocalTime(&st);
@@ -60,7 +83,6 @@ static void kcp_background_worker() {
         bool got_packet = false;
         int n;
         
-        // Hút sạch bộ đệm UDP
         while ((n = recvfrom(g_udp_sock, udp_buf.data(), static_cast<int>(udp_buf.size()), 0, NULL, NULL)) > 0) {
             got_packet = true;
             std::lock_guard<std::mutex> lock(g_kcp_mutex);
@@ -78,6 +100,11 @@ static void kcp_background_worker() {
                     if (CryptoBox::decrypt_payload(enc_resp, g_sym_key, plain_resp)) {
                         if (plain_resp.size() >= sizeof(VfsPacketHeader)) {
                             VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plain_resp.data());
+                            
+                            if (hdr->opcode == VfsOpcode::OP_ERROR) {
+                                bridge_realtime_log("❌ Server tra ve ma loi OP_ERROR (Loi I/O hoac File bi khoa)!");
+                            }
+                            
                             uint64_t req_id = hdr->session_id;
 
                             std::shared_ptr<BridgeRpcContext> ctx;
@@ -96,7 +123,6 @@ static void kcp_background_worker() {
                         }
                     }
                 }
-                // 🔥 ÉP BẮN ACK VỀ SERVER NGAY LẬP TỨC
                 ikcp_flush(g_kcp);
             }
         }
@@ -141,22 +167,42 @@ extern "C" int zhiauth_client_init(const char* ip, int port, const char* sym_key
 }
 
 extern "C" void zhiauth_client_shutdown() {
-    bridge_realtime_log("🛑 Đang đóng gói C++ Engine...");
+    bridge_realtime_log("🛑 Dang dong goi C++ Engine...");
     g_is_running = false;
+    
+    {
+        std::lock_guard<std::mutex> reg_lock(g_registry_mutex);
+        for (auto& pair : g_rpc_registry) {
+            std::lock_guard<std::mutex> ctx_lock(pair.second->mtx);
+            pair.second->is_done = true;
+            pair.second->cv.notify_all();
+        }
+    }
+
     if (g_worker_thread.joinable()) g_worker_thread.join();
     std::lock_guard<std::mutex> lock(g_kcp_mutex);
     if (g_kcp) { ikcp_release(g_kcp); g_kcp = NULL; }
     if (g_udp_sock != INVALID_SOCKET) closesocket(g_udp_sock);
     WSACleanup();
-    bridge_realtime_log("✅ KCP C++ Engine Shutdown Hoàn Tất.");
+    bridge_realtime_log("✅ KCP C++ Engine Shutdown Hoan Tat.");
 }
 
 extern "C" uint8_t* zhiauth_send_vfs_command(const uint8_t* payload, size_t len, size_t* out_len) {
     try {
         if (!g_is_running || !g_kcp) { *out_len = 0; return NULL; }
         if (len < sizeof(VfsPacketHeader)) { *out_len = 0; return NULL; }
+        
         const VfsPacketHeader* hdr = reinterpret_cast<const VfsPacketHeader*>(payload);
         uint64_t req_id = hdr->session_id;
+
+        std::string req_path = "";
+        if (len >= sizeof(VfsPacketHeader) + hdr->path_len) {
+            req_path = std::string((const char*)(payload + sizeof(VfsPacketHeader)), hdr->path_len);
+        }
+        std::string masked_path = mask_sensitive_path(req_path);
+        
+        bridge_realtime_log("📤 [SEND] Opcode: 0x%02X | Path: %s | Size: %u bytes", 
+                            (unsigned int)hdr->opcode, masked_path.c_str(), hdr->data_len);
 
         auto ctx = std::make_shared<BridgeRpcContext>();
         { std::lock_guard<std::mutex> reg_lock(g_registry_mutex); g_rpc_registry[req_id] = ctx; }
@@ -177,14 +223,14 @@ extern "C" uint8_t* zhiauth_send_vfs_command(const uint8_t* payload, size_t len,
         uint8_t* out_buf = NULL;
         {
             std::unique_lock<std::mutex> ctx_lock(ctx->mtx);
-            if (ctx->cv.wait_for(ctx_lock, std::chrono::seconds(15), [&] { return ctx->is_done; })) {
+            if (ctx->cv.wait_for(ctx_lock, std::chrono::seconds(25), [&] { return ctx->is_done; })) {
                 if (!ctx->response_payload.empty()) {
                     *out_len = ctx->response_payload.size();
                     out_buf = (uint8_t*)malloc(ctx->response_payload.size());
                     if (out_buf) memcpy(out_buf, ctx->response_payload.data(), ctx->response_payload.size());
                 }
             } else {
-                bridge_realtime_log("❌ [KCP-TIMEOUT] Hủy giao dịch ReqID: %llu do Server im lặng quá 15s!", req_id);
+                bridge_realtime_log("❌ [KCP-TIMEOUT] Huy giao dich ReqID: %llu do Server im lang qua 25s!", req_id);
             }
         }
 

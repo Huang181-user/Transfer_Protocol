@@ -9,16 +9,49 @@ import "C"
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
+// =========================================================================
+// 🔥 BỘ LỌC TÀNG HÌNH: CHE IP & ĐƯỜNG DẪN TỰ ĐỘNG CHO TOÀN BỘ LOG GOLANG
+// =========================================================================
+type MaskedLogWriter struct {
+	Out io.Writer
+}
+
+func (m *MaskedLogWriter) Write(p []byte) (int, error) {
+	msg := string(p)
+
+	// 1. Che IP LAN & Tailscale (VD: 100.125.141.48 -> 100.***.***.48)
+	ipRe := regexp.MustCompile(`\b(\d{1,3})\.\d{1,3}\.\d{1,3}\.(\d{1,3})\b`)
+	msg = ipRe.ReplaceAllString(msg, "$1.***.***.$2")
+
+	// 2. Che đường dẫn VFS nhưng giữ lại tên file để dễ Debug
+	// VD: /export/HDD_merge/Secret.txt -> /***/***/Secret.txt
+	pathRe := regexp.MustCompile(`(/[^\s"',:;]+)+/([^\s"',:;]+)`)
+	msg = pathRe.ReplaceAllStringFunc(msg, func(match string) string {
+		parts := strings.Split(match, "/")
+		if len(parts) > 0 {
+			return "/***/***/" + parts[len(parts)-1]
+		}
+		return match
+	})
+
+	return m.Out.Write([]byte(msg))
+}
+
 func main() {
 	log.SetFlags(0)
+	// Kích hoạt bộ lọc log toàn cục cho Golang
+	log.SetOutput(&MaskedLogWriter{Out: os.Stdout})
+
 	configPath := "config/config.json"
 	sessionPath := "config/.session"
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
@@ -36,27 +69,20 @@ func main() {
 	}
 	cfg.ClientLanIp, cfg.ClientTsIp, _ = AutoDetectClientIPs()
 	
-	// Xác định IP đang kết nối được (LAN hay Tailscale)
 	activeIp := DiscoverBestRoute(cfg)
 
-	// 🔥 KÍCH HOẠT RADAR MTU TRINH SÁT TRƯỚC KHI NỔ MÁY
+	// KÍCH HOẠT RADAR MTU
 	pingFunc := func(targetSize int) bool {
-		// Ping ICMP cần trừ hao 28 bytes header (20 bytes IPv4 + 8 bytes ICMP)
 		payloadSize := targetSize - 28
 		if payloadSize < 0 { payloadSize = 0 }
-		
-		// Gọi lệnh ping của Windows (-f: Không phân mảnh, -l: Kích thước payload)
 		out, err := exec.Command("ping", "-n", "1", "-w", "1000", "-f", "-l", strconv.Itoa(payloadSize), activeIp).CombinedOutput()
 		outStr := strings.ToLower(string(out))
-		
-		// Phân tích kỹ output của lệnh Ping trên Windows (Bắt lỗi phân mảnh hoặc RTO)
 		if err != nil || strings.Contains(outStr, "100% loss") || strings.Contains(outStr, "fragmented") || strings.Contains(outStr, "phân mảnh") || strings.Contains(outStr, "timeout") {
 			return false
 		}
 		return true
 	}
 	
-	// Ép ngược MTU động tìm được vào hệ thống thay cho số tĩnh trong config.json
 	optimalMTU := DiscoverBestHuangMTU(pingFunc)
 	cfg.KcpMtu = optimalMTU - 28
 
@@ -65,36 +91,32 @@ func main() {
 		creds := GetUserCredentials()
 		user = creds.Username
 		pass = creds.Password
-		// Gỡ cứng chữ A:, không lưu ổ đĩa xuống Credential vì nó ở trên JSON rồi
 		SaveDeviceSession(sessionPath, user, pass, "")
 	}
 
 	hwID := GetHardwareFingerprint()
-	InitClientID(hwID) // 🔥 Gắn cứng HWID thành Client_ID
+	InitClientID(hwID) 
 
 	authCmd := fmt.Sprintf("AUTH_REQ|USER:%s|PASS:%s|LAN:%s|TS:%s|HWID:%s", user, pass, cfg.ClientLanIp, cfg.ClientTsIp, hwID)
 
-	// Lấy cổng, ổ đĩa và Conv động 100% từ file config.json
 	tunnel := NewQuicTunnel(activeIp, cfg.AuthPort, cfg.ServerPort, authCmd, cfg.MountKcpDrive, cfg.MountQuicDrive)
 	if err := tunnel.ReconnectSilently(); err != nil {
 		log.Fatalf("❌ [ACCESS_DENIED] Authentication failed from Server: %v", err)
 	}
 
-	// 🔥 LẤY CỔNG KCP ĐỘNG TỪ SERVER (Chống Server đổi cổng mà Client không biết)
 	if tunnel.DynamicKcpPort > 0 {
 		cfg.KcpPort = tunnel.DynamicKcpPort
 	}
 
-	log.Printf("[%s] [CGO-INIT] Đánh thức C++ KCP Engine (Port: %d, MTU TỐI ƯU: %d, CONV ID: %d)...", time.Now().Format("2006-01-02 15:04:05.000"), cfg.KcpPort, cfg.KcpMtu, cfg.KcpConv)
+	log.Printf("[%s] [CGO-INIT] Đánh thức C++ KCP Engine (Port: %d, MTU: %d, CONV: %d)...", time.Now().Format("2006-01-02 15:04:05.000"), cfg.KcpPort, cfg.KcpMtu, cfg.KcpConv)
 
-	// 🔥 ĐÃ CHUYỂN SANG DÙNG CẤU HÌNH ĐỘNG HỨNG TỪ SERVER QUA TUNNEL
+	// KHÔNG ĐỤNG CHẠM ĐẾN KCP TUNING CẤP PHÁT ĐỘNG!
 	if !InitCppSDK(activeIp, cfg.KcpPort, cfg.KcpKey, cfg.KcpMtu, cfg.KcpConv, 
 		tunnel.KcpNoDelay, tunnel.KcpInterval, tunnel.KcpResend, tunnel.KcpNc, tunnel.KcpSndWnd, tunnel.KcpRcvWnd) {
 		log.Fatal("❌ [FATAL] C++ Core Engine failed to initialize!")
 	}
 	defer ShutdownCppSDK()
 
-	// Truyền ổ đĩa động từ JSON vào DualFuse
 	StartDualFuseSubsystem(cfg.MountKcpDrive, cfg.MountQuicDrive, tunnel.AssignedPath, tunnel)
 
 	// Heartbeat QUIC
@@ -123,7 +145,6 @@ func main() {
 
 	fmt.Println("\n✅ Daemon running in background at MAXIMUM SPEED. Type 'exit' to quit, 'logout' to sign out.")
 
-	// Unmount động theo config json
 	cleanupNetworkDrives := func() {
 		log.Printf("[SHUTDOWN] Đang tháo nóng hai ổ đĩa %s: và %s:...", cfg.MountKcpDrive, cfg.MountQuicDrive)
 		exec.Command("net", "use", cfg.MountKcpDrive+":", "/delete", "/y").Run()
