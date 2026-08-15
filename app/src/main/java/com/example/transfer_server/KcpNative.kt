@@ -1,25 +1,26 @@
 package com.example.transfer_server
 
-import android.util.Log
+import com.example.app.network.RealtimeLogger
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 object KcpNative {
     var remoteRoot: String = ""
     private const val TAG = "HUANG_KCP_NATIVE"
 
+    // 🔥 NỐI LOG VÀO REALTIME LOGGER ĐỂ BẮN RA UI APP
     private fun logRealtime(level: String, msg: String) {
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
-        val timeStr = sdf.format(Date())
-        Log.i(TAG, "[$timeStr] [$level] $msg")
+        if (level == "ERROR") {
+            RealtimeLogger.e(TAG, msg)
+        } else {
+            RealtimeLogger.i(TAG, msg)
+        }
     }
 
     init {
@@ -126,13 +127,13 @@ object KcpNative {
             return false
         }
 
-        // 🔥 CHUẨN 256KB CỦA NÝ: Do Server C++ đã mở KCP_WND_RCV=4096
         val chunkSize = 256 * 1024L
         val isSuccess = AtomicBoolean(true)
+        val downloadedBytes = AtomicLong(0L) // 🔥 BIẾN LƯU SỐ BYTES ĐÃ TẢI
         val numThreads = 8
         val executor = Executors.newFixedThreadPool(numThreads)
 
-        logRealtime("INFO", "🚀 Tải Song Song (8 Threads) | Chunk 256KB | Size: $size bytes")
+        logRealtime("INFO", "🚀 Tải Song Song (8 Threads) | Chunk 256KB | Kích thước: $size bytes")
 
         var offset = 0L
         while (offset < size) {
@@ -152,14 +153,25 @@ object KcpNative {
                             raf.write(data)
                         }
                         chunkSuccess = true
+
+                        // 🔥 TÍNH % VÀ BẮN RA UI (CHỈ BÁO CÁO MỖI 10% ĐỂ KHÔNG SPAM RAM)
+                        val totalNow = downloadedBytes.addAndGet(reqLen.toLong())
+                        val percent = (totalNow * 100 / size).toInt()
+                        val previousTotal = totalNow - reqLen
+                        val oldPercent = (previousTotal * 100 / size).toInt()
+
+                        if (percent / 10 > oldPercent / 10 || totalNow == size) {
+                            logRealtime("INFO", "⬇️ Đang tải: $percent% ($totalNow / $size bytes)")
+                        }
+
                     } else {
                         retry++
-                        logRealtime("WARN", "⚠️ Lỗi chunk $currentOffset, retry $retry/3...")
+                        logRealtime("WARN", "⚠️ Lỗi block chunk offset $currentOffset, đang retry $retry/3...")
                     }
                 }
 
                 if (!chunkSuccess) {
-                    logRealtime("ERROR", "❌ Chunk offset $currentOffset sụp đổ sau 3 lần thử!")
+                    logRealtime("ERROR", "❌ Chunk offset $currentOffset sụp đổ hoàn toàn sau 3 lần thử!")
                     isSuccess.set(false)
                 }
             }
@@ -172,9 +184,9 @@ object KcpNative {
 
         if (!isSuccess.get()) {
             File(localP).delete()
-            logRealtime("ERROR", "❌ Tải Multi-part THẤT BẠI: $localP")
+            logRealtime("ERROR", "❌ Tải file thất bại: $localP")
         } else {
-            logRealtime("INFO", "🎉 HOÀN TẤT: $localP ($size bytes)")
+            logRealtime("INFO", "🎉 HOÀN TẤT TẢI FILE: $localP ($size bytes)")
         }
 
         return isSuccess.get()

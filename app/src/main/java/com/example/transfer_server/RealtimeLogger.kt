@@ -1,6 +1,9 @@
 package com.example.app.network
 
 import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -9,27 +12,25 @@ object RealtimeLogger {
     private const val DEFAULT_TAG = "ABM_Network"
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
 
+    // 🔥 TẠO LUỒNG LƯU LOG ĐỂ BẮN THẲNG LÊN UI TRONG APP
+    private val _appLogs = MutableStateFlow("Khởi động hệ thống ZhiAuth Logger...\n")
+    val appLogs: StateFlow<String> = _appLogs
+
     private fun getTimestamp(): String {
         return dateFormat.format(Date())
     }
 
-    // 🔥 BỘ LỌC CHE GIẤU DỮ LIỆU NHẠY CẢM (MASKING) TRƯỚC KHI IN RA LOGCAT
     private fun maskSensitiveData(msg: String): String {
         var safeMsg = msg
-
-        // 1. Che IP LAN & Tailscale (VD: 100.125.141.48 -> 100.***.***.48)
         val ipRegex = Regex("\\b(\\d{1,3})\\.\\d{1,3}\\.\\d{1,3}\\.(\\d{1,3})\\b")
         safeMsg = ipRegex.replace(safeMsg, "$1.***.***.$2")
 
-        // 2. Che đường dẫn tệp tin nhưng giữ lại tên file để dễ Debug
-        // VD: /mnt/HDD_merge/Huang_Datas/Works/LVDH_TY-2022.docx -> /***/***/LVDH_TY-2022.docx
         val pathRegex = Regex("(/[^\\s\"',:]+)+/([^\\s\"',:]+)")
         safeMsg = pathRegex.replace(safeMsg) { match ->
             val fileName = match.groupValues[2]
             "/***/***/$fileName"
         }
 
-        // 3. Che các trường nhạy cảm trong chuỗi JSON (nếu có in ra)
         val jsonPathRegex = Regex("\"path\"\\s*:\\s*\"([^\"]+)/([^\"]+)\"")
         safeMsg = jsonPathRegex.replace(safeMsg) { match ->
             val fileName = match.groupValues[2]
@@ -39,11 +40,21 @@ object RealtimeLogger {
         return safeMsg
     }
 
+    // 🔥 HÀM ĐẨY LOG LÊN MÀN HÌNH CHÍNH CỦA APP
+    private fun appendToAppUI(formattedMessage: String) {
+        _appLogs.update { currentLogs ->
+            val newLogs = "$formattedMessage\n$currentLogs"
+            // Giới hạn 10,000 ký tự để không làm tràn RAM khi tải file lớn
+            if (newLogs.length > 10000) newLogs.substring(0, 10000) else newLogs
+        }
+    }
+
     fun d(tag: String, message: String) {
         val safeMessage = maskSensitiveData(message)
         val formattedMessage = "[${getTimestamp()}] [DEBUG] [$tag] $safeMessage"
         Log.d(DEFAULT_TAG, formattedMessage)
-        println(formattedMessage) // Vẫn giữ in ra terminal cho dễ nhìn
+        println(formattedMessage)
+        appendToAppUI(formattedMessage)
     }
 
     fun i(tag: String, message: String) {
@@ -51,6 +62,7 @@ object RealtimeLogger {
         val formattedMessage = "[${getTimestamp()}] [INFO] [$tag] $safeMessage"
         Log.i(DEFAULT_TAG, formattedMessage)
         println(formattedMessage)
+        appendToAppUI(formattedMessage)
     }
 
     fun e(tag: String, message: String, throwable: Throwable? = null) {
@@ -59,5 +71,6 @@ object RealtimeLogger {
         Log.e(DEFAULT_TAG, formattedMessage, throwable)
         println(formattedMessage)
         throwable?.printStackTrace()
+        appendToAppUI(formattedMessage)
     }
 }

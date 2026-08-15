@@ -7,6 +7,8 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,6 +22,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import quicclient.Quicclient
 import com.example.transfer_server.ui.theme.Transfer_serverTheme
+import com.example.app.network.RealtimeLogger
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,7 +54,9 @@ class MainActivity : ComponentActivity() {
 fun QuicSuperScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var logMsg by remember { mutableStateOf("Chưa đăng nhập...") }
+
+    // 🔥 LẮNG NGHE STATEFLOW TỪ REALTIME LOGGER
+    val appLogs by RealtimeLogger.appLogs.collectAsState()
 
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text("ZHIAUTH V6.0 CLIENT", style = MaterialTheme.typography.headlineMedium)
@@ -68,7 +73,7 @@ fun QuicSuperScreen() {
                 prefs.edit().putString("user", NetworkConfig.QUIC_USER).putString("pass", NetworkConfig.QUIC_PASS).apply()
 
                 scope.launch {
-                    logMsg = "Đang rà soát mạng và gõ cửa UFW Server..."
+                    RealtimeLogger.i("AUTH", "Đang rà soát mạng và gõ cửa UFW Server...")
                     val result = withContext(Dispatchers.IO) {
                         Quicclient.initializeQUIC(
                             NetworkConfig.LOCAL_IP, NetworkConfig.TS_IP,
@@ -86,8 +91,6 @@ fun QuicSuperScreen() {
                         NetworkConfig.KCP_PORT = parts[4]
                         if (parts.size > 5) KcpNative.remoteRoot = parts[5]
 
-                        // 🔥 PARSE 6 THÔNG SỐ KCP TUNING DỰA TRÊN PHẢN HỒI V6.1 CỦA SERVER:
-                        // AUTH_SUCCESS|SharedPath|QuicPort|KcpPort|NoDelay|Interval|Resend|Nc|SndWnd|RcvWnd
                         if (parts.size >= 12) {
                             NetworkConfig.KCP_NODELAY = parts[6].toIntOrNull() ?: 1
                             NetworkConfig.KCP_INTERVAL = parts[7].toIntOrNull() ?: 10
@@ -97,7 +100,6 @@ fun QuicSuperScreen() {
                             NetworkConfig.KCP_RCV_WND = parts[11].toIntOrNull() ?: 4096
                         }
 
-                        // 🔥 TRUYỀN CÁC THÔNG SỐ ĐỘNG NÀY XUỐNG C++ NDK
                         val kcpInit = KcpNative.initKcp(
                             NetworkConfig.SERVER_IP,
                             NetworkConfig.KCP_PORT.toInt(),
@@ -113,15 +115,9 @@ fun QuicSuperScreen() {
 
                         context.startService(Intent(context, ZhiAuthService::class.java))
 
-                        logMsg = """
-                            ✅ ĐĂNG NHẬP THÀNH CÔNG!
-                            Host: ${NetworkConfig.SERVER_IP}
-                            Q-Port: ${NetworkConfig.QUIC_PORT} | K-Port: ${NetworkConfig.KCP_PORT}
-                            KCP Tuning: NoDelay=${NetworkConfig.KCP_NODELAY}, Int=${NetworkConfig.KCP_INTERVAL}ms, Resend=${NetworkConfig.KCP_RESEND}, NC=${NetworkConfig.KCP_NC}, SND_WND=${NetworkConfig.KCP_SND_WND}, RCV_WND=${NetworkConfig.KCP_RCV_WND}
-                            C++ KCP Engine: $kcpInit
-                        """.trimIndent()
+                        RealtimeLogger.i("AUTH", "✅ ĐĂNG NHẬP THÀNH CÔNG! Host: ${NetworkConfig.SERVER_IP} | Q-Port: ${NetworkConfig.QUIC_PORT} | K-Port: ${NetworkConfig.KCP_PORT}")
                     } else {
-                        logMsg = "❌ Lỗi đăng nhập:\n$result"
+                        RealtimeLogger.e("AUTH", "❌ Lỗi đăng nhập: $result")
                     }
                 }
             }) { Text("KẾT NỐI") }
@@ -137,14 +133,21 @@ fun QuicSuperScreen() {
                         KcpNative.shutdownKcp()
                     }
                     context.stopService(Intent(context, ZhiAuthService::class.java))
-                    logMsg = "👋 Đã đăng xuất! Tiến trình ngầm đã bị triệt tiêu."
+                    RealtimeLogger.i("AUTH", "👋 Đã đăng xuất! Tiến trình ngầm đã bị triệt tiêu.")
                 }
             }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text("ĐĂNG XUẤT") }
         }
 
         Spacer(Modifier.height(16.dp))
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.DarkGray)) {
-            Text(logMsg, Modifier.padding(16.dp), color = Color.Cyan)
+
+        // 🔥 GIAO DIỆN HIỂN THỊ LOGCAT NGAY TRÊN APP ĐỂ KHỎI PHẢI CẮM MÁY TÍNH
+        Card(Modifier.fillMaxWidth().weight(1f), colors = CardDefaults.cardColors(containerColor = Color.DarkGray)) {
+            Text(
+                text = appLogs,
+                modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
+                color = Color.Cyan,
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
