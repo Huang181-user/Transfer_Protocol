@@ -298,8 +298,21 @@ func InitializeQUIC(targetLanIp, targetTsIp, user, pass, hwid, authPort, masterK
 	mtu := ExecuteMTURadar(localIp, activeIp, kcpDataPort, masterKey)
 	go StartHeartbeat(activeIp, authPort)
 
-    // Trả về dữ liệu để Android Kotlin mồi KCP C++
-	return fmt.Sprintf("SUCCESS|%d|%s|%s|%s|%s", mtu, activeIp, gQuicDataPort, kcpDataPort, remoteRoot)
+    // 🔥 TRẢ LẠI THÔNG SỐ ĐỘNG KCP CHO KOTLIN THEO ĐÚNG TRÌNH TỰ
+    if len(parts) >= 10 {
+        return fmt.Sprintf("SUCCESS|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
+            mtu, activeIp, gQuicDataPort, kcpDataPort, remoteRoot,
+            parts[4], // NoDelay
+            parts[5], // Interval
+            parts[6], // Resend
+            parts[7], // Nc
+            parts[8], // SndWnd
+            parts[9], // RcvWnd
+        )
+    }
+
+    // Fallback nếu Server không trả Tuning Params
+    return fmt.Sprintf("SUCCESS|%d|%s|%s|%s|%s", mtu, activeIp, gQuicDataPort, kcpDataPort, remoteRoot)
 }
 
 func readQuicResponse(stream io.Reader) ([]byte, error) {
