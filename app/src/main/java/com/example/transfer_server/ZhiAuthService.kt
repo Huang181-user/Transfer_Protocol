@@ -42,6 +42,7 @@ class ZhiAuthService : Service() {
         networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 Log.d(TAG, "Phát hiện có sóng mạng! Báo cho GoMobile Roaming...")
+                KcpNative.reconnectSocket()
                 Quicclient.triggerNetworkRoaming()
             }
             override fun onLost(network: Network) {

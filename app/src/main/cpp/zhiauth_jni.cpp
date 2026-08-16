@@ -36,17 +36,11 @@ static void real_log(int prio, const char* fmt, ...) {
 // =====================================================================
 static std::string mask_sensitive_path(const std::string& path) {
     if (path.empty()) return path;
-
-    // Tìm vị trí dấu '/' cuối cùng
     size_t last_slash = path.find_last_of('/');
     if (last_slash == std::string::npos || last_slash == 0) {
-        return path; // Trả về gốc nếu ko phải chuỗi đường dẫn lồng nhau
+        return path;
     }
-
-    // Cắt lấy tên file cuối cùng để dễ debug
     std::string filename = path.substr(last_slash + 1);
-
-    // Nối với lớp mặt nạ
     return "/***/***/" + filename;
 }
 
@@ -71,10 +65,10 @@ struct RequestWait {
 };
 static std::map<uint64_t, std::shared_ptr<RequestWait>> g_pending_requests;
 
+// 🔥 DÙNG SENDTO THAY VÌ SEND ĐỂ KẾT NỐI KHÔNG BỊ TRÓI CỨNG KHI ĐỔI MẠNG
 static int udp_output(const char *buf, int len, ikcpcb *kcp, void *user) {
     if (g_socket_fd >= 0) {
-        // Đã connect nên vã lệnh send thẳng tay, cực kỳ nhẹ và tránh lạc IP
-        send(g_socket_fd, buf, len, 0);
+        sendto(g_socket_fd, buf, len, 0, (struct sockaddr*)&g_server_addr, sizeof(g_server_addr));
     }
     return 0;
 }
@@ -102,7 +96,7 @@ static void kcp_update_loop() {
                 uint16_t path_len = 0;
 
                 vfs_packet.insert(vfs_packet.end(), (uint8_t*)&magic, ((uint8_t*)&magic) + 4);
-                vfs_packet.push_back(0x00); // OP_PING (0x00)
+                vfs_packet.push_back(0x00); // OP_PING
                 vfs_packet.insert(vfs_packet.end(), (uint8_t*)&reqId, ((uint8_t*)&reqId) + 8);
                 vfs_packet.insert(vfs_packet.end(), (uint8_t*)&offset, ((uint8_t*)&offset) + 8);
                 vfs_packet.insert(vfs_packet.end(), (uint8_t*)&data_len, ((uint8_t*)&data_len) + 4);
@@ -124,7 +118,7 @@ static void kcp_update_loop() {
 
 static void kcp_recv_loop() {
     uint8_t udp_buffer[65535];
-    std::vector<uint8_t> kcp_payload(6 * 1024 * 1024); // Đệm lớn 6MB cho Window Size 4096
+    std::vector<uint8_t> kcp_payload(6 * 1024 * 1024);
 
     while (g_running) {
         struct timeval tv;
@@ -145,15 +139,11 @@ static void kcp_recv_loop() {
                     if (peek_size < 0) break;
 
                     if (peek_size > kcp_payload.size()) {
-                        LOGE("⚠️ Kích thước gói KCP quá lớn (%d bytes)! Tự động nới túi...", peek_size);
                         kcp_payload.resize(peek_size + 1024 * 1024);
                     }
 
                     int read_len = ikcp_recv(g_kcp, (char*)kcp_payload.data(), kcp_payload.size());
-                    if (read_len < 0) {
-                        LOGE("❌ ikcp_recv LỖI! Mã lỗi: %d | Peek_size dự kiến: %d", read_len, peek_size);
-                        break;
-                    }
+                    if (read_len < 0) break;
 
                     std::vector<uint8_t> ciphertext(kcp_payload.data(), kcp_payload.data() + read_len);
                     std::vector<uint8_t> plaintext;
@@ -171,16 +161,8 @@ static void kcp_recv_loop() {
                                 it->second->data = std::vector<uint8_t>(plaintext.begin() + 27, plaintext.end());
                                 it->second->done = true;
                                 it->second->cv.notify_one();
-                            } else {
-                                LOGE("⚠️ Có data về ID %llu nhưng Không có ai chờ nhận hàng!", session_id);
                             }
-                        } else if (plaintext.size() >= 27 && plaintext[4] == 0xFF) {
-                            LOGE("❌ Server trả về mã lỗi 0xFF (Lỗi I/O hoặc File bị khóa)!");
-                        } else {
-                            LOGE("❌ Cấu trúc VFS Server gửi về dị thường! Size: %zu", plaintext.size());
                         }
-                    } else {
-                        LOGE("❌ Libsodium giải mã thất bại!");
                     }
                 }
             }
@@ -217,10 +199,7 @@ Java_com_example_transfer_1server_KcpNative_initKcp(
     g_server_addr.sin_port = htons(port);
     inet_pton(AF_INET, ip, &g_server_addr.sin_addr);
 
-    if (connect(g_socket_fd, (struct sockaddr*)&g_server_addr, sizeof(g_server_addr)) < 0) {
-        LOGE("❌ Lỗi ép kết nối Socket UDP! Lệch đường ray VPN!");
-        return JNI_FALSE;
-    }
+    // ĐÃ GỠ BỎ LỆNH CONNECT() ÉP CỨNG ĐỂ UDP LINH HOẠT ĐỔI MẠNG
 
     g_kcp = ikcp_create(0x11223344, nullptr);
     g_kcp->output = udp_output;
@@ -260,7 +239,6 @@ Java_com_example_transfer_1server_KcpNative_sendRawKcp(JNIEnv *env, jobject thiz
     uint32_t current_req = ++g_req_id;
     uint64_t session_id = ((uint64_t)g_client_id << 32) | current_req;
 
-    // 🔥 GỌI HÀM LÀM MỜ ĐƯỜNG DẪN TRƯỚC KHI IN RA LOGCAT
     std::string masked_path = mask_sensitive_path(c_path);
     LOGI("📤 [SEND] Opcode: 0x%02X | Path: %s | SessionID: %llu | Size: %d", opcode, masked_path.c_str(), session_id, data_len);
 
@@ -282,10 +260,7 @@ Java_com_example_transfer_1server_KcpNative_sendRawKcp(JNIEnv *env, jobject thiz
     if (data != nullptr) env->ReleaseByteArrayElements(data, c_data, JNI_ABORT);
 
     std::vector<uint8_t> ciphertext;
-    if (!CryptoBox::encrypt_payload(vfs_packet, g_master_key, ciphertext)) {
-        LOGE("❌ Mã hóa Libsodium thất bại! SessionID: %llu", session_id);
-        return nullptr;
-    }
+    if (!CryptoBox::encrypt_payload(vfs_packet, g_master_key, ciphertext)) return nullptr;
 
     auto waiter = std::make_shared<RequestWait>();
     {
@@ -298,19 +273,25 @@ Java_com_example_transfer_1server_KcpNative_sendRawKcp(JNIEnv *env, jobject thiz
         if (g_kcp) {
             ikcp_send(g_kcp, (const char*)ciphertext.data(), ciphertext.size());
             ikcp_flush(g_kcp);
-            LOGI("🚀 [SEND] Bơm thành công %zu bytes xuống ống KCP (SessionID: %llu)", ciphertext.size(), session_id);
         }
     }
 
     std::unique_lock<std::mutex> wait_lock(g_promise_mutex);
-    if (waiter->cv.wait_for(wait_lock, std::chrono::seconds(25), [&]{ return waiter->done; })) {
+    if (waiter->cv.wait_for(wait_lock, std::chrono::seconds(5), [&]{ return waiter->done; })) {
         g_pending_requests.erase(session_id);
+
+        // 🔥 KIỂM TRA CỜ FAIL-FAST:
+        if (waiter->data.empty()) {
+            LOGE("❌ [FAIL-FAST] Hủy gói SessionID %llu do OS báo Roaming đổi mạng!", session_id);
+            return nullptr;
+        }
+
         jbyteArray retArray = env->NewByteArray(waiter->data.size());
         env->SetByteArrayRegion(retArray, 0, waiter->data.size(), (jbyte*)waiter->data.data());
         return retArray;
     } else {
         g_pending_requests.erase(session_id);
-        LOGE("❌ [TIMEOUT] Lệnh 0x%02X SessionID %llu mất tín hiệu sau 25s!", opcode, session_id);
+        LOGE("❌ [TIMEOUT] Lệnh 0x%02X SessionID %llu mất tín hiệu sau 5s!", opcode, session_id);
         return nullptr;
     }
 }
@@ -320,7 +301,6 @@ Java_com_example_transfer_1server_KcpNative_shutdownKcp(JNIEnv *env, jobject thi
     LOGI("🛑 Chuẩn bị Shutdown KCP, đánh thức các luồng đang đợi...");
     g_running = false;
 
-    // 🔥 GIẢI PHÓNG DEADLOCK: Đánh thức tất cả các thread đang chờ Wait_For dậy để thoái lui!
     {
         std::lock_guard<std::mutex> lock(g_promise_mutex);
         for (auto& pair : g_pending_requests) {
@@ -336,4 +316,34 @@ Java_com_example_transfer_1server_KcpNative_shutdownKcp(JNIEnv *env, jobject thi
     if (g_kcp) { ikcp_release(g_kcp); g_kcp = nullptr; }
     if (g_socket_fd >= 0) { close(g_socket_fd); g_socket_fd = -1; }
     LOGI("🛑 SHUTDOWN C++ KCP ENGINE HOÀN TOÀN!");
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_transfer_1server_KcpNative_reconnectSocket(JNIEnv *env, jobject thiz) {
+    if (!g_running) return;
+    LOGI("📡 [ROAMING] Bắt đầu Tái sinh Socket UDP và kích hoạt Fail-Fast...");
+
+    {
+        std::lock_guard<std::mutex> lock(g_kcp_mutex);
+        if (g_socket_fd >= 0) {
+            close(g_socket_fd);
+            g_socket_fd = -1;
+        }
+        g_socket_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (g_socket_fd >= 0) {
+            int rcv_buf_size = 16777216;
+            setsockopt(g_socket_fd, SOL_SOCKET, SO_RCVBUF, &rcv_buf_size, sizeof(rcv_buf_size));
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_promise_mutex);
+        for (auto& pair : g_pending_requests) {
+            pair.second->data.clear();
+            pair.second->done = true;
+            pair.second->cv.notify_all();
+        }
+        g_pending_requests.clear();
+    }
+    LOGI("✅ [ROAMING] Tái sinh Socket & Ngắt Mạch Nhanh hoàn tất!");
 }

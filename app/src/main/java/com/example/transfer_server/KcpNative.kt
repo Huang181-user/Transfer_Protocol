@@ -37,6 +37,7 @@ object KcpNative {
         nodelay: Int, interval: Int, resend: Int, nc: Int, sndWnd: Int, rcvWnd: Int
     ): Boolean
 
+    external fun reconnectSocket()
     external fun sendRawKcp(opcode: Byte, path: String, offset: Long, reqLen: Int, data: ByteArray?): ByteArray?
     external fun shutdownKcp()
 

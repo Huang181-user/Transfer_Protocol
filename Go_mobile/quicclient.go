@@ -13,7 +13,6 @@ import "C"
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -26,9 +25,9 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+    "crypto/rand"
 
 	"github.com/quic-go/quic-go"
-	"golang.org/x/crypto/chacha20poly1305"
 )
 
 var (
@@ -39,13 +38,12 @@ var (
 	remoteRoot         string
 	isHeartbeatRunning bool
 
-    // Thêm các biến lưu trạng thái để gọi Reconnect
-    gActiveIp string
-    gAuthPort string
-    gAuthCmd  string
-    gQuicDataPort string
-    gTlsConf  *tls.Config
-    gConfig   *quic.Config
+	gActiveIp     string
+	gAuthPort     string
+	gAuthCmd      string
+	gQuicDataPort string
+	gTlsConf      *tls.Config
+	gConfig       *quic.Config
 )
 
 func alog(format string, args ...interface{}) {
@@ -56,59 +54,52 @@ func alog(format string, args ...interface{}) {
 	C.free(unsafe.Pointer(cstr))
 }
 
-// =========================================================================
-// 🔥 HÀM TỰ ĐỘNG NỐI LẠI ĐƯỜNG HẦM KHI BỊ SẬP (FAILOVER MẠNG)
-// =========================================================================
 func ReconnectSilently() error {
-    alog("🚨 [QUIC-TUNNEL] Kích hoạt luồng kết nối QUIC ngầm để phục hồi mạng...")
+	alog("🚨 [QUIC-TUNNEL] Kích hoạt luồng kết nối QUIC ngầm để phục hồi mạng...")
 
-    authConn, authUdp, err := dialQuic(context.Background(), "0.0.0.0", gActiveIp, gAuthPort, gTlsConf, gConfig)
-    if err != nil { return err }
+	authConn, authUdp, err := dialQuic(context.Background(), "0.0.0.0", gActiveIp, gAuthPort, gTlsConf, gConfig)
+	if err != nil { return err }
 
-    authStream, err := (*authConn).OpenStreamSync(context.Background())
-    if err != nil { (*authConn).CloseWithError(0, ""); authUdp.Close(); return err }
+	authStream, err := (*authConn).OpenStreamSync(context.Background())
+	if err != nil { (*authConn).CloseWithError(0, ""); authUdp.Close(); return err }
 
-    authStream.Write([]byte(gAuthCmd))
-    authStream.Close()
+	authStream.Write([]byte(gAuthCmd))
+	authStream.Close()
 
-    res, _ := io.ReadAll(authStream)
-    (*authConn).CloseWithError(0, ""); authUdp.Close()
+	res, _ := io.ReadAll(authStream)
+	(*authConn).CloseWithError(0, ""); authUdp.Close()
 
-    resStr := string(res)
-    if !strings.HasPrefix(resStr, "AUTH_SUCCESS") { return fmt.Errorf("re-auth failure") }
+	resStr := string(res)
+	if !strings.HasPrefix(resStr, "AUTH_SUCCESS") { return fmt.Errorf("re-auth failure") }
 
-    // Rút kinh nghiệm xương máu từ Linux: Chờ 200ms cho Server mở NFTABLES
-    time.Sleep(200 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
-    dataConn, dataUdp, err := dialQuic(context.Background(), "0.0.0.0", gActiveIp, gQuicDataPort, gTlsConf, gConfig)
-    if err != nil { return err }
+	dataConn, dataUdp, err := dialQuic(context.Background(), "0.0.0.0", gActiveIp, gQuicDataPort, gTlsConf, gConfig)
+	if err != nil { return err }
 
-    if session != nil { (*session).CloseWithError(0, "") }
-    if sessionUdp != nil { sessionUdp.Close() }
+	if session != nil { (*session).CloseWithError(0, "") }
+	if sessionUdp != nil { sessionUdp.Close() }
 
-    session = dataConn
-    sessionUdp = dataUdp
+	session = dataConn
+	sessionUdp = dataUdp
 
-    alog("✅ [QUIC-TUNNEL] Đường hầm QUIC Data Port %s đã được nối lại thành công!", gQuicDataPort)
-    return nil
+	alog("✅ [QUIC-TUNNEL] Đường hầm QUIC Data Port %s đã được nối lại thành công!", gQuicDataPort)
+	return nil
 }
 
-// 📡 ĐƯỢC GỌI TỪ ANDROID KHI WIFI NHẢY SANG 4G
 func TriggerNetworkRoaming() {
 	alog("📡 [ANDROID-ROAMING] Hệ điều hành báo thay đổi mạng! Yêu cầu dò lại luồng QUIC...")
-    mu.Lock()
-    defer mu.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
 
-    // Đạp bỏ ống nước cũ
-    if session != nil { (*session).CloseWithError(0, ""); session = nil }
-    if sessionUdp != nil { sessionUdp.Close(); sessionUdp = nil }
+	if session != nil { (*session).CloseWithError(0, ""); session = nil }
+	if sessionUdp != nil { sessionUdp.Close(); sessionUdp = nil }
 
-    // Thử nối ống lại luôn (Không cần quan tâm KCP, C++ tự lo KCP)
-    go func() {
-        mu.Lock()
-        defer mu.Unlock()
-        ReconnectSilently()
-    }()
+	go func() {
+		mu.Lock()
+		defer mu.Unlock()
+		ReconnectSilently()
+	}()
 }
 
 func getOutboundIP(targetIP string) string {
@@ -172,34 +163,7 @@ func resolvePath(p string) string {
 	return remoteRoot + cleanP
 }
 
-// Bắn UDP Radar độc lập bằng Go (đỡ phải code bên C++)
-func pingKCP(localIp, targetIp, port string, mtu int, masterKey string) bool {
-	paddingSize := mtu - 107
-	if paddingSize < 0 { return false }
-	plaintext := make([]byte, 27+paddingSize)
-	binary.LittleEndian.PutUint32(plaintext[0:4], 0x5A484941)
-	binary.LittleEndian.PutUint32(plaintext[21:25], uint32(paddingSize))
-
-	keyBytes := []byte(masterKey)
-	if len(keyBytes) > 32 { keyBytes = keyBytes[:32] }
-	if len(keyBytes) < 32 {
-		paddedKey := make([]byte, 32); copy(paddedKey, keyBytes); keyBytes = paddedKey
-	}
-	aead, err := chacha20poly1305.New(keyBytes)
-	if err != nil { return false }
-
-	nonce := make([]byte, chacha20poly1305.NonceSize); rand.Read(nonce)
-	ciphertext := aead.Seal(nil, nonce, plaintext, nil)
-	libsodiumPayload := append(nonce, ciphertext...)
-
-	kcpPacket := make([]byte, 24+len(libsodiumPayload))
-	binary.LittleEndian.PutUint32(kcpPacket[0:4], 0x99887766)
-	kcpPacket[4] = 81
-	binary.LittleEndian.PutUint16(kcpPacket[6:8], 65535)
-	binary.LittleEndian.PutUint32(kcpPacket[8:12], uint32(time.Now().UnixMilli()))
-	binary.LittleEndian.PutUint32(kcpPacket[20:24], uint32(len(libsodiumPayload)))
-	copy(kcpPacket[24:], libsodiumPayload)
-
+func pingUFW(localIp, targetIp, port string, testSize int) bool {
 	laddr := &net.UDPAddr{IP: net.ParseIP(localIp), Port: 0}
 	raddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(targetIp, port))
 	if err != nil { return false }
@@ -207,28 +171,93 @@ func pingKCP(localIp, targetIp, port string, mtu int, masterKey string) bool {
 	if err != nil { return false }
 	defer conn.Close()
 
+	fakePayload := make([]byte, testSize)
 	conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
-	_, err = conn.WriteToUDP(kcpPacket, raddr)
-	if err != nil { return false }
-	recvBuf := make([]byte, mtu+100)
-	_, _, err = conn.ReadFromUDP(recvBuf)
+	_, err = conn.WriteToUDP(fakePayload, raddr)
 	return err == nil
 }
 
-func ExecuteMTURadar(localIp, targetIp, kcpPort, masterKey string) int {
-	alog("📡 [KCP-RADAR] Kích hoạt Radar dò MTU xuyên UFW vào cổng %s", kcpPort)
-	bestMTU := 1000; minMTU := 1000; maxMTU := 1500
-	if pingKCP(localIp, targetIp, kcpPort, maxMTU, masterKey) { return maxMTU }
-	for minMTU <= maxMTU {
-		midMTU := minMTU + (maxMTU-minMTU)/2
-		if pingKCP(localIp, targetIp, kcpPort, midMTU, masterKey) {
-			bestMTU = midMTU; minMTU = midMTU + 1
-		} else { maxMTU = midMTU - 1 }
+func ExecuteMTURadar(localIp, targetIp, testPort string) int {
+	alog("==========================================================================")
+	alog("📡 [MTU-RADAR] KÍCH HOẠT HỆ THỐNG TRINH SÁT MTU ĐỘNG (HOÀNG-HEURISTIC)")
+	alog("==========================================================================")
+
+	time.Sleep(500 * time.Millisecond)
+
+	alog("📡 [MTU-RADAR][TRẦN-VẬT-LÝ] Đang phóng gói tin trinh sát kích cực đại: 1500 bytes...")
+	if pingUFW(localIp, targetIp, testPort, 1500) {
+		alog("🎉 [SUCCESS][MTU-RADAR] Tuyệt vời! Đường truyền thông suốt hoàn hảo mốc 1500 bytes!")
+		return 1500
 	}
-	return bestMTU
+
+	alog("⚠️ [WARNING][MTU-RADAR] Mốc 1500 bytes tịt ngòi! Kích hoạt chia đôi phân đoạn...")
+	currentUpper := 1500
+	currentLower := 1000
+	lastSuccess := 1000
+
+	for {
+		if currentUpper-currentLower <= 1 {
+			alog("🚨 [MTU-RADAR][SÀN-TỐI-THIỂU] Đã ép tới mốc %d nhưng vẫn không thông!", currentUpper)
+			alog("📉 [RESULT-MTU] Ép cấu hình hạ tầng về mốc sàn an toàn: 1000 bytes.")
+			return 1000
+		}
+
+		distance := (currentUpper - currentLower) / 2
+		mid := currentLower + distance
+		alog("📡 [MTU-RADAR][CHIA-ĐÔI] Khoảng cách: %d | Thử mốc trung vị: %d bytes...", distance*2, mid)
+
+		if pingUFW(localIp, targetIp, testPort, mid) {
+			alog("🎯 [SUCCESS][MTU-RADAR] Mốc trung vị %d bytes NGON LÀNH! Bắt đầu leo thang...", mid)
+			lastSuccess = mid
+
+			alog("📈 [MTU-RADAR][LEO-THANG-1] Kích nổ tiến trình quét hàng TRĂM (+100)...")
+			for val := lastSuccess + 100; val < currentUpper; val += 100 {
+				if pingUFW(localIp, targetIp, testPort, val) {
+					alog("✅ [SUCCESS][LEO-THANG-1] Mốc %d bytes OK.", val)
+					lastSuccess = val
+				} else {
+					alog("💥 [BURST][LEO-THANG-1] Mốc %d bytes BỊ CHẶN! Khóa trần mới = %d.", val, val)
+					currentUpper = val
+					break
+				}
+			}
+
+			alog("📈 [MTU-RADAR][LEO-THANG-2] Kích nổ tiến trình quét hàng CHỤC (+10)...")
+			for val := lastSuccess + 10; val < currentUpper; val += 10 {
+				if pingUFW(localIp, targetIp, testPort, val) {
+					alog("✅ [SUCCESS][LEO-THANG-2] Mốc %d bytes OK.", val)
+					lastSuccess = val
+				} else {
+					alog("💥 [BURST][LEO-THANG-2] Mốc %d bytes BỊ CHẶN! Khóa trần mới = %d.", val, val)
+					currentUpper = val
+					break
+				}
+			}
+
+			alog("📈 [MTU-RADAR][LEO-THANG-3] Kích nổ tiến trình quét hàng ĐƠN VỊ (+1)...")
+			for val := lastSuccess + 1; val < currentUpper; val++ {
+				if pingUFW(localIp, targetIp, testPort, val) {
+					alog("✅ [SUCCESS][LEO-THANG-3] Mốc %d bytes OK.", val)
+					lastSuccess = val
+				} else {
+					alog("💥 [BURST][LEO-THANG-3] Mốc %d bytes SẬP BẪY PHÂN MẢNH!")
+					break
+				}
+			}
+			break
+		} else {
+			alog("💥 [BURST][CHIA-ĐÔI] Gói %d bytes bị rớt. Co cụm trần về %d.", mid, mid)
+			currentUpper = mid
+		}
+	}
+
+	alog("==========================================================================")
+	alog("🏆 [CHẾ ĐỘ TÍCH ỨNG] ĐÃ TÌM RA ĐỈNH MTU TỐI ƯU: [%d bytes]", lastSuccess)
+	alog("==========================================================================")
+	return lastSuccess
 }
 
-type dumbPacketConn struct { c *net.UDPConn }
+type dumbPacketConn struct{ c *net.UDPConn }
 func (d *dumbPacketConn) ReadFrom(p []byte) (int, net.Addr, error) { return d.c.ReadFrom(p) }
 func (d *dumbPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) { return d.c.WriteTo(p, addr) }
 func (d *dumbPacketConn) Close() error                       { return d.c.Close() }
@@ -268,8 +297,8 @@ func InitializeQUIC(targetLanIp, targetTsIp, user, pass, hwid, authPort, masterK
 	localIp := myTsIp
 	if activeIp == targetLanIp { localIp = myLanIp }
 
-    gActiveIp = activeIp
-    gAuthPort = authPort
+	gActiveIp = activeIp
+	gAuthPort = authPort
 
 	authConn, authUdp, err := dialQuic(context.Background(), localIp, activeIp, authPort, gTlsConf, gConfig)
 	if err != nil { return "ERROR|Knocking Failed" }
@@ -289,30 +318,21 @@ func InitializeQUIC(targetLanIp, targetTsIp, user, pass, hwid, authPort, masterK
 		remoteRoot = parts[1]; gQuicDataPort = parts[2]; kcpDataPort = parts[3]
 	} else { return "ERROR|Invalid Server Protocol Data" }
 
-    // 🔥 GỌI LUÔN HÀM KẾT NỐI QUIC LẦN ĐẦU
-    errQuic := ReconnectSilently()
-    if errQuic != nil {
-        return "ERROR|Quic Data Stream Failed: " + errQuic.Error()
-    }
+	errQuic := ReconnectSilently()
+	if errQuic != nil {
+		return "ERROR|Quic Data Stream Failed: " + errQuic.Error()
+	}
 
-	mtu := ExecuteMTURadar(localIp, activeIp, kcpDataPort, masterKey)
+	mtu := ExecuteMTURadar(localIp, activeIp, kcpDataPort)
 	go StartHeartbeat(activeIp, authPort)
 
-    // 🔥 TRẢ LẠI THÔNG SỐ ĐỘNG KCP CHO KOTLIN THEO ĐÚNG TRÌNH TỰ
-    if len(parts) >= 10 {
-        return fmt.Sprintf("SUCCESS|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
-            mtu, activeIp, gQuicDataPort, kcpDataPort, remoteRoot,
-            parts[4], // NoDelay
-            parts[5], // Interval
-            parts[6], // Resend
-            parts[7], // Nc
-            parts[8], // SndWnd
-            parts[9], // RcvWnd
-        )
-    }
-
-    // Fallback nếu Server không trả Tuning Params
-    return fmt.Sprintf("SUCCESS|%d|%s|%s|%s|%s", mtu, activeIp, gQuicDataPort, kcpDataPort, remoteRoot)
+	if len(parts) >= 10 {
+		return fmt.Sprintf("SUCCESS|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
+			mtu, activeIp, gQuicDataPort, kcpDataPort, remoteRoot,
+			parts[4], parts[5], parts[6], parts[7], parts[8], parts[9],
+		)
+	}
+	return fmt.Sprintf("SUCCESS|%d|%s|%s|%s|%s", mtu, activeIp, gQuicDataPort, kcpDataPort, remoteRoot)
 }
 
 func readQuicResponse(stream io.Reader) ([]byte, error) {
@@ -356,7 +376,7 @@ func sendRawQuic(opcode byte, path string, offset uint64, reqLen uint32, data []
 		alog("❌ [QUIC-SEND] Lỗi ghi dữ liệu vào Stream: %v", err)
 		return nil, err
 	}
-	stream.Close() // BẮT BUỘC ĐÓNG CHIỀU GHI ĐỂ SERVER BIẾT ĐÃ HẾT GÓI!
+	stream.Close()
 
 	alog("⏳ [QUIC-WAIT] Đã đẩy %d bytes (ReqID: %d). Chờ Server phản hồi...", buf.Len(), reqId)
 
@@ -385,8 +405,7 @@ func formatErrorJson(err error) string { return fmt.Sprintf(`{"error": "%s"}`, e
 
 //export StartQuicDataTunnel
 func StartQuicDataTunnel() bool {
-    // Để cho đẹp đội hình JNI thôi chứ QuicTunnel đã nổ máy chung với KCP Radar rồi!
-    return session != nil
+	return session != nil
 }
 
 func VfsStat(p string) string {
@@ -402,7 +421,7 @@ func VfsStat(p string) string {
 	}
 	size := binary.LittleEndian.Uint64(res[0:8])
 	isDir := res[8] == 1
-	mtime := binary.LittleEndian.Uint64(res[9:17]) * 1000 // x1000 để Android hiển thị ngày tháng chuẩn!
+	mtime := binary.LittleEndian.Uint64(res[9:17]) * 1000
 
 	name := p; if idx := strings.LastIndex(p, "/"); idx >= 0 { name = p[idx+1:] }
 	if name == "" { name = "/" }
@@ -427,7 +446,6 @@ func VfsList(p string) string {
 	offset := 0
 	totalLen := len(res)
 
-    // 🔥 FIX TỬ HUYỆT: QUÉT DỮ LIỆU NHỊ PHÂN GIỐNG HỆT LINUX
 	for offset+15 <= totalLen {
 		nameLen := int(binary.LittleEndian.Uint16(res[offset : offset+2]))
 		isDirVal := res[offset+2]

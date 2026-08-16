@@ -104,12 +104,19 @@ class HuangDocumentsProvider : DocumentsProvider() {
 
         val json = HuangTransport.getStat(isQuic, realPath)
 
-        if (!json.trim().startsWith("{")) return cursor
+        if (!json.trim().startsWith("{")) {
+            Log.e(TAG, "[QUERY_DOC] LỖI! Dữ liệu trả về không phải JSON: $json")
+            return cursor
+        }
 
         try {
             val obj = JSONObject(json)
+            if (obj.has("error")) {
+                Log.e(TAG, "[QUERY_DOC] QUIC BÁO LỖI TỪ LÕI GO: ${obj.getString("error")}")
+                return cursor
+            }
             if (!obj.has("is_dir")) {
-                Log.w(TAG, "[QUERY_DOC] JSON lỗi hoặc không có quyền: $json")
+                Log.e(TAG, "[QUERY_DOC] LỖI THIẾU is_dir trong JSON: $json")
                 return cursor
             }
 
