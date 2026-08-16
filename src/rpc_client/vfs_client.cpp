@@ -100,21 +100,40 @@ void VfsClient::receive_loop() {
             break;
         }
 
-        std::lock_guard<std::mutex> lock(kcp_mutex_);
-        ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
-        
-        int len;
-        while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
-            std::vector<uint8_t> encrypted_payload(len);
-            ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
+        struct PendingResponse {
+            uint32_t req_id;
             std::vector<uint8_t> plaintext;
-            if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
-                if (plaintext.size() >= sizeof(VfsPacketHeader)) {
-                    VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
-                    uint32_t req_id = (uint32_t)(hdr->session_id & 0xFFFFFFFF);
-                    zhiauth_cgo_on_response(req_id, plaintext.data(), plaintext.size());
+        };
+        std::vector<PendingResponse> pending_responses;
+
+        {
+            std::lock_guard<std::mutex> lock(kcp_mutex_);
+            ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
+            
+            int len;
+            while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
+                std::vector<uint8_t> encrypted_payload(len);
+                int read_len = ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
+                if (read_len < 0) break;
+
+                encrypted_payload.resize(read_len);
+
+                std::vector<uint8_t> plaintext;
+                if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
+                    if (plaintext.size() >= sizeof(VfsPacketHeader)) {
+                        VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
+                        uint32_t req_id = (uint32_t)(hdr->session_id & 0xFFFFFFFF);
+                        
+                        pending_responses.push_back({req_id, std::move(plaintext)});
+                    }
+                } else {
+                    std::cout << "[" << getRealtimeLog() << "] [WARNING] [KCP-DECRYPT] Decryption verification failed. Dropped payload." << std::endl;
                 }
             }
+        }
+
+        for (auto& resp : pending_responses) {
+            zhiauth_cgo_on_response(resp.req_id, resp.plaintext.data(), resp.plaintext.size());
         }
     }
 }
