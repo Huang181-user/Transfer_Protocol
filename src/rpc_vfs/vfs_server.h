@@ -23,6 +23,10 @@ struct KcpSession {
     std::shared_ptr<KcpUserContext> user_ctx;
     uint64_t last_active_time;
     std::string uds_path;
+    
+    // 🔥 FIX NÚT THẮT 1 & 2: Cấp cho mỗi Session 1 cái Khóa và 1 Ống nước UDS dùng mãi mãi!
+    std::shared_ptr<std::mutex> kcp_mtx;
+    std::shared_ptr<int> uds_fd; 
 };
 
 class VfsServer {

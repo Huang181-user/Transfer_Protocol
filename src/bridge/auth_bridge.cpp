@@ -42,12 +42,16 @@ const char* zhiauth_authenticate_and_trigger(const char* username, const char* p
     std::string uds_path = "/tmp/zhiauth_kcp_" + user_rec.username + ".sock";
 
     if (!lan.empty() && lan != "NONE") {
-        vfs_register_ip_uds(lan, uds_path);
-        ufw_manager.push_task(lan, g_quic_port, "udp", true); ufw_manager.push_task(lan, g_kcp_port, "udp", true); 
+    vfs_register_ip_uds(lan, uds_path);
+    ufw_manager.push_task(lan, g_quic_port, "udp", true); 
+    ufw_manager.push_task(lan, g_kcp_port, "udp", true); 
+    ufw_manager.push_task(lan, 0, "icmp", true); // 🔥 MỞ PING ĐÍCH DANH CỦA IP LAN
     }
     if (!ts_ip.empty() && ts_ip != "NONE") {
         vfs_register_ip_uds(ts_ip, uds_path);
-        ufw_manager.push_task(ts_ip, g_quic_port, "udp", true); ufw_manager.push_task(ts_ip, g_kcp_port, "udp", true); 
+        ufw_manager.push_task(ts_ip, g_quic_port, "udp", true); 
+        ufw_manager.push_task(ts_ip, g_kcp_port, "udp", true); 
+        ufw_manager.push_task(ts_ip, 0, "icmp", true); // 🔥 MỞ PING ĐÍCH DANH CỦA IP TAILSCALE
     }
     result_cache = "1|" + user_rec.username + "|" + user_rec.shared_path;
     return result_cache.c_str();
@@ -56,7 +60,9 @@ const char* zhiauth_authenticate_and_trigger(const char* username, const char* p
 void zhiauth_revoke_access(const char* client_ip, const char* shared_path) {
     std::string ip = client_ip ? client_ip : "";
     if (!ip.empty()) {
-        ufw_manager.push_task(ip, g_quic_port, "udp", false); ufw_manager.push_task(ip, g_kcp_port, "udp", false); 
+        ufw_manager.push_task(ip, g_quic_port, "udp", false); 
+        ufw_manager.push_task(ip, g_kcp_port, "udp", false); 
+        ufw_manager.push_task(ip, 0, "icmp", false); // 🔥 BÍT CỔNG PING LẠI NGAY
     }
 }
 

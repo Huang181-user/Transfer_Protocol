@@ -32,22 +32,32 @@ static int get_or_open_fd(const std::string& path, int flags, mode_t mode = 0) {
 }
 
 bool VfsIoWorker::read_block(const std::string& path, uint64_t offset, uint32_t length, std::vector<uint8_t>& out_buffer) {
-    int fd = get_or_open_fd(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return false;
+    int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        ZHI_LOG_ERR("[IO-READ] Thất bại khi open file: " + path);
+        return false;
+    }
     out_buffer.resize(length);
     ssize_t bytes_read = pread(fd, out_buffer.data(), length, offset);
+    close(fd);
+    
     if (bytes_read < 0) return false;
     out_buffer.resize(bytes_read);
     return true;
 }
 
 bool VfsIoWorker::write_block(const std::string& path, uint64_t offset, const std::vector<uint8_t>& data) {
-    int fd = get_or_open_fd(path, O_CREAT | O_RDWR | O_CLOEXEC, 0666);
-    if (fd < 0) return false;
+    int fd = open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0666);
+    if (fd < 0) {
+        ZHI_LOG_ERR("[IO-WRITE] Thất bại khi open file: " + path);
+        return false;
+    }
     if (!data.empty()) {
         ssize_t bytes_written = pwrite(fd, data.data(), data.size(), offset);
+        close(fd);
         return bytes_written == static_cast<ssize_t>(data.size());
     }
+    close(fd);
     return true;
 }
 

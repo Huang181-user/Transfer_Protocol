@@ -5,6 +5,13 @@ package main
 #cgo LDFLAGS: -L../build -lzhiauth_core -lstdc++ -lsqlite3 -lsodium
 #include "auth_bridge.h"
 #include <stdlib.h>
+#include <stdio.h>
+
+// 🔥 TẠO HÀM C INLINE ĐỂ BỌC FREOPEN (Tránh lỗi CGO Macro trên Linux)
+static inline void redirect_c_outputs(const char* path) {
+    freopen(path, "a", stdout);
+    freopen(path, "a", stderr);
+}
 */
 import "C"
 import (
@@ -27,6 +34,11 @@ func main() {
 		os.Chmod(logPath, 0666) 
 		multiWriter := io.MultiWriter(os.Stdout, logFile)
 		log.SetOutput(multiWriter)
+
+		// 🔥 GỌI HÀM C BỌC ĐỂ BƠM LOG C++ VÀO FILE /tmp/zhiauth_gateway.log
+		cLogPath := C.CString(logPath)
+		C.redirect_c_outputs(cLogPath)
+		C.free(unsafe.Pointer(cLogPath))
 	}
 
 	log.Println("==========================================================================")

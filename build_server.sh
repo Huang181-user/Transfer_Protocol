@@ -5,7 +5,6 @@ echo -e "\n🛑 [1/5] Đang rút ống thở Service cũ và dọn rác KCP Work
 sudo systemctl stop zhiauth || true
 sudo pkill -9 -f zhiauth_kcp_worker || true
 
-# Khôi phục thiết lập chuẩn cho Terminal SSH
 stty sane 2>/dev/null || true
 
 echo -e "\n🧹 [2/5] Đang dọn dẹp và đúc lại lõi C++ (Server trong thư mục build)..."
@@ -17,9 +16,10 @@ cd build
 cmake ..
 make -j$(nproc)
 
-echo -e "\n🐹 [3/5] Đang đúc lại tiền đồn Go Gateway..."
+echo -e "\n🐹 [3/5] Đang đúc lại tiền đồn Go Gateway (ÉP XÓA CGO CACHE)..."
 cd ~/zhiauth/go_gateway
-go build -o zhiauth_gateway .
+go clean -cache                          # 🔥 XÓA SACH CACHE BỐC FILE .A MỚI
+go build -a -o zhiauth_gateway .         # 🔥 CỜ -a ÉP GO BUILD LẠI 100% CGO
 
 echo -e "\n⚙️ [4/5] Đang sao chép Gateway & KCP Worker vào hệ thống..."
 sudo cp ../build/zhiauth_kcp_worker /usr/local/bin/

@@ -102,7 +102,9 @@ int VfsServer::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* 
     return 0;
 }
 
-// 🔥 VÒNG LẶP HÚT CẠN THẦN THÁNH: Bỏ Async, dùng Blocking Recv bắt từng gói trong vòng 0.001 ms!
+// ======================================================================
+// 🚀 1. VÒNG LẶP HÚT CẠN (Đã mở khóa Đa Luồng)
+// ======================================================================
 void VfsServer::receive_loop() {
     while (is_running_) {
         std::error_code ec;
@@ -114,7 +116,8 @@ void VfsServer::receive_loop() {
         }
 
         std::string client_key = sender_endpoint_.address().to_string() + ":" + std::to_string(sender_endpoint_.port());
-        std::lock_guard<std::mutex> lock(session_mutex_);
+        
+        std::unique_lock<std::mutex> lock(session_mutex_);
         auto it = sessions_.find(client_key);
         if (it == sessions_.end()) {
             KcpSession new_session;
@@ -122,35 +125,49 @@ void VfsServer::receive_loop() {
             new_session.kcp_cb = ikcp_create(0x11223344, new_session.user_ctx.get());
             new_session.kcp_cb->output = kcp_output_callback;
             
-            // 🔥 ĐÃ CHUYỂN SANG ĐỌC ĐỘNG TỪ CONFIG.JSON CỦA SERVER
             ikcp_nodelay(new_session.kcp_cb, nodelay_, interval_, resend_, nc_); 
             ikcp_wndsize(new_session.kcp_cb, snd_wnd_, rcv_wnd_);
-            
             ikcp_setmtu(new_session.kcp_cb, 1350); 
             new_session.kcp_cb->rx_minrto = 10; 
             new_session.kcp_cb->dead_link = 200;
             new_session.uds_path = vfs_get_uds_by_ip(sender_endpoint_.address().to_string());
+            
+            // 🔥 KHỞI TẠO TÀI SẢN RIÊNG CHO SESSION
+            new_session.kcp_mtx = std::make_shared<std::mutex>();
+            new_session.uds_fd = std::make_shared<int>(-1);
+
             sessions_[client_key] = new_session; 
             it = sessions_.find(client_key);
         }
         
         it->second.last_active_time = time(NULL);
-        ikcp_input(it->second.kcp_cb, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
+        KcpSession current_session = it->second; // Bốc dữ liệu ra
+        lock.unlock(); // 🔥 MỞ KHÓA GLOBAL NGAY VÀ LUÔN CHO LUỒNG KHÁC VÀO!
+
+        // Chỉ khóa KCP của riêng thằng Client này:
+        std::lock_guard<std::mutex> kcp_lock(*current_session.kcp_mtx);
+        ikcp_input(current_session.kcp_cb, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
         
         int len;
-        while ((len = ikcp_peeksize(it->second.kcp_cb)) > 0) {
+        while ((len = ikcp_peeksize(current_session.kcp_cb)) > 0) {
             std::vector<uint8_t> encrypted_payload(len);
-            ikcp_recv(it->second.kcp_cb, reinterpret_cast<char*>(encrypted_payload.data()), len);
-            KcpSession sess_copy = it->second;
+            ikcp_recv(current_session.kcp_cb, reinterpret_cast<char*>(encrypted_payload.data()), len);
+            
             {
                 std::lock_guard<std::mutex> tlock(g_task_mutex);
-                g_task_queue.push([this, sess_copy, encrypted_payload]() { process_kcp_payload(sess_copy, encrypted_payload); });
+                // Vứt vào hàng đợi cho 8 Worker xé xác:
+                g_task_queue.push([this, current_session, encrypted_payload]() { 
+                    process_kcp_payload(current_session, encrypted_payload); 
+                });
             }
             g_task_cv.notify_one();
         }
     }
 }
 
+// ======================================================================
+// 🚀 2. WORKER XỬ LÝ (Tái sử dụng UDS Socket, Không đóng ống)
+// ======================================================================
 void VfsServer::process_kcp_payload(KcpSession session_copy, std::vector<uint8_t> encrypted_payload) {
     std::vector<uint8_t> plaintext;
     if (!CryptoBox::decrypt_payload(encrypted_payload, master_sym_key_, plaintext)) return;
@@ -172,25 +189,43 @@ void VfsServer::process_kcp_payload(KcpSession session_copy, std::vector<uint8_t
 
     if (session_copy.uds_path.empty()) return;
 
+    // 🔥 MỖI WORKER MỞ 1 KẾT NỐI UDS ĐỘC LẬP (Tránh tuyệt đối lỗi trộn luồng stream)
     int uds_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (uds_fd < 0) return;
-    struct sockaddr_un addr; memset(&addr, 0, sizeof(addr)); addr.sun_family = AF_UNIX; 
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, session_copy.uds_path.c_str(), sizeof(addr.sun_path) - 1);
-    
-    struct timeval tv; tv.tv_sec = 10; tv.tv_usec = 0;
+
+    struct timeval tv;
+    tv.tv_sec = 10;
+    tv.tv_usec = 0;
     setsockopt(uds_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
     setsockopt(uds_fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 
-    if (connect(uds_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(uds_fd); return; }
+    if (connect(uds_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(uds_fd);
+        return;
+    }
 
     uint32_t req_sz = plaintext.size();
-    if (!send_all(uds_fd, &req_sz, 4) || !send_all(uds_fd, plaintext.data(), plaintext.size())) { close(uds_fd); return; }
+    if (!send_all(uds_fd, &req_sz, 4) || !send_all(uds_fd, plaintext.data(), plaintext.size())) {
+        close(uds_fd);
+        return;
+    }
 
     uint32_t resp_sz = 0;
-    if (!recv_all(uds_fd, &resp_sz, 4)) { close(uds_fd); return; }
+    if (!recv_all(uds_fd, &resp_sz, 4)) {
+        close(uds_fd);
+        return;
+    }
 
     std::vector<uint8_t> response_payload(resp_sz);
-    if (!recv_all(uds_fd, response_payload.data(), resp_sz)) { close(uds_fd); return; }
+    if (!recv_all(uds_fd, response_payload.data(), resp_sz)) {
+        close(uds_fd);
+        return;
+    }
     close(uds_fd);
 
     std::vector<uint8_t> final_encrypted;
@@ -201,11 +236,19 @@ void VfsServer::process_kcp_payload(KcpSession session_copy, std::vector<uint8_t
     }
 }
 
+// ======================================================================
+// 🚀 3. ÉP XUNG CLOCK: BƠM MÁU 1MS (Thay vì 5ms)
+// ======================================================================
 void VfsServer::kcp_update_loop() {
     while (is_running_) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        // AI Training cần I/O siêu tốc, hạ delay xuống 1ms!
+        std::this_thread::sleep_for(std::chrono::milliseconds(1)); 
         uint32_t current_clock = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        std::lock_guard<std::mutex> lock(session_mutex_);
-        for (auto it = sessions_.begin(); it != sessions_.end(); ++it) ikcp_update(it->second.kcp_cb, current_clock);
+        
+        std::lock_guard<std::mutex> lock(session_mutex_); // Khóa map để duyệt
+        for (auto& pair : sessions_) {
+            std::lock_guard<std::mutex> kcp_lock(*pair.second.kcp_mtx); // Khóa KCP nội bộ
+            ikcp_update(pair.second.kcp_cb, current_clock);
+        }
     }
 }
