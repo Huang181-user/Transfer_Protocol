@@ -38,6 +38,14 @@ var (
 	globalReqId        uint64
 	remoteRoot         string
 	isHeartbeatRunning bool
+
+    // Thêm các biến lưu trạng thái để gọi Reconnect
+    gActiveIp string
+    gAuthPort string
+    gAuthCmd  string
+    gQuicDataPort string
+    gTlsConf  *tls.Config
+    gConfig   *quic.Config
 )
 
 func alog(format string, args ...interface{}) {
@@ -48,8 +56,59 @@ func alog(format string, args ...interface{}) {
 	C.free(unsafe.Pointer(cstr))
 }
 
+// =========================================================================
+// 🔥 HÀM TỰ ĐỘNG NỐI LẠI ĐƯỜNG HẦM KHI BỊ SẬP (FAILOVER MẠNG)
+// =========================================================================
+func ReconnectSilently() error {
+    alog("🚨 [QUIC-TUNNEL] Kích hoạt luồng kết nối QUIC ngầm để phục hồi mạng...")
+
+    authConn, authUdp, err := dialQuic(context.Background(), "0.0.0.0", gActiveIp, gAuthPort, gTlsConf, gConfig)
+    if err != nil { return err }
+
+    authStream, err := (*authConn).OpenStreamSync(context.Background())
+    if err != nil { (*authConn).CloseWithError(0, ""); authUdp.Close(); return err }
+
+    authStream.Write([]byte(gAuthCmd))
+    authStream.Close()
+
+    res, _ := io.ReadAll(authStream)
+    (*authConn).CloseWithError(0, ""); authUdp.Close()
+
+    resStr := string(res)
+    if !strings.HasPrefix(resStr, "AUTH_SUCCESS") { return fmt.Errorf("re-auth failure") }
+
+    // Rút kinh nghiệm xương máu từ Linux: Chờ 200ms cho Server mở NFTABLES
+    time.Sleep(200 * time.Millisecond)
+
+    dataConn, dataUdp, err := dialQuic(context.Background(), "0.0.0.0", gActiveIp, gQuicDataPort, gTlsConf, gConfig)
+    if err != nil { return err }
+
+    if session != nil { (*session).CloseWithError(0, "") }
+    if sessionUdp != nil { sessionUdp.Close() }
+
+    session = dataConn
+    sessionUdp = dataUdp
+
+    alog("✅ [QUIC-TUNNEL] Đường hầm QUIC Data Port %s đã được nối lại thành công!", gQuicDataPort)
+    return nil
+}
+
+// 📡 ĐƯỢC GỌI TỪ ANDROID KHI WIFI NHẢY SANG 4G
 func TriggerNetworkRoaming() {
-	alog("📡 [ANDROID-ROAMING] Hệ điều hành báo thay đổi mạng! Yêu cầu dò lại luồng...")
+	alog("📡 [ANDROID-ROAMING] Hệ điều hành báo thay đổi mạng! Yêu cầu dò lại luồng QUIC...")
+    mu.Lock()
+    defer mu.Unlock()
+
+    // Đạp bỏ ống nước cũ
+    if session != nil { (*session).CloseWithError(0, ""); session = nil }
+    if sessionUdp != nil { sessionUdp.Close(); sessionUdp = nil }
+
+    // Thử nối ống lại luôn (Không cần quan tâm KCP, C++ tự lo KCP)
+    go func() {
+        mu.Lock()
+        defer mu.Unlock()
+        ReconnectSilently()
+    }()
 }
 
 func getOutboundIP(targetIP string) string {
@@ -120,7 +179,7 @@ func pingKCP(localIp, targetIp, port string, mtu int, masterKey string) bool {
 	plaintext := make([]byte, 27+paddingSize)
 	binary.LittleEndian.PutUint32(plaintext[0:4], 0x5A484941)
 	binary.LittleEndian.PutUint32(plaintext[21:25], uint32(paddingSize))
-	
+
 	keyBytes := []byte(masterKey)
 	if len(keyBytes) > 32 { keyBytes = keyBytes[:32] }
 	if len(keyBytes) < 32 {
@@ -197,24 +256,27 @@ func InitializeQUIC(targetLanIp, targetTsIp, user, pass, hwid, authPort, masterK
 	connTCP, err := net.DialTimeout("tcp", net.JoinHostPort(targetLanIp, "22"), 1*time.Second)
 	if err == nil { connTCP.Close(); activeIp = targetLanIp }
 
-	tlsConf := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"zhiauth-raw-quic"}, ServerName: sniDomain}
-	config := &quic.Config{MaxIdleTimeout: 120 * time.Second, HandshakeIdleTimeout: 10 * time.Second, KeepAlivePeriod: 10 * time.Second}
+	gTlsConf = &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"zhiauth-raw-quic"}, ServerName: sniDomain}
+	gConfig = &quic.Config{MaxIdleTimeout: 120 * time.Second, HandshakeIdleTimeout: 10 * time.Second, KeepAlivePeriod: 10 * time.Second}
 
 	myLanIp := getOutboundIP(targetLanIp)
 	myTsIp := getOutboundIP(targetTsIp)
 
 	nonceBytes := make([]byte, 8); rand.Read(nonceBytes)
-	authCmd := fmt.Sprintf("AUTH_REQ|USER:%s|PASS:%s|LAN:%s|TS:%s|HWID:%s|NONCE:%x", user, pass, myLanIp, myTsIp, hwid, nonceBytes)
+	gAuthCmd = fmt.Sprintf("AUTH_REQ|USER:%s|PASS:%s|LAN:%s|TS:%s|HWID:%s|NONCE:%x", user, pass, myLanIp, myTsIp, hwid, nonceBytes)
 
 	localIp := myTsIp
 	if activeIp == targetLanIp { localIp = myLanIp }
 
-	authConn, authUdp, err := dialQuic(context.Background(), localIp, activeIp, authPort, tlsConf, config)
+    gActiveIp = activeIp
+    gAuthPort = authPort
+
+	authConn, authUdp, err := dialQuic(context.Background(), localIp, activeIp, authPort, gTlsConf, gConfig)
 	if err != nil { return "ERROR|Knocking Failed" }
 
 	authStream, err := (*authConn).OpenStreamSync(context.Background())
 	if err != nil { (*authConn).CloseWithError(0, ""); authUdp.Close(); return "ERROR|Knocking Stream Failed" }
-	authStream.Write([]byte(authCmd)); authStream.Close()
+	authStream.Write([]byte(gAuthCmd)); authStream.Close()
 	res, _ := io.ReadAll(authStream)
 	(*authConn).CloseWithError(0, ""); authUdp.Close()
 
@@ -222,33 +284,22 @@ func InitializeQUIC(targetLanIp, targetTsIp, user, pass, hwid, authPort, masterK
 	if !strings.HasPrefix(resStr, "AUTH_SUCCESS") { return "ERROR|Auth Rejected" }
 
 	parts := strings.Split(resStr, "|")
-	var quicDataPort, kcpDataPort string
+	var kcpDataPort string
 	if len(parts) >= 4 {
-		remoteRoot = parts[1]; quicDataPort = parts[2]; kcpDataPort = parts[3]
+		remoteRoot = parts[1]; gQuicDataPort = parts[2]; kcpDataPort = parts[3]
 	} else { return "ERROR|Invalid Server Protocol Data" }
 
-	time.Sleep(1500 * time.Millisecond)
-
-	var dataConn *quic.Conn
-	var dataUdp *net.UDPConn
-	for i := 1; i <= 3; i++ {
-		ctxDial, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
-		dataConn, dataUdp, err = dialQuic(ctxDial, localIp, activeIp, quicDataPort, tlsConf, config)
-		cancelDial()
-		if err == nil { break }
-		time.Sleep(1 * time.Second)
-	}
+    // 🔥 GỌI LUÔN HÀM KẾT NỐI QUIC LẦN ĐẦU
+    errQuic := ReconnectSilently()
+    if errQuic != nil {
+        return "ERROR|Quic Data Stream Failed: " + errQuic.Error()
+    }
 
 	mtu := ExecuteMTURadar(localIp, activeIp, kcpDataPort, masterKey)
-
-	mu.Lock()
-	if session != nil { (*session).CloseWithError(0, "") }
-	if sessionUdp != nil { sessionUdp.Close() }
-	session = dataConn; sessionUdp = dataUdp
-	mu.Unlock()
-
 	go StartHeartbeat(activeIp, authPort)
-	return fmt.Sprintf("SUCCESS|%d|%s|%s|%s|%s", mtu, activeIp, quicDataPort, kcpDataPort, remoteRoot)
+
+    // Trả về dữ liệu để Android Kotlin mồi KCP C++
+	return fmt.Sprintf("SUCCESS|%d|%s|%s|%s|%s", mtu, activeIp, gQuicDataPort, kcpDataPort, remoteRoot)
 }
 
 func readQuicResponse(stream io.Reader) ([]byte, error) {
@@ -257,14 +308,22 @@ func readQuicResponse(stream io.Reader) ([]byte, error) {
 
 func sendRawQuic(opcode byte, path string, offset uint64, reqLen uint32, data []byte) ([]byte, error) {
 	mu.Lock(); sess := session; mu.Unlock()
-	if sess == nil { return nil, fmt.Errorf("no quic session") }
+	if sess == nil || (*sess).Context().Err() != nil {
+		alog("❌ [QUIC-SEND] Session rỗng hoặc đã sụp! Cố gắng tự động Reconnect...")
+		err := ReconnectSilently()
+		if err != nil { return nil, fmt.Errorf("reconnect failed: %v", err) }
+		mu.Lock(); sess = session; mu.Unlock()
+	}
 
-	start := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second); defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
+	alog("📤 [QUIC-SEND] Xin cấp Stream gửi Opcode 0x%02X, Path: %s", opcode, path)
 	stream, err := (*sess).OpenStreamSync(ctx)
-	if err != nil { return nil, err }
-	defer stream.Close()
+	if err != nil {
+		alog("❌ [QUIC-SEND] Lỗi mở Stream: %v", err)
+		return nil, err
+	}
 
 	buf := new(bytes.Buffer)
 	reqId := atomic.AddUint64(&globalReqId, 1)
@@ -279,44 +338,107 @@ func sendRawQuic(opcode byte, path string, offset uint64, reqLen uint32, data []
 	buf.WriteString(path)
 	if data != nil { buf.Write(data) }
 
-	stream.Write(buf.Bytes()); stream.Close()
+	_, err = stream.Write(buf.Bytes())
+	if err != nil {
+		alog("❌ [QUIC-SEND] Lỗi ghi dữ liệu vào Stream: %v", err)
+		return nil, err
+	}
+	stream.Close() // BẮT BUỘC ĐÓNG CHIỀU GHI ĐỂ SERVER BIẾT ĐÃ HẾT GÓI!
+
+	alog("⏳ [QUIC-WAIT] Đã đẩy %d bytes (ReqID: %d). Chờ Server phản hồi...", buf.Len(), reqId)
+
 	res, readErr := readQuicResponse(stream)
-	if readErr != nil { return nil, readErr }
-	if len(res) < 27 { return nil, fmt.Errorf("server error") }
-	_ = start // Tắt tiếng báo lỗi của compiler
+	if readErr != nil {
+		alog("❌ [QUIC-READ] Lỗi cúp cầu dao khi đang đọc: %v", readErr)
+		return nil, readErr
+	}
+
+	alog("📥 [QUIC-READ] Nhận thành công %d bytes từ Server (ReqID: %d).", len(res), reqId)
+
+	if len(res) < 27 {
+		alog("❌ [QUIC-PARSE] Gói tin nát (Nhỏ hơn 27 bytes Header)!")
+		return nil, fmt.Errorf("server error")
+	}
+
+	if res[4] == 0xFF {
+		alog("❌ [QUIC-PARSE] Server trả mã 0xFF (File khóa hoặc lỗi IO)!")
+		return nil, fmt.Errorf("server vfs io error")
+	}
+
 	return res[27:], nil
 }
 
 func formatErrorJson(err error) string { return fmt.Sprintf(`{"error": "%s"}`, err.Error()) }
 
+//export StartQuicDataTunnel
+func StartQuicDataTunnel() bool {
+    // Để cho đẹp đội hình JNI thôi chứ QuicTunnel đã nổ máy chung với KCP Radar rồi!
+    return session != nil
+}
+
 func VfsStat(p string) string {
+	alog("🔎 [QUIC-STAT] Đang dò thông tin: %s", p)
 	res, err := sendRawQuic(0x01, resolvePath(p), 0, 0, nil)
-	if err != nil { return formatErrorJson(err) }
+	if err != nil {
+		alog("❌ [QUIC-STAT] Bị lỗi: %v", err)
+		return formatErrorJson(err)
+	}
+	if len(res) < 37 {
+		alog("❌ [QUIC-STAT] Lỗi: Cục Payload quá ngắn (%d bytes)", len(res))
+		return formatErrorJson(fmt.Errorf("payload too short"))
+	}
 	size := binary.LittleEndian.Uint64(res[0:8])
 	isDir := res[8] == 1
+	mtime := binary.LittleEndian.Uint64(res[9:17]) * 1000 // x1000 để Android hiển thị ngày tháng chuẩn!
+
 	name := p; if idx := strings.LastIndex(p, "/"); idx >= 0 { name = p[idx+1:] }
 	if name == "" { name = "/" }
-	return fmt.Sprintf(`{"name":"%s", "size":%d, "is_dir":%t}`, name, size, isDir)
+
+	jsonStr := fmt.Sprintf(`{"name":"%s", "size":%d, "is_dir":%t, "last_modified":%d}`, name, size, isDir, mtime)
+	alog("✅ [QUIC-STAT] Trả về: %s", jsonStr)
+	return jsonStr
 }
 
 func VfsList(p string) string {
+	alog("📂 [QUIC-LIST] Đang quét thư mục: %s", p)
 	res, err := sendRawQuic(0x02, resolvePath(p), 0, 0, nil)
-	if err != nil { return "[]" }
-	cleanStr := strings.TrimSpace(strings.TrimRight(string(res), "\x00"))
+	if err != nil {
+		alog("❌ [QUIC-LIST] Lỗi gửi lệnh: %v", err)
+		return "[]"
+	}
+
 	var arr []string
 	vSlash := p; if vSlash == "" { vSlash = "/" }
 	if !strings.HasSuffix(vSlash, "/") { vSlash += "/" }
-	for _, t := range strings.Split(cleanStr, "|") {
-		t = strings.TrimSpace(t); if len(t) == 0 { continue }
-		parts := strings.Split(t, ",")
-		if len(parts) >= 2 {
-			isDir := "false"; if strings.TrimSpace(parts[1]) == "DIR" { isDir = "true" }
-			fileName := strings.ReplaceAll(strings.TrimSpace(parts[0]), "\"", "")
-			fileSize := "0"; if len(parts) >= 3 { fileSize = strings.ReplaceAll(strings.TrimSpace(parts[2]), "\"", "") }
-			arr = append(arr, fmt.Sprintf(`{"name":"%s","is_dir":%s,"size":%s,"path":"%s%s"}`, fileName, isDir, fileSize, vSlash, fileName))
+
+	offset := 0
+	totalLen := len(res)
+
+    // 🔥 FIX TỬ HUYỆT: QUÉT DỮ LIỆU NHỊ PHÂN GIỐNG HỆT LINUX
+	for offset+15 <= totalLen {
+		nameLen := int(binary.LittleEndian.Uint16(res[offset : offset+2]))
+		isDirVal := res[offset+2]
+		size := binary.LittleEndian.Uint64(res[offset+3 : offset+11])
+
+		offset += 15
+
+		if offset+nameLen > totalLen {
+			alog("❌ [QUIC-LIST] Lỗi: Dữ liệu tên file bị xén mất!")
+			break
 		}
+
+		name := string(res[offset : offset+nameLen])
+		offset += nameLen
+
+		isDirStr := "false"; if isDirVal == 1 { isDirStr = "true" }
+		fileName := strings.ReplaceAll(name, "\"", "\\\"")
+
+		arr = append(arr, fmt.Sprintf(`{"name":"%s","is_dir":%s,"size":%d,"path":"%s%s"}`, fileName, isDirStr, size, vSlash, fileName))
 	}
-	return "[" + strings.Join(arr, ",") + "]"
+
+	jsonArray := "[" + strings.Join(arr, ",") + "]"
+	alog("✅ [QUIC-LIST] Quét xong! Trả về %d mục.", len(arr))
+	return jsonArray
 }
 
 func VfsMkdir(p string) bool                               { _, err := sendRawQuic(0x05, resolvePath(p), 0, 0, nil); return err == nil }
