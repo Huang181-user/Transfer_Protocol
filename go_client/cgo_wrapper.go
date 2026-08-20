@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"log"
+	"sync" // 🔥 ĐÃ THÊM THƯ VIỆN NÀY ĐỂ FIX LỖI
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -33,6 +34,9 @@ const (
 
 var globalReqId uint64 = 0
 var globalClientId uint32 = 0
+
+// 🔥 TÚI ĐỰNG RESPONSE TỪ C++ BẮN VỀ
+var pendingRequests sync.Map
 
 // 🔥 TẠO MỚI: Khởi tạo Client ID độc nhất dựa trên HWID
 func InitClientID(hwid string) {
@@ -58,6 +62,19 @@ func ShutdownCppSDK() {
 	C.zhiauth_client_shutdown() 
 }
 
+//export zhiauth_cgo_on_response
+func zhiauth_cgo_on_response(reqId C.uint64_t, data *C.uint8_t, length C.size_t) {
+	goReqId := uint64(reqId)
+	if val, ok := pendingRequests.Load(goReqId); ok {
+		ch := val.(chan []byte)
+		safeData := C.GoBytes(unsafe.Pointer(data), C.int(length))
+		select {
+		case ch <- safeData:
+		default:
+		}
+	}
+}
+
 func BuildVfsPacket(opcode byte, path string, offset uint64, reqLen uint32, data []byte) []byte {
 	buf := new(bytes.Buffer)
 	dataLen := uint32(len(data))
@@ -81,21 +98,30 @@ func BuildVfsPacket(opcode byte, path string, offset uint64, reqLen uint32, data
 
 func SendRpcVfs(opcode byte, path string, offset uint64, reqLen uint32, data []byte) ([]byte, error) {
 	payload := BuildVfsPacket(opcode, path, offset, reqLen, data)
-	cPayload := (*C.uint8_t)(C.CBytes(payload))
-	defer C.free(unsafe.Pointer(cPayload))
-
-	var outLen C.size_t
-	cRes := C.zhiauth_send_vfs_command(cPayload, C.size_t(len(payload)), &outLen)
-
-	if cRes == nil { return nil, fmt.Errorf("VFS RPC Timeout") }
-	if outLen < 27 {
-		C.free(unsafe.Pointer(cRes))
-		return nil, fmt.Errorf("VFS RPC Invalid Size")
-	}
-	defer C.free(unsafe.Pointer(cRes))
-
-	resBytes := C.GoBytes(unsafe.Pointer(cRes), C.int(outLen))
-	if resBytes[4] == OP_ERROR { return nil, fmt.Errorf("Server VFS Error") }
 	
-	return resBytes[27:], nil 
+	// Trích xuất SessionID 64-bit từ payload (vị trí byte thứ 5) để làm Key Map
+	sessionID := binary.LittleEndian.Uint64(payload[5:13])
+
+	resChan := make(chan []byte, 1)
+	pendingRequests.Store(sessionID, resChan)
+	defer pendingRequests.Delete(sessionID)
+
+	cPayload := (*C.uint8_t)(C.CBytes(payload))
+	C.zhiauth_send_vfs_command_async(cPayload, C.size_t(len(payload)))
+	C.free(unsafe.Pointer(cPayload))
+
+	select {
+	case resBytes := <-resChan:
+		if len(resBytes) < 27 {
+			return nil, fmt.Errorf("VFS Packet Corrupted")
+		}
+		if resBytes[4] == OP_ERROR {
+			return nil, fmt.Errorf("Server VFS Error")
+		}
+		return resBytes[27:], nil
+
+	case <-time.After(30 * time.Second):
+		log.Printf("[TIMEOUT] KCP tắt tịt với Session ID: %d", sessionID)
+		return nil, fmt.Errorf("VFS RPC Timeout")
+	}
 }

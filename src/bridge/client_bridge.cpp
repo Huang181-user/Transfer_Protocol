@@ -10,17 +10,8 @@
 #include <vector>
 #include <thread>
 #include <mutex>
-#include <condition_variable>
-#include <unordered_map>
 #include <atomic>
-#include <algorithm> // 🔥 Bổ sung thư viện algorithm cho hàm std::max
-
-struct BridgeRpcContext {
-    std::mutex mtx;
-    std::condition_variable cv;
-    std::vector<uint8_t> response_payload;
-    bool is_done = false;
-};
+#include <algorithm> // Bổ sung thư viện algorithm cho hàm std::max
 
 static SOCKET g_udp_sock = INVALID_SOCKET;
 static struct sockaddr_in g_server_addr;
@@ -29,8 +20,6 @@ static ikcpcb* g_kcp = NULL;
 static std::thread g_worker_thread;
 static std::atomic<bool> g_is_running(false);
 static std::mutex g_kcp_mutex;
-static std::unordered_map<uint64_t, std::shared_ptr<BridgeRpcContext>> g_rpc_registry;
-static std::mutex g_registry_mutex;
 
 // =====================================================================
 // 🔥 CHE GIẤU ĐƯỜNG DẪN C++ KHÔNG DÙNG REGEX
@@ -43,7 +32,7 @@ static std::string mask_sensitive_path(const std::string& path) {
     size_t split_pos = std::string::npos;
     
     if (last_slash != std::string::npos && last_backslash != std::string::npos) {
-        split_pos = std::max(last_slash, last_backslash); // 🔥 FIX: Thêm std::max
+        split_pos = std::max(last_slash, last_backslash); 
     } else if (last_slash != std::string::npos) {
         split_pos = last_slash;
     } else {
@@ -68,6 +57,9 @@ static int udp_output_callback(const char *buf, int len, ikcpcb *kcp, void *user
     return -1;
 }
 
+// =====================================================================
+// 🔥 LUỒNG NHẬN DATA THẦN TỐC KCP (ĐÃ BỎ KHÓA CHỜ)
+// =====================================================================
 static void kcp_background_worker() {
     std::vector<char> udp_buf(65536);
     std::vector<char> kcp_buf(8 * 1024 * 1024);
@@ -107,19 +99,8 @@ static void kcp_background_worker() {
                             
                             uint64_t req_id = hdr->session_id;
 
-                            std::shared_ptr<BridgeRpcContext> ctx;
-                            { 
-                                std::lock_guard<std::mutex> reg_lock(g_registry_mutex); 
-                                auto it = g_rpc_registry.find(req_id); 
-                                if (it != g_rpc_registry.end()) ctx = it->second; 
-                            }
-
-                            if (ctx) {
-                                std::lock_guard<std::mutex> ctx_lock(ctx->mtx);
-                                ctx->response_payload = std::move(plain_resp);
-                                ctx->is_done = true;
-                                ctx->cv.notify_one();
-                            }
+                            // 🔥 GỌI NGƯỢC CALLBACK TRẢ DATA VỀ GO TRONG 1 NỐT NHẠC
+                            zhiauth_cgo_on_response(req_id, plain_resp.data(), plain_resp.size());
                         }
                     }
                 }
@@ -133,6 +114,9 @@ static void kcp_background_worker() {
     }
 }
 
+// =====================================================================
+// 🔥 KHỞI TẠO VÀ TẮT CLIENT
+// =====================================================================
 extern "C" int zhiauth_client_init(const char* ip, int port, const char* sym_key, int mtu, uint32_t conv,
                                   int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
     if (g_is_running) return 0;
@@ -170,15 +154,6 @@ extern "C" void zhiauth_client_shutdown() {
     bridge_realtime_log("🛑 Dang dong goi C++ Engine...");
     g_is_running = false;
     
-    {
-        std::lock_guard<std::mutex> reg_lock(g_registry_mutex);
-        for (auto& pair : g_rpc_registry) {
-            std::lock_guard<std::mutex> ctx_lock(pair.second->mtx);
-            pair.second->is_done = true;
-            pair.second->cv.notify_all();
-        }
-    }
-
     if (g_worker_thread.joinable()) g_worker_thread.join();
     std::lock_guard<std::mutex> lock(g_kcp_mutex);
     if (g_kcp) { ikcp_release(g_kcp); g_kcp = NULL; }
@@ -187,54 +162,28 @@ extern "C" void zhiauth_client_shutdown() {
     bridge_realtime_log("✅ KCP C++ Engine Shutdown Hoan Tat.");
 }
 
-extern "C" uint8_t* zhiauth_send_vfs_command(const uint8_t* payload, size_t len, size_t* out_len) {
-    try {
-        if (!g_is_running || !g_kcp) { *out_len = 0; return NULL; }
-        if (len < sizeof(VfsPacketHeader)) { *out_len = 0; return NULL; }
-        
-        const VfsPacketHeader* hdr = reinterpret_cast<const VfsPacketHeader*>(payload);
-        uint64_t req_id = hdr->session_id;
+// =====================================================================
+// 🔥 GỬI BẤT ĐỒNG BỘ (ASYNC)
+// =====================================================================
+extern "C" void zhiauth_send_vfs_command_async(const uint8_t* payload, size_t len) {
+    if (!g_is_running || !g_kcp || len < sizeof(VfsPacketHeader)) return;
+    
+    const VfsPacketHeader* hdr = reinterpret_cast<const VfsPacketHeader*>(payload);
+    
+    std::string req_path = "";
+    if (len >= sizeof(VfsPacketHeader) + hdr->path_len) {
+        req_path = std::string((const char*)(payload + sizeof(VfsPacketHeader)), hdr->path_len);
+    }
+    std::string masked_path = mask_sensitive_path(req_path);
+    
+    bridge_realtime_log("📤 [SEND ASYNC] Opcode: 0x%02X | Path: %s | Size: %u bytes", 
+                        (unsigned int)hdr->opcode, masked_path.c_str(), hdr->data_len);
 
-        std::string req_path = "";
-        if (len >= sizeof(VfsPacketHeader) + hdr->path_len) {
-            req_path = std::string((const char*)(payload + sizeof(VfsPacketHeader)), hdr->path_len);
-        }
-        std::string masked_path = mask_sensitive_path(req_path);
-        
-        bridge_realtime_log("📤 [SEND] Opcode: 0x%02X | Path: %s | Size: %u bytes", 
-                            (unsigned int)hdr->opcode, masked_path.c_str(), hdr->data_len);
-
-        auto ctx = std::make_shared<BridgeRpcContext>();
-        { std::lock_guard<std::mutex> reg_lock(g_registry_mutex); g_rpc_registry[req_id] = ctx; }
-
-        std::vector<uint8_t> plain_req(payload, payload + len);
-        std::vector<uint8_t> enc_req;
-        if (!CryptoBox::encrypt_payload(plain_req, g_sym_key, enc_req)) {
-            std::lock_guard<std::mutex> reg_lock(g_registry_mutex);
-            g_rpc_registry.erase(req_id); *out_len = 0; return NULL;
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(g_kcp_mutex);
-            ikcp_send(g_kcp, (const char*)enc_req.data(), enc_req.size());
-            ikcp_flush(g_kcp);
-        }
-
-        uint8_t* out_buf = NULL;
-        {
-            std::unique_lock<std::mutex> ctx_lock(ctx->mtx);
-            if (ctx->cv.wait_for(ctx_lock, std::chrono::seconds(25), [&] { return ctx->is_done; })) {
-                if (!ctx->response_payload.empty()) {
-                    *out_len = ctx->response_payload.size();
-                    out_buf = (uint8_t*)malloc(ctx->response_payload.size());
-                    if (out_buf) memcpy(out_buf, ctx->response_payload.data(), ctx->response_payload.size());
-                }
-            } else {
-                bridge_realtime_log("❌ [KCP-TIMEOUT] Huy giao dich ReqID: %llu do Server im lang qua 25s!", req_id);
-            }
-        }
-
-        { std::lock_guard<std::mutex> reg_lock(g_registry_mutex); g_rpc_registry.erase(req_id); }
-        return out_buf;
-    } catch (...) { *out_len = 0; return NULL; }
+    std::vector<uint8_t> plain_req(payload, payload + len);
+    std::vector<uint8_t> enc_req;
+    if (CryptoBox::encrypt_payload(plain_req, g_sym_key, enc_req)) {
+        std::lock_guard<std::mutex> lock(g_kcp_mutex);
+        ikcp_send(g_kcp, (const char*)enc_req.data(), enc_req.size());
+        ikcp_flush(g_kcp);
+    }
 }

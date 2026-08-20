@@ -35,7 +35,7 @@ const IUINT32 IKCP_CMD_WASK = 83;		// cmd: window probe (ask)
 const IUINT32 IKCP_CMD_WINS = 84;		// cmd: window size (tell)
 const IUINT32 IKCP_ASK_SEND = 1;		// need to send IKCP_CMD_WASK
 const IUINT32 IKCP_ASK_TELL = 2;		// need to send IKCP_CMD_WINS
-const IUINT32 IKCP_WND_SND = 32;
+const IUINT32 IKCP_WND_SND = 4096;
 // 🔥 FIX: Mở toang cửa sổ nhận 128 -> 4096 để hứng bão dữ liệu
 const IUINT32 IKCP_WND_RCV = 4096;       // must >= max fragment size
 const IUINT32 IKCP_MTU_DEF = 1400;

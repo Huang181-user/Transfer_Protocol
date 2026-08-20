@@ -59,7 +59,7 @@ foreach ($file in $cppFiles) {
     $objFile = "$buildDir\$($file.BaseName).o"
     Log-Realtime " |-- [COMPILE C++] $($file.Name) -> $objFile" "Gray"
     
-    $argsList = $gppIncArgs + @("-c", $file.FullName, "-std=c++17", "-O3", "-o", $objFile)
+    $argsList = $gppIncArgs + @("-c", $file.FullName, "-std=c++17", "-O3", "-static", "-o", $objFile)
     & g++ @argsList
     
     if ($LASTEXITCODE -ne 0) {
@@ -87,7 +87,7 @@ $env:CGO_ENABLED = "1"
 Set-Location "go_client"
 Log-Realtime " |-- [GO BUILD] Dang lien ket CGO voi Static Library C++..." "Gray"
 
-& go build -ldflags="-s -w" -o "../$buildDir/huang_client.exe" .
+& go build -ldflags="-s -w -extldflags '-static'" -o "../$buildDir/huang_client.exe" .
 $goExitCode = $LASTEXITCODE
 Set-Location ".."
 
