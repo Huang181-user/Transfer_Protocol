@@ -14,7 +14,7 @@ UFWManager::~UFWManager() {
 
 // 🛡️ HÀM BẮT LOG THỜI GIAN THỰC (BẮT SẠCH STDOUT + STDERR + RETURN CODE)
 static void run_cmd_verbose(const std::string& cmd) {
-    std::string full_cmd = cmd + " 2>&1"; // Gom cả luồng lỗi stderr về stdout
+    std::string full_cmd = cmd + " 2>/dev/null"; // Gom cả luồng lỗi stderr về stdout
     std::array<char, 256> buffer;
     std::string output = "";
     

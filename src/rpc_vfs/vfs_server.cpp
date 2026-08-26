@@ -115,7 +115,7 @@ void VfsServer::receive_loop() {
             break; 
         }
 
-        std::string client_key = sender_endpoint_.address().to_string() + ":" + std::to_string(sender_endpoint_.port());
+        std::string ip = sender_endpoint_.address().to_string(); if(ip.find("::ffff:")==0) ip = ip.substr(7); std::string client_key = ip + ":" + std::to_string(sender_endpoint_.port());
         
         std::unique_lock<std::mutex> lock(session_mutex_);
         auto it = sessions_.find(client_key);
@@ -130,7 +130,7 @@ void VfsServer::receive_loop() {
             ikcp_setmtu(new_session.kcp_cb, 1350); 
             new_session.kcp_cb->rx_minrto = 10; 
             new_session.kcp_cb->dead_link = 200;
-            new_session.uds_path = vfs_get_uds_by_ip(sender_endpoint_.address().to_string());
+            new_session.uds_path = vfs_get_uds_by_ip(ip); if(new_session.uds_path.empty()) ZHI_LOG_WARN("[KCP-ENGINE] IP chưa Knocking: " + ip);
             
             // 🔥 KHỞI TẠO TÀI SẢN RIÊNG CHO SESSION
             new_session.kcp_mtx = std::make_shared<std::mutex>();
