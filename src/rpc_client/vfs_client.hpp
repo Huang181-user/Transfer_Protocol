@@ -4,17 +4,10 @@
 #include <mutex>
 #include <vector>
 #include <string>
-#include <condition_variable>
+#include <future>
 #include <unordered_map>
 #include <memory>
 #include "rpc_client/ikcp.h"
-
-struct RpcContext {
-    std::mutex mtx;
-    std::condition_variable cv;
-    std::vector<uint8_t> response;
-    bool done = false;
-};
 
 class VfsClient {
 public:
@@ -23,11 +16,12 @@ public:
     ~VfsClient();
     bool start();
     void stop();
-    std::vector<uint8_t> send_rpc_sync(const std::vector<uint8_t>& payload, uint32_t req_id);
+    std::vector<uint8_t> send_rpc_sync(const std::vector<uint8_t>& request_payload, uint32_t req_id);
     static int kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user);
-private:
+public:
     void receive_loop();
     void kcp_update_loop();
+    
     asio::io_context io_context_;
     asio::ip::udp::socket socket_;
     asio::ip::udp::endpoint server_endpoint_;
@@ -38,7 +32,8 @@ private:
     ikcpcb* kcp_cb_;
     std::mutex kcp_mutex_;
     std::string sym_key_;
-    int mtu_, nodelay_, interval_, resend_, nc_, snd_wnd_, rcv_wnd_;
-    std::unordered_map<uint32_t, std::shared_ptr<RpcContext>> rpc_map_;
+    int nodelay_, interval_, resend_, nc_, snd_wnd_, rcv_wnd_, mtu_;
+
     std::mutex rpc_map_mutex_;
+    std::unordered_map<uint32_t, std::shared_ptr<std::promise<std::vector<uint8_t>>>> rpc_map_;
 };
