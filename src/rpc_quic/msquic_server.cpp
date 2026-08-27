@@ -35,6 +35,8 @@ bool MsQuicServer::initialize(uint16_t auth_port, uint16_t data_port, const std:
     memset(&Settings, 0, sizeof(Settings));
     Settings.PeerBidiStreamCount = 1000; Settings.IsSet.PeerBidiStreamCount = 1;
     Settings.IdleTimeoutMs = 120000; Settings.IsSet.IdleTimeoutMs = 1;
+    // 🔥 THUỐC CHỐNG NGỦ GẬT NẰM Ở ĐÂY: Ép MsQUIC tự bắn Ping mỗi 15 giây giữ mạng luôn thông!
+    Settings.KeepAliveIntervalMs = 15000; Settings.IsSet.KeepAliveIntervalMs = 1; 
     MsQuic->ConfigurationOpen(Registration, &ALPN_BUFFER, 1, &Settings, sizeof(Settings), nullptr, &Configuration);
 
     QUIC_CERTIFICATE_FILE CertFile;
@@ -93,7 +95,6 @@ QUIC_STATUS QUIC_API MsQuicServer::AuthStreamCallback(HQUIC Stream, void* Contex
 
 QUIC_STATUS QUIC_API MsQuicServer::AuthConnCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT* Event) {
     if (Event->Type == QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED) {
-        // 🔥 FIX MÙ IP MSQUIC CHÍ MẠNG Ở ĐÂY:
         QUIC_ADDR RemoteAddr;
         uint32_t AddrLen = sizeof(RemoteAddr);
         MsQuic->GetParam(Connection, QUIC_PARAM_CONN_REMOTE_ADDRESS, &AddrLen, &RemoteAddr);
@@ -103,7 +104,7 @@ QUIC_STATUS QUIC_API MsQuicServer::AuthConnCallback(HQUIC Connection, void* Cont
         else inet_ntop(AF_INET6, &(RemoteAddr.Ipv6.sin6_addr), ip_str, INET6_ADDRSTRLEN);
         
         std::string ip(ip_str);
-        if (ip.find("::ffff:") == 0) ip = ip.substr(7); // Chuẩn hóa IPv4
+        if (ip.find("::ffff:") == 0) ip = ip.substr(7); 
 
         auto ctx = new StreamContext{{}, ip};
         MsQuic->SetCallbackHandler(Event->PEER_STREAM_STARTED.Stream, (void*)AuthStreamCallback, ctx);
@@ -133,13 +134,24 @@ void MsQuicServer::ProxyUdsTask(HQUIC Stream, std::string uds_path, std::vector<
 QUIC_STATUS QUIC_API MsQuicServer::DataStreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVENT* Event) {
     auto ctx = static_cast<StreamContext*>(Context);
     if (Event->Type == QUIC_STREAM_EVENT_RECEIVE) {
-        for (uint32_t i = 0; i < Event->RECEIVE.BufferCount; ++i) ctx->buffer.insert(ctx->buffer.end(), Event->RECEIVE.Buffers[i].Buffer, Event->RECEIVE.Buffers[i].Buffer + Event->RECEIVE.Buffers[i].Length);
-        if (ctx->buffer.size() > 7 && memcmp(ctx->buffer.data(), "FS_CMD|", 7) == 0) ctx->buffer.erase(ctx->buffer.begin(), ctx->buffer.begin() + 7);
-        const char* go_usr = go_get_username_by_ip(ctx->remote_ip.c_str());
-        if (!go_usr) { MsQuic->StreamShutdown(Stream, QUIC_STREAM_SHUTDOWN_FLAG_ABORT, 0); return QUIC_STATUS_SUCCESS; }
-        std::string uds_path = "/tmp/zhiauth_kcp_" + std::string(go_usr) + ".sock";
-        free((void*)go_usr);
-        std::thread(&MsQuicServer::ProxyUdsTask, Stream, uds_path, ctx->buffer).detach();
+        for (uint32_t i = 0; i < Event->RECEIVE.BufferCount; ++i) {
+            ctx->buffer.insert(ctx->buffer.end(), Event->RECEIVE.Buffers[i].Buffer, Event->RECEIVE.Buffers[i].Buffer + Event->RECEIVE.Buffers[i].Length);
+        }
+        
+        // 🔥 ÉP CHỜ NHẬN ĐỦ 100% GÓI TIN MỚI ĐƯỢC XỬ LÝ
+        if (Event->RECEIVE.Flags & QUIC_RECEIVE_FLAG_FIN) {
+            if (ctx->buffer.size() > 7 && memcmp(ctx->buffer.data(), "FS_CMD|", 7) == 0) {
+                ctx->buffer.erase(ctx->buffer.begin(), ctx->buffer.begin() + 7);
+            }
+            const char* go_usr = go_get_username_by_ip(ctx->remote_ip.c_str());
+            if (!go_usr) { 
+                MsQuic->StreamShutdown(Stream, QUIC_STREAM_SHUTDOWN_FLAG_ABORT, 0); 
+                return QUIC_STATUS_SUCCESS; 
+            }
+            std::string uds_path = "/tmp/zhiauth_kcp_" + std::string(go_usr) + ".sock";
+            free((void*)go_usr);
+            std::thread(&MsQuicServer::ProxyUdsTask, Stream, uds_path, ctx->buffer).detach();
+        }
     } else if (Event->Type == QUIC_STREAM_EVENT_SEND_COMPLETE) {
         QUIC_BUFFER* qb = static_cast<QUIC_BUFFER*>(Event->SEND_COMPLETE.ClientContext);
         if (qb) { delete[] qb->Buffer; delete qb; }
@@ -151,7 +163,6 @@ QUIC_STATUS QUIC_API MsQuicServer::DataStreamCallback(HQUIC Stream, void* Contex
 
 QUIC_STATUS QUIC_API MsQuicServer::DataConnCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT* Event) {
     if (Event->Type == QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED) {
-        // 🔥 FIX MÙ IP MSQUIC
         QUIC_ADDR RemoteAddr;
         uint32_t AddrLen = sizeof(RemoteAddr);
         MsQuic->GetParam(Connection, QUIC_PARAM_CONN_REMOTE_ADDRESS, &AddrLen, &RemoteAddr);

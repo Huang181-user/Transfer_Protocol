@@ -27,7 +27,6 @@ struct UserContext {
     uint64_t last_active;
 };
 
-// 🔥 SỬ DỤNG SHARED_PTR ĐỂ ĐỒNG BỘ THỜI GIAN QUA MỌI IP!
 static std::unordered_map<std::string, std::shared_ptr<UserContext>> g_session_cache;
 static std::mutex g_session_mtx;
 static json g_config;
@@ -65,8 +64,13 @@ extern "C" const char* go_on_msquic_auth(const char* payload, const char* remote
     if (p == "AUTH_REQ|PING") {
         std::lock_guard<std::mutex> lock(g_session_mtx);
         auto it = g_session_cache.find(remote_ip);
-        if (it != g_session_cache.end()) it->second->last_active = time(NULL);
-        return strdup("PONG");
+        // 🔥 VÁ TỬ HUYỆT: Chỉ trả lời PONG nếu Session còn sống. Nếu chết phải đuổi cổ!
+        if (it != g_session_cache.end()) {
+            it->second->last_active = time(NULL);
+            return strdup("PONG");
+        } else {
+            return strdup("AUTH_FAILED");
+        }
     }
 
     if (p.find("AUTH_REQ|") == 0) {
@@ -89,8 +93,6 @@ extern "C" const char* go_on_msquic_auth(const char* payload, const char* remote
             std::string dbPath = res_str.substr(second + 1);
 
             std::string uds_path = "/tmp/zhiauth_kcp_" + dbUser + ".sock";
-            
-            // 🔥 THUẬT TOÁN TEST SOCKET SỐNG CHẾT THẬT SỰ
             int test_sock = socket(AF_UNIX, SOCK_STREAM, 0);
             struct sockaddr_un addr; memset(&addr, 0, sizeof(addr));
             addr.sun_family = AF_UNIX; strncpy(addr.sun_path, uds_path.c_str(), sizeof(addr.sun_path) - 1);
@@ -99,7 +101,7 @@ extern "C" const char* go_on_msquic_auth(const char* payload, const char* remote
 
             if (!is_alive) {
                 remove(uds_path.c_str());
-                std::string cmd = "sudo -n -u " + dbUser + " /usr/local/bin/zhiauth_kcp_worker " + uds_path + " >> /tmp/zhiauth_gateway.log 2>&1 &";
+                std::string cmd = "sudo -n -u " + dbUser + " /usr/local/bin/zhiauth_kcp_worker " + uds_path + " > /tmp/zhiauth_worker_" + dbUser + ".log 2>&1 &";
                 system(cmd.c_str());
                 ZHI_LOG_INFO("[MULTI-CLIENT] Đã spawn KCP Worker cho user: " + dbUser);
             }
@@ -136,7 +138,6 @@ void watchdog_loop() {
         std::this_thread::sleep_for(std::chrono::seconds(30));
         uint64_t now = time(NULL);
         std::unordered_map<std::string, std::string> to_kill;
-        
         {
             std::lock_guard<std::mutex> lock(g_session_mtx);
             for (auto it = g_session_cache.begin(); it != g_session_cache.end(); ++it) {
@@ -145,27 +146,21 @@ void watchdog_loop() {
                 uint64_t last_act = it->second->last_active;
                 if (kcp_lan > last_act) last_act = kcp_lan;
                 if (kcp_ts > last_act) last_act = kcp_ts;
-                
                 if (now - last_act > 120) to_kill[it->second->username] = it->second->shared_path;
             }
         }
-
         int quic_port = g_config["network"]["quic_data_port"].get<int>();
         int kcp_port = g_config["network"]["kcp_data_port"].get<int>();
-
         for (const auto& kv : to_kill) {
             ZHI_LOG_WARN("[WATCHDOG-ALERT] Mất tín hiệu user '" + kv.first + "'. Tiến hành càn quét!");
             std::string cmd = "sudo pkill -9 -u " + kv.first + " -f zhiauth_kcp_worker";
             system(cmd.c_str());
             remove(("/tmp/zhiauth_kcp_" + kv.first + ".sock").c_str());
-            
             std::lock_guard<std::mutex> lock(g_session_mtx);
             for (auto it = g_session_cache.begin(); it != g_session_cache.end(); ) {
                 if (it->second->username == kv.first) {
-                    ufw_manager.push_task(it->second->lan_ip, quic_port, "udp", false);
-                    ufw_manager.push_task(it->second->lan_ip, kcp_port, "udp", false);
-                    ufw_manager.push_task(it->second->ts_ip, quic_port, "udp", false);
-                    ufw_manager.push_task(it->second->ts_ip, kcp_port, "udp", false);
+                    ufw_manager.push_task(it->second->lan_ip, quic_port, "udp", false); ufw_manager.push_task(it->second->lan_ip, kcp_port, "udp", false);
+                    ufw_manager.push_task(it->second->ts_ip, quic_port, "udp", false); ufw_manager.push_task(it->second->ts_ip, kcp_port, "udp", false);
                     it = g_session_cache.erase(it);
                 } else { ++it; }
             }
@@ -177,31 +172,14 @@ int main() {
     std::ifstream f("/home/huang/zhiauth/config/config.json");
     if (!f.is_open()) return 1;
     g_config = json::parse(f);
-
-    ZHI_LOG_INFO("==========================================================================");
     ZHI_LOG_INFO("🚀 ZHIAUTH PURE C++ DAEMON v6.0 - TỐI ĐA HÓA SỨC MẠNH VẬT LÝ");
-    ZHI_LOG_INFO("==========================================================================");
-
     std::string db_path = "/home/huang/zhiauth/" + g_config["paths"]["database"].get<std::string>();
     std::string master_key = g_config["security"]["master_sym_key"].get<std::string>();
     std::string crt_path = "/home/huang/zhiauth/config/zhiserver.tailc979c1.ts.net.crt";
     std::string key_path = "/home/huang/zhiauth/config/zhiserver.tailc979c1.ts.net.key";
     
     ufw_manager.start_worker();
-
-    zhiauth_core_init(
-        db_path.c_str(), master_key.c_str(), 
-        g_config["network"]["auth_port"].get<int>(), 
-        g_config["network"]["kcp_data_port"].get<int>(), 
-        g_config["network"]["quic_data_port"].get<int>(),
-        crt_path.c_str(), key_path.c_str(),
-        g_config["kcp_tuning"]["nodelay"].get<int>(),
-        g_config["kcp_tuning"]["interval"].get<int>(),
-        g_config["kcp_tuning"]["resend"].get<int>(),
-        g_config["kcp_tuning"]["nc"].get<int>(),
-        g_config["kcp_tuning"]["snd_wnd"].get<int>(),
-        g_config["kcp_tuning"]["rcv_wnd"].get<int>()
-    );
+    zhiauth_core_init(db_path.c_str(), master_key.c_str(), g_config["network"]["auth_port"].get<int>(), g_config["network"]["kcp_data_port"].get<int>(), g_config["network"]["quic_data_port"].get<int>(), crt_path.c_str(), key_path.c_str(), g_config["kcp_tuning"]["nodelay"].get<int>(), g_config["kcp_tuning"]["interval"].get<int>(), g_config["kcp_tuning"]["resend"].get<int>(), g_config["kcp_tuning"]["nc"].get<int>(), g_config["kcp_tuning"]["snd_wnd"].get<int>(), g_config["kcp_tuning"]["rcv_wnd"].get<int>());
 
     std::thread watchdog(watchdog_loop);
     watchdog.join(); 
