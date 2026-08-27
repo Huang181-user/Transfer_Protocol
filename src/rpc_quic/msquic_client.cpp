@@ -23,8 +23,12 @@ bool MsQuicClient::initialize(const std::string& server_ip, uint16_t auth_port, 
     if (QUIC_FAILED(MsQuicOpen2(&MsQuic))) return false;
     const QUIC_REGISTRATION_CONFIG RegConfig = { "ZhiAuthClient", QUIC_EXECUTION_PROFILE_LOW_LATENCY };
     MsQuic->RegistrationOpen(&RegConfig, &Registration);
+    
     QUIC_SETTINGS Settings; memset(&Settings, 0, sizeof(Settings));
     Settings.IdleTimeoutMs = 120000; Settings.IsSet.IdleTimeoutMs = 1;
+    // 🔥 THUỐC CHỐNG NGỦ GẬT NẰM Ở ĐÂY: Ép Client tự bắn Ping mỗi 15 giây
+    Settings.KeepAliveIntervalMs = 15000; Settings.IsSet.KeepAliveIntervalMs = 1;
+    
     MsQuic->ConfigurationOpen(Registration, &ALPN_BUFFER, 1, &Settings, sizeof(Settings), nullptr, &Configuration);
     QUIC_CREDENTIAL_CONFIG CredConfig; memset(&CredConfig, 0, sizeof(CredConfig));
     CredConfig.Type = QUIC_CREDENTIAL_TYPE_NONE; CredConfig.Flags = QUIC_CREDENTIAL_FLAG_CLIENT | QUIC_CREDENTIAL_FLAG_NO_CERTIFICATE_VALIDATION;
