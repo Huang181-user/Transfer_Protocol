@@ -187,3 +187,5 @@ extern "C" void zhiauth_send_vfs_command_async(const uint8_t* payload, size_t le
         ikcp_flush(g_kcp);
     }
 }
+extern "C" void zhiauth_cgo_on_response(uint64_t reqId, uint8_t* data, size_t length) {}
+

@@ -1,4 +1,4 @@
-#ifndef ZHIAUTH_CRYPTO_BOX_H
+﻿#ifndef ZHIAUTH_CRYPTO_BOX_H
 #define ZHIAUTH_CRYPTO_BOX_H
 #include <vector>
 #include <string>
