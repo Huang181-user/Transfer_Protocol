@@ -99,6 +99,7 @@ int main() {
                 std::vector<uint8_t> req(sizeof(VfsPacketHeader));
                 VfsPacketHeader* hdr = (VfsPacketHeader*)req.data();
                 hdr->magic = 0x5A484941; hdr->opcode = VfsOpcode::OP_PING;
+                hdr->session_id = 9999;
                 MsQuicClient::send_vfs_sync(req, 9999);
             }
         });
@@ -109,6 +110,7 @@ int main() {
                 std::vector<uint8_t> req(sizeof(VfsPacketHeader));
                 VfsPacketHeader* hdr = (VfsPacketHeader*)req.data();
                 hdr->magic = 0x5A484941; hdr->opcode = VfsOpcode::OP_PING;
+                hdr->session_id = 9999;
                 if (g_vfs_client) g_vfs_client->send_rpc_sync(req, 9999);
             }
         });
@@ -149,3 +151,4 @@ int main() {
     if (g_vfs_client) { g_vfs_client->stop(); delete g_vfs_client; }
     return 0;
 }
+
