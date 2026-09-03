@@ -146,16 +146,23 @@ int main() {
         }
 
         std::string remote_path = parts[1];
-        int kcp_port = std::stoi(parts[3]);
-        int dyn_nodelay = std::stoi(parts[4]);
-        int dyn_interval = std::stoi(parts[5]);
-        int dyn_resend = std::stoi(parts[6]);
-        int dyn_nc = std::stoi(parts[7]);
-        int dyn_snd_wnd = std::stoi(parts[8]);
-        int dyn_rcv_wnd = std::stoi(parts[9]);
+        int s_quic_port = 4433, s_kcp_port = 6666;
+        int s_nodelay = 1, s_interval = 1, s_resend = 2, s_nc = 1, s_snd_wnd = 16384, s_rcv_wnd = 16384;
+
+        if (parts.size() >= 10) {
+            s_quic_port = std::stoi(parts[2]);
+            s_kcp_port  = std::stoi(parts[3]);
+            s_nodelay   = std::stoi(parts[4]);
+            s_interval  = std::stoi(parts[5]);
+            s_resend    = std::stoi(parts[6]);
+            s_nc        = std::stoi(parts[7]);
+            s_snd_wnd   = std::stoi(parts[8]);
+            s_rcv_wnd   = std::stoi(parts[9]);
+            ZHI_LOG_INFO("✅ Đã đồng bộ 8 thông số KCP/QUIC từ Server thành công!");
+        }
 
         int best_mtu = SysUtils::discover_best_huang_mtu(active_ip);
-        g_vfs_client = new VfsClient(active_ip, kcp_port, master_key, best_mtu, dyn_nodelay, dyn_interval, dyn_resend, dyn_nc, dyn_snd_wnd, dyn_rcv_wnd);
+        g_vfs_client = new VfsClient(active_ip, s_kcp_port, master_key, best_mtu, s_nodelay, s_interval, s_resend, s_nc, s_snd_wnd, s_rcv_wnd);
         g_vfs_client->start();
 
         std::thread combined_watchdog([&, auth_cmd]() {

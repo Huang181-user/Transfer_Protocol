@@ -1,3 +1,4 @@
+```markdown
 <a id="top"></a>
 
 <div align="center">
@@ -44,8 +45,7 @@
 <a id="vietnamese-structure"></a>
 ### 3. Sơ đồ Thư mục Nhánh `Client_Linux`
 
-```
-
+```text
 zhiauth_client/
 ├── build_client.sh              # Script dọn dẹp, biên dịch và nổ máy Client 1-click
 ├── CMakeLists.txt               # Cấu hình đúc libzhiauth_client_core.a
@@ -62,32 +62,33 @@ zhiauth_client/
 │   ├── ip_discoverer.go         # Tự động nhận diện LAN IP / Tailscale IP qua Sysfs
 │   └── quic_tunnel.go           # Luồng kết nối QUIC, Reconnect ngầm & Bóc Port động
 └── src/                         # Lõi C++ KCP Engine & Crypto
-├── bridge/                  # client_bridge.cpp (Gọi hàm CGO Async Callback)
-└── rpc_client/              # vfs_client.cpp, ikcp.c (WND 4096), Libsodium CryptoBox
+    ├── bridge/                  # client_bridge.cpp (Gọi hàm CGO Async Callback)
+    └── rpc_client/              # vfs_client.cpp, ikcp.c (WND 4096), Libsodium CryptoBox
 
 ```
 
 ---
 
-<a id="vietnamese-deploy"></a>
 ### 4. Hướng dẫn Biên dịch & Chạy
 
 #### Yêu cầu Môi trường
+
 * Hệ điều hành Linux (Ubuntu / Debian / Arch)
 * C++20 Compliant Compiler (`g++` hoặc `clang`)
 * Go Compiler `v1.25+`
 * Thư viện phụ thuộc: `cmake`, `libsodium-dev`, `libfuse3-dev` hoặc `fuse`
 
 #### Cấu hình Client (`config/config.json`)
+
 ```json
 {
   "auth_port": "5555",
   "local_port": "9090",
-  "server_lan_ip": "192.168.1.83",
-  "server_ts_ip": "100.125.141.48",
-  "sni_domain": "zhiserver.tailc979c1.ts.net",
+  "server_lan_ip": "YOUR_SERVER_LAN_IP",
+  "server_ts_ip": "YOUR_TAILSCALE_IP",
+  "sni_domain": "YOUR_SNI_DOMAIN.ts.net",
   "custom_mtu": 1200,
-  "master_sym_key": "ZhiAuth_Secret_KCP_Key_2026_1234"
+  "master_sym_key": "REPLACE_WITH_YOUR_32_BYTE_SECRET_KEY"
 }
 
 ```
@@ -105,12 +106,8 @@ chmod +x build_client.sh
 
 ```
 
-
-
 ---
 
-
-<a id="english"></a>
 ## 🇬🇧 English
 
 ### 1. Overview
@@ -135,7 +132,7 @@ chmod +x build_client.sh
 
 ### 3. Directory Structure (`Client_Linux` Branch)
 
-```
+```text
 zhiauth_client/
 ├── build_client.sh              # One-click build and execution script
 ├── CMakeLists.txt               # CMake configuration for libzhiauth_client_core.a
@@ -168,6 +165,21 @@ zhiauth_client/
 * Go Compiler `v1.25+`
 * Dependencies: `cmake`, `libsodium-dev`, `libfuse3-dev` or `fuse`
 
+#### Client Configuration (`config/config.json`)
+
+```json
+{
+  "auth_port": "5555",
+  "local_port": "9090",
+  "server_lan_ip": "YOUR_SERVER_LAN_IP",
+  "server_ts_ip": "YOUR_TAILSCALE_IP",
+  "sni_domain": "YOUR_SNI_DOMAIN.ts.net",
+  "custom_mtu": 1200,
+  "master_sym_key": "REPLACE_WITH_YOUR_32_BYTE_SECRET_KEY"
+}
+
+```
+
 #### One-Click Build & Run
 
 ```bash
@@ -181,12 +193,8 @@ chmod +x build_client.sh
 
 ```
 
-
-
 ---
 
-
-<a id="chinese"></a>
 ## 🇨🇳 中文
 
 ### 1. 项目概述
@@ -211,7 +219,7 @@ chmod +x build_client.sh
 
 ### 3. `Client_Linux` 分支目录结构
 
-```
+```text
 zhiauth_client/
 ├── build_client.sh              # 一键编译并运行客户端脚本
 ├── CMakeLists.txt               # 编译 libzhiauth_client_core.a 的 CMake 配置
@@ -244,6 +252,21 @@ zhiauth_client/
 * Go 语言编译器 `v1.25+`
 * 依赖系统库：`cmake`, `libsodium-dev`, `libfuse3-dev` 或 `fuse`
 
+#### 客户端配置 (`config/config.json`)
+
+```json
+{
+  "auth_port": "5555",
+  "local_port": "9090",
+  "server_lan_ip": "YOUR_SERVER_LAN_IP",
+  "server_ts_ip": "YOUR_TAILSCALE_IP",
+  "sni_domain": "YOUR_SNI_DOMAIN.ts.net",
+  "custom_mtu": 1200,
+  "master_sym_key": "REPLACE_WITH_YOUR_32_BYTE_SECRET_KEY"
+}
+
+```
+
 #### 一键构建与启动
 
 ```bash
@@ -256,7 +279,3 @@ chmod +x build_client.sh
 ./build_client.sh
 
 ```
-
-
-
----

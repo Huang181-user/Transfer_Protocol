@@ -9,7 +9,7 @@ VALID_EXTENSIONS = {'.go', '.cpp', '.h', '.c', '.json', '.mod', '.sum', '.txt', 
 
 # 🌟 RADAR TỰ ĐỘNG NHẬN DIỆN MÔI TRƯỜNG
 CURRENT_DIR_NAME = os.path.basename(os.path.abspath(os.getcwd())).lower()
-PREFIX = "client_" if "client" in CURRENT_DIR_NAME else "server_"
+PREFIX = "Cl_Linux_" if "client" in CURRENT_DIR_NAME else "server_"
 
 def get_realtime_ts():
     return time.strftime("%Y-%m-%d %H:%M:%S")

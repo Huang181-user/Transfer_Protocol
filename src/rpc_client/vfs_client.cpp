@@ -87,7 +87,7 @@ void VfsClient::receive_loop() {
 
 void VfsClient::kcp_update_loop() {
     while (is_running_) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
         uint32_t clock = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         std::lock_guard<std::mutex> lock(kcp_mutex_);
         if (kcp_cb_) ikcp_update(kcp_cb_, clock);
@@ -106,7 +106,7 @@ std::vector<uint8_t> VfsClient::send_rpc_sync(const std::vector<uint8_t>& payloa
     }
 
     std::unique_lock<std::mutex> wait_lock(ctx->mtx);
-    if (ctx->cv.wait_for(wait_lock, std::chrono::seconds(10), [&]{ return ctx->done; })) {
+    if (ctx->cv.wait_for(wait_lock, std::chrono::seconds(60), [&]{ return ctx->done; })) {
         std::vector<uint8_t> res = ctx->response;
         std::lock_guard<std::mutex> clean_lock(rpc_map_mutex_); rpc_map_.erase(req_id);
         return res;

@@ -16,7 +16,7 @@ extern VfsClient* g_vfs_client;
 std::string g_remote_base;
 std::atomic<uint32_t> g_req_id{1};
 
-struct FileMeta { bool is_dir; uint64_t size; uint32_t mode; time_t exp; };
+struct FileMeta { bool is_dir; uint64_t size; uint32_t mode; time_t exp; uint64_t mtime; uint64_t ctime; uint64_t atime; };
 static std::unordered_map<std::string, FileMeta> g_ram_cache;
 static std::mutex g_cache_mtx;
 
@@ -26,18 +26,21 @@ void InjectBulkCache(const std::string& parentPath, const std::vector<uint8_t>& 
     const uint8_t* p = payload.data() + sizeof(VfsPacketHeader);
     size_t total = payload.size() - sizeof(VfsPacketHeader);
     size_t cur = 0;
-    while (cur + 15 <= total) {
+    while (cur + 39 <= total) {
         uint16_t nameLen; memcpy(&nameLen, p + cur, 2);
         uint8_t isDir = p[cur + 2];
         uint64_t size; memcpy(&size, p + cur + 3, 8);
-        uint32_t mode; memcpy(&mode, p + cur + 11, 4);
-        cur += 15;
+        uint64_t mtime; memcpy(&mtime, p + cur + 11, 8);
+        uint64_t ctime; memcpy(&ctime, p + cur + 19, 8);
+        uint64_t atime; memcpy(&atime, p + cur + 27, 8);
+        uint32_t mode; memcpy(&mode, p + cur + 35, 4);
+        cur += 39;
         if (cur + nameLen > total) break;
         std::string name((char*)(p + cur), nameLen);
         cur += nameLen;
         std::string fullPath = parentPath + "/" + name;
         if (parentPath == "/") fullPath = "/" + name;
-        g_ram_cache[fullPath] = {isDir == 1, size, mode, time(NULL) + 60};
+        g_ram_cache[fullPath] = {isDir == 1, size, mode, time(NULL) + 60, mtime, ctime, atime};
     }
 }
 
@@ -54,7 +57,7 @@ void RemoveFromRAMCache(const std::string& fullPath) {
     std::lock_guard<std::mutex> lock(g_cache_mtx); g_ram_cache.erase(fullPath);
 }
 
-std::vector<uint8_t> DispatchRpc(VfsOpcode opcode, const std::string& path, uint64_t offset, uint32_t reqLen, const std::vector<uint8_t>& in_data) {
+std::vector<uint8_t> DispatchRpc(VfsOpcode opcode, const std::string& path, uint64_t offset, uint32_t reqLen, const std::vector<uint8_t>& in_data, int override_kcp = -1) {
     uint32_t req_id = g_req_id.fetch_add(1);
     uint32_t data_len = (opcode == VfsOpcode::OP_READ) ? reqLen : in_data.size();
     std::vector<uint8_t> req(sizeof(VfsPacketHeader) + path.size() + in_data.size());
@@ -66,7 +69,12 @@ std::vector<uint8_t> DispatchRpc(VfsOpcode opcode, const std::string& path, uint
     memcpy(req.data() + sizeof(VfsPacketHeader), path.data(), path.size());
     if (!in_data.empty()) memcpy(req.data() + sizeof(VfsPacketHeader) + path.size(), in_data.data(), in_data.size());
 
-    bool use_kcp = (bool)fuse_get_context()->private_data;
+    bool use_kcp = true;
+    if (override_kcp != -1) {
+        use_kcp = (override_kcp == 1);
+    } else if (fuse_get_context() != nullptr) {
+        use_kcp = (bool)fuse_get_context()->private_data;
+    }
     if (use_kcp && g_vfs_client) {
         auto res = g_vfs_client->send_rpc_sync(req, req_id);
         if (!res.empty() && res.size() >= sizeof(VfsPacketHeader)) {
@@ -80,8 +88,39 @@ std::vector<uint8_t> DispatchRpc(VfsOpcode opcode, const std::string& path, uint
     return {};
 }
 
-static ino_t string_to_ino(const std::string& path) {
-    ino_t hash = 5381; for (char c : path) hash = ((hash << 5) + hash) + c; return hash;
+struct WriteBuffer {
+    std::mutex mu;
+    std::string realPath;
+    uint64_t startOffset;
+    std::vector<uint8_t> data;
+    bool isFlushing;
+    bool use_kcp;
+};
+
+static std::unordered_map<std::string, std::shared_ptr<WriteBuffer>> g_write_buffers;
+static std::mutex g_wb_mtx;
+
+void FlushChunkAsync(std::shared_ptr<WriteBuffer> wb, bool forceAll) {
+    while (true) {
+        wb->mu.lock();
+        if (wb->data.empty() || (!forceAll && wb->data.size() < 2097152)) {
+            wb->isFlushing = false;
+            wb->mu.unlock();
+            return;
+        }
+
+        size_t toSendLen = wb->data.size();
+        if (toSendLen > 2097152) toSendLen = 2097152;
+
+        std::vector<uint8_t> chunk(wb->data.begin(), wb->data.begin() + toSendLen);
+        uint64_t currentOffset = wb->startOffset;
+
+        wb->startOffset += toSendLen;
+        wb->data.erase(wb->data.begin(), wb->data.begin() + toSendLen);
+        wb->mu.unlock();
+
+        DispatchRpc(VfsOpcode::OP_WRITE, wb->realPath, currentOffset, 0, chunk, wb->use_kcp ? 1 : 0);
+    }
 }
 
 static int vfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_info* fi) {
@@ -89,11 +128,10 @@ static int vfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_in
     std::string full_path = g_remote_base;
     if (std::string(path) != "/") full_path += path;
 
-    stbuf->st_ino = string_to_ino(full_path);
-
-    // 🔥 VÁ TỬ HUYỆT MÙ THƯ MỤC: Đúng root folder mới cấp S_IFDIR mặc định!
     if (std::string(path) == "/" || full_path == g_remote_base) {
-        stbuf->st_mode = S_IFDIR | 0777; stbuf->st_nlink = 2; stbuf->st_uid = getuid(); stbuf->st_gid = getgid(); return 0;
+        stbuf->st_mode = S_IFDIR | 0777; stbuf->st_nlink = 2; stbuf->st_uid = getuid(); stbuf->st_gid = getgid(); 
+        stbuf->st_mtime = time(NULL); stbuf->st_atime = time(NULL); stbuf->st_ctime = time(NULL);
+        return 0;
     }
 
     FileMeta meta;
@@ -101,6 +139,7 @@ static int vfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_in
         stbuf->st_mode = meta.is_dir ? (S_IFDIR | 0777) : meta.mode;
         stbuf->st_nlink = meta.is_dir ? 2 : 1; stbuf->st_size = meta.size;
         stbuf->st_uid = getuid(); stbuf->st_gid = getgid();
+        stbuf->st_mtime = meta.mtime; stbuf->st_atime = meta.atime; stbuf->st_ctime = meta.ctime;
         return 0;
     }
 
@@ -115,16 +154,24 @@ static int vfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_in
 
     stbuf->st_mode = isDir ? (S_IFDIR | 0777) : modeRaw;
     stbuf->st_nlink = isDir ? 2 : 1; stbuf->st_size = size;
-    stbuf->st_mtime = mtime; stbuf->st_ctime = ctime; stbuf->st_atime = atime;
     stbuf->st_uid = getuid(); stbuf->st_gid = getgid();
+    stbuf->st_mtime = mtime; stbuf->st_ctime = ctime; stbuf->st_atime = atime;
+    
+    std::lock_guard<std::mutex> lock(g_cache_mtx);
+    g_ram_cache[full_path] = {isDir == 1, size, modeRaw, time(NULL) + 60, mtime, ctime, atime};
+    
     return 0;
+}
+
+static ino_t string_to_ino(const std::string& path) {
+    ino_t hash = 5381; for (char c : path) hash = ((hash << 5) + hash) + c; return hash;
 }
 
 static int vfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info* fi, enum fuse_readdir_flags flags) {
     std::string full_path = g_remote_base;
     if (std::string(path) != "/") full_path += path;
 
-    filler(buf, ".", NULL, 0, (fuse_fill_dir_flags)0); filler(buf, "..", NULL, 0, (fuse_fill_dir_flags)0);
+    filler(buf, ".", NULL, 0, static_cast<fuse_fill_dir_flags>(0)); filler(buf, "..", NULL, 0, static_cast<fuse_fill_dir_flags>(0));
 
     auto res = DispatchRpc(VfsOpcode::OP_LIST, full_path, 0, 0, {});
     if (res.size() <= sizeof(VfsPacketHeader)) return 0;
@@ -133,20 +180,27 @@ static int vfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler, off_
     uint8_t* p = res.data() + sizeof(VfsPacketHeader);
     size_t total = res.size() - sizeof(VfsPacketHeader); size_t cur = 0;
 
-    while (cur + 15 <= total) {
+    while (cur + 39 <= total) {
         uint16_t nameLen; memcpy(&nameLen, p + cur, 2); uint8_t isDir = p[cur + 2];
-        cur += 15; if (cur + nameLen > total) break;
+        uint64_t size; memcpy(&size, p + cur + 3, 8);
+        uint64_t mtime; memcpy(&mtime, p + cur + 11, 8);
+        uint64_t ctime; memcpy(&ctime, p + cur + 19, 8);
+        uint64_t atime; memcpy(&atime, p + cur + 27, 8);
+        uint32_t mode; memcpy(&mode, p + cur + 35, 4);
+        cur += 39; if (cur + nameLen > total) break;
         std::string name((char*)(p + cur), nameLen); cur += nameLen;
         struct stat st; memset(&st, 0, sizeof(st));
         st.st_ino = string_to_ino(full_path + "/" + name);
-        st.st_mode = isDir ? (S_IFDIR | 0777) : (S_IFREG | 0777);
-        filler(buf, name.c_str(), &st, 0, (fuse_fill_dir_flags)0);
+        st.st_mode = isDir ? (S_IFDIR | 0777) : mode;
+        st.st_size = size; st.st_mtime = mtime; st.st_ctime = ctime; st.st_atime = atime; st.st_mtime = mtime; st.st_ctime = ctime; st.st_atime = atime;
+        filler(buf, name.c_str(), &st, 0, static_cast<fuse_fill_dir_flags>(0));
     }
     return 0;
 }
 
 static int vfs_read(const char* path, char* buf, size_t size, off_t offset, struct fuse_file_info* fi) {
-    std::string full_path = g_remote_base + std::string(path);
+    std::string full_path = g_remote_base;
+    if (std::string(path) != "/") full_path += path;
     auto res = DispatchRpc(VfsOpcode::OP_READ, full_path, offset, size, {});
     if (res.size() <= sizeof(VfsPacketHeader)) return -EIO;
     size_t data_sz = res.size() - sizeof(VfsPacketHeader); memcpy(buf, res.data() + sizeof(VfsPacketHeader), data_sz);
@@ -154,27 +208,67 @@ static int vfs_read(const char* path, char* buf, size_t size, off_t offset, stru
 }
 
 static int vfs_write(const char* path, const char* buf, size_t size, off_t offset, struct fuse_file_info* fi) {
-    std::string full_path = g_remote_base + std::string(path); std::vector<uint8_t> in_data(buf, buf + size);
-    auto res = DispatchRpc(VfsOpcode::OP_WRITE, full_path, offset, 0, in_data);
-    if (res.size() < sizeof(VfsPacketHeader)) return -EIO;
-    RemoveFromRAMCache(full_path); return size;
+    bool use_kcp = true;
+    if (fuse_get_context() != nullptr) {
+        use_kcp = (bool)fuse_get_context()->private_data;
+    }
+    std::string full_path = g_remote_base;
+    if (std::string(path) != "/") full_path += path;
+    
+    RemoveFromRAMCache(full_path);
+
+    if (size == 0) {
+        DispatchRpc(VfsOpcode::OP_WRITE, full_path, offset, 0, {});
+        return 0;
+    }
+
+    std::shared_ptr<WriteBuffer> wb;
+    {
+        std::lock_guard<std::mutex> lock(g_wb_mtx);
+        if (g_write_buffers.find(full_path) == g_write_buffers.end()) {
+            g_write_buffers[full_path] = std::make_shared<WriteBuffer>();
+            g_write_buffers[full_path]->realPath = full_path;
+            g_write_buffers[full_path]->startOffset = offset;
+            g_write_buffers[full_path]->use_kcp = use_kcp;
+            g_write_buffers[full_path]->isFlushing = false;
+        }
+        wb = g_write_buffers[full_path];
+    }
+
+    bool shouldFlush = false;
+    wb->mu.lock();
+    wb->data.insert(wb->data.end(), buf, buf + size);
+    if (wb->data.size() >= 2097152 && !wb->isFlushing) {
+        wb->isFlushing = true;
+        shouldFlush = true;
+    }
+    wb->mu.unlock();
+
+    if (shouldFlush) {
+        std::thread(FlushChunkAsync, wb, false).detach();
+    }
+    return size;
 }
 
 static int vfs_mkdir(const char* path, mode_t mode) {
-    std::string full_path = g_remote_base + std::string(path);
+    std::string full_path = g_remote_base;
+    if (std::string(path) != "/") full_path += path;
     auto res = DispatchRpc(VfsOpcode::OP_MKDIR, full_path, 0, 0, {});
     return res.empty() ? -EIO : 0;
 }
 
 static int vfs_unlink(const char* path) {
-    std::string full_path = g_remote_base + std::string(path); RemoveFromRAMCache(full_path);
+    std::string full_path = g_remote_base;
+    if (std::string(path) != "/") full_path += path;
+    RemoveFromRAMCache(full_path);
     auto res = DispatchRpc(VfsOpcode::OP_DELETE, full_path, 0, 0, {});
     return res.empty() ? -EIO : 0;
 }
 
 static int vfs_rmdir(const char* path) { return vfs_unlink(path); }
 static int vfs_rename(const char* oldpath, const char* newpath, unsigned int flags) {
-    std::string full_old = g_remote_base + std::string(oldpath); std::string full_new = g_remote_base + std::string(newpath);
+    std::string full_old = g_remote_base; if (std::string(oldpath) != "/") full_old += oldpath;
+    std::string full_new = g_remote_base; if (std::string(newpath) != "/") full_new += newpath;
     RemoveFromRAMCache(full_old); RemoveFromRAMCache(full_new);
     std::vector<uint8_t> new_p(full_new.begin(), full_new.end());
     auto res = DispatchRpc(VfsOpcode::OP_RENAME, full_old, 0, 0, new_p);
@@ -182,25 +276,62 @@ static int vfs_rename(const char* oldpath, const char* newpath, unsigned int fla
 }
 
 static int vfs_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
-    std::string full_path = g_remote_base + std::string(path);
-    auto res = DispatchRpc(VfsOpcode::OP_WRITE, full_path, 0, 0, {}); return res.empty() ? -EIO : 0;
+    std::string full_path = g_remote_base;
+    if (std::string(path) != "/") full_path += path;
+    auto res = DispatchRpc(VfsOpcode::OP_WRITE, full_path, 0, 0, {}); 
+    return res.empty() ? -EIO : 0;
 }
 
 static int vfs_truncate(const char* path, off_t size, struct fuse_file_info* fi) {
-    std::string full_path = g_remote_base + std::string(path); RemoveFromRAMCache(full_path);
+    std::string full_path = g_remote_base;
+    if (std::string(path) != "/") full_path += path;
+    RemoveFromRAMCache(full_path);
     auto res = DispatchRpc(VfsOpcode::OP_TRUNCATE, full_path, size, 0, {}); return res.empty() ? -EIO : 0;
 }
+
 static int vfs_open(const char* path, struct fuse_file_info* fi) { return 0; }
 static int vfs_fsync(const char* path, int isdatasync, struct fuse_file_info* fi) { return 0; }
 
+static int vfs_flush(const char* path, struct fuse_file_info* fi) {
+    std::string full_path = g_remote_base;
+    if (std::string(path) != "/") full_path += path;
+
+    std::shared_ptr<WriteBuffer> wb;
+    {
+        std::lock_guard<std::mutex> lock(g_wb_mtx);
+        auto it = g_write_buffers.find(full_path);
+        if (it != g_write_buffers.end()) {
+            wb = it->second;
+        }
+    }
+
+    if (wb) {
+        wb->mu.lock();
+        std::vector<uint8_t> remaining = wb->data;
+        uint64_t currentOffset = wb->startOffset;
+        bool kcp_flag = wb->use_kcp;
+        wb->data.clear();
+        wb->startOffset += remaining.size();
+        wb->mu.unlock();
+
+        if (!remaining.empty()) {
+            DispatchRpc(VfsOpcode::OP_WRITE, full_path, currentOffset, 0, remaining, kcp_flag ? 1 : 0);
+        }
+
+        std::lock_guard<std::mutex> lock(g_wb_mtx);
+        g_write_buffers.erase(full_path);
+    }
+    return 0;
+}
+
 static struct fuse_operations vfs_oper = {
     .getattr = vfs_getattr, .mkdir = vfs_mkdir, .unlink = vfs_unlink, .rmdir = vfs_rmdir, .rename = vfs_rename, .truncate = vfs_truncate,
-    .open = vfs_open, .read = vfs_read, .write = vfs_write, .fsync = vfs_fsync, .readdir = vfs_readdir, .create = vfs_create,
+    .open = vfs_open, .read = vfs_read, .write = vfs_write, .flush = vfs_flush, .fsync = vfs_fsync, .readdir = vfs_readdir, .create = vfs_create,
 };
 
 int FuseDriver::start_fuse(const std::string& mountpoint, const std::string& remote_base, bool use_kcp) {
     g_remote_base = remote_base;
-    char* argv[] = { (char*)"zhiauth_fuse", (char*)mountpoint.c_str(), (char*)"-f", (char*)"-o", (char*)"allow_other" };
+    char* argv[] = { (char*)"zhiauth_fuse", (char*)mountpoint.c_str(), (char*)"-f", (char*)"-o", (char*)"allow_other,kernel_cache,auto_cache" };
     ZHI_LOG_INFO("[FUSE-DRIVER] Kích hoạt Ổ đĩa ảo C++ tại: " + mountpoint);
     return fuse_main(5, argv, &vfs_oper, (void*)use_kcp);
 }
