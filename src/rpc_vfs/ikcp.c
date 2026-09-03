@@ -37,7 +37,7 @@ const IUINT32 IKCP_WND_RCV = 4096;       // must >= max fragment size
 const IUINT32 IKCP_MTU_DEF = 1400;
 const IUINT32 IKCP_ACK_FAST	= 3;
 const IUINT32 IKCP_INTERVAL	= 100;
-const IUINT32 IKCP_OVERHEAD = 24;
+const IUINT32 IKCP_OVERHEAD = 32;
 const IUINT32 IKCP_DEADLINK = 20;
 const IUINT32 IKCP_THRESH_INIT = 2;
 const IUINT32 IKCP_THRESH_MIN = 2;
@@ -795,8 +795,8 @@ int ikcp_input(ikcpcb *kcp, const char *data, long size)
 
 	while (1) {
 		IUINT32 ts, sn, len, una, conv;
-		IUINT16 wnd;
-		IUINT8 cmd, frg;
+		IUINT32 wnd;
+		IUINT32 cmd, frg;
 		IKCPSEG *seg;
 
 		if (size < (int)IKCP_OVERHEAD) break;
@@ -804,9 +804,9 @@ int ikcp_input(ikcpcb *kcp, const char *data, long size)
 		data = ikcp_decode32u(data, &conv);
 		if (conv != kcp->conv) return -1;
 
-		data = ikcp_decode8u(data, &cmd);
-		data = ikcp_decode8u(data, &frg);
-		data = ikcp_decode16u(data, &wnd);
+		data = ikcp_decode32u(data, &cmd);
+		data = ikcp_decode32u(data, &frg);
+		data = ikcp_decode32u(data, &wnd);
 		data = ikcp_decode32u(data, &ts);
 		data = ikcp_decode32u(data, &sn);
 		data = ikcp_decode32u(data, &una);
@@ -949,9 +949,9 @@ int ikcp_input(ikcpcb *kcp, const char *data, long size)
 static char *ikcp_encode_seg(char *ptr, const IKCPSEG *seg)
 {
 	ptr = ikcp_encode32u(ptr, seg->conv);
-	ptr = ikcp_encode8u(ptr, (IUINT8)seg->cmd);
-	ptr = ikcp_encode8u(ptr, (IUINT8)seg->frg);
-	ptr = ikcp_encode16u(ptr, (IUINT16)seg->wnd);
+	ptr = ikcp_encode32u(ptr, (IUINT32)seg->cmd);
+	ptr = ikcp_encode32u(ptr, (IUINT32)seg->frg);
+	ptr = ikcp_encode32u(ptr, (IUINT32)seg->wnd);
 	ptr = ikcp_encode32u(ptr, seg->ts);
 	ptr = ikcp_encode32u(ptr, seg->sn);
 	ptr = ikcp_encode32u(ptr, seg->una);

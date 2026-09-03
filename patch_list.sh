@@ -1,3 +1,4 @@
+cat << 'IN_EOF' > src/rpc_vfs/vfs_io_worker.cpp
 #include "rpc_vfs/vfs_io_worker.h"
 #include "common/logger.h"
 #include <fcntl.h>
@@ -107,3 +108,4 @@ void VfsIoWorker::close_cached_fd(const std::string& path) {
         g_fd_cache.erase(it);
     }
 }
+IN_EOF

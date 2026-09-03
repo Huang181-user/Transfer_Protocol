@@ -183,8 +183,7 @@ void VfsServer::process_kcp_payload(KcpSession session_copy, std::vector<uint8_t
 	    std::lock_guard<std::mutex> kcp_lock(*session_copy.kcp_mtx); 
 	    ikcp_send(session_copy.kcp_cb, reinterpret_cast<const char*>(final_encrypted.data()), final_encrypted.size());
 	    ikcp_flush(session_copy.kcp_cb);
-            ikcp_send(session_copy.kcp_cb, reinterpret_cast<const char*>(final_encrypted.data()), final_encrypted.size());
-            ikcp_flush(session_copy.kcp_cb);
+            
         }
         return;
     }

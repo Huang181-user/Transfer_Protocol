@@ -1,3 +1,4 @@
+```markdown
 <div align="center">
 
 # 🚀 Transfer Protocol / ZhiAuth Ecosystem
@@ -30,7 +31,7 @@
 | **`Client_Linux`** | **Linux Client** | Client chạy trên Linux, hỗ trợ FUSE/VFS, giao thức KCP/QUIC Tunneling, tương thích daemon/systemd. |
 | **`Client_Android`** | **Android Client** | Client di động phát triển bằng Jetpack Compose, C++ NDK (`zhiauth_jni`, Libsodium, KCP), Go Mobile (`quicdroid.aar`), tích hợp Storage Access Framework (`HuangDocumentsProvider`). |
 
-
+---
 
 ### ✨ Tính năng nổi bật
 
@@ -55,70 +56,144 @@
 
 ---
 
-### 🛠️ Hướng dẫn biên dịch & Cài đặt
+### 🛠️ Hướng dẫn Cài đặt & Triển khai Server
 
-#### 🟢 1. Biên dịch Server (Ubuntu Linux)
-*Yêu cầu:* Ubuntu Server, GCC/G++, Go (>= 1.22), `make`.
+#### 1. Biên dịch Server (Ubuntu Linux)
+*Yêu cầu:* Ubuntu Server, GCC/G++, Go (>= 1.22), `make`, `cmake`.
 
 ```bash
 # Checkout sang branch server
 git checkout main_server
 
-# Tạo file cấu hình từ mẫu (nếu chưa có)
-cp config/config.json.example config/config.json
+# Tạo thư mục build và biên dịch C++ Core
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
 
-# Biên dịch Server Engine và Gateway
-make build
-# Hoặc biên dịch thủ công module Go:
-cd go_client && go build -o zhiauth_gateway main.go
-
-```
-
-#### 🟡 2. Biên dịch Windows Client
-
-*Yêu cầu:* Windows 10/11, MSVC/MinGW C++, Go (>= 1.22), WinFSP (tùy chọn).
-
-```powershell
-# Checkout sang branch Client_Windows
-git checkout Client_Windows
-
-# Chạy script biên dịch tự động
-.\build.ps1
+# Di chuyển các file nhị phân vào thư mục hệ thống
+sudo cp zhiauth_server_app /usr/local/bin/
+sudo cp zhiauth_kcp_worker /usr/local/bin/
+sudo chmod +x /usr/local/bin/zhiauth_server_app
+sudo chmod +x /usr/local/bin/zhiauth_kcp_worker
+cd ..
 
 ```
 
-#### 🔵 3. Biên dịch Linux Client
+#### 2. Cấu hình Tường lửa (UFW)
 
-*Yêu cầu:* Ubuntu/Debian/Arch Linux, GCC/G++, Go (>= 1.22), `libfuse-dev`.
+ZhiAuth sử dụng cơ chế Port Knocking. Bạn chỉ cần mở cổng xác thực (Auth Port), các cổng truyền tải dữ liệu (KCP/QUIC) sẽ được Daemon tự động mở/đóng ẩn danh cho từng IP Client.
 
 ```bash
-# Checkout sang branch Client_Linux
-git checkout Client_Linux
-
-# Biên dịch Client
-make client
+sudo ufw enable
+# Mở cổng xác thực mặc định (UDP 5555)
+sudo ufw allow 5555/udp
+# Reload lại tường lửa
+sudo ufw reload
 
 ```
 
-#### 🟣 4. Biên dịch Android Client
-
-*Yêu cầu:* Android Studio, JDK 21, Android NDK, Go (>= 1.22 nếu build lại AAR từ module `Go_mobile`).
+**Cấp quyền Sudo không cần mật khẩu cho UFW:**
+Để Daemon C++ có thể tự động đóng/mở port mà không bị chặn, bạn cần cấp quyền cho user chạy service (vd: `your_ubuntu_user`):
 
 ```bash
-# Checkout sang branch Client_Android
-git checkout Client_Android
+sudo visudo
+# Thêm dòng sau vào cuối file (thay 'your_ubuntu_user' bằng user của bạn):
+your_ubuntu_user ALL=(ALL) NOPASSWD: /usr/sbin/ufw, /usr/sbin/nft, /usr/bin/pkill
 
-# Biên dịch Debug APK bằng Gradle Wrapper
-./gradlew assembleDebug
+```
 
-# Hoặc biên dịch Release APK:
-./gradlew assembleRelease
+#### 3. Chuẩn bị File Cấu hình & Chứng chỉ TLS
+
+Tạo thư mục dự án chuẩn tại `/home/<user>/zhiauth`.
+
+```bash
+mkdir -p ~/zhiauth/config ~/zhiauth/database
+
+```
+
+**Tạo config.json:**
+Copy file `config/config.json.example` thành `~/zhiauth/config/config.json` và điền thông tin bảo mật của riêng bạn:
+
+```json
+{
+  "network": {
+    "auth_port": 5555,
+    "quic_data_port": 4433,
+    "kcp_data_port": 6666,
+    "custom_mtu": 1350
+  },
+  "kcp_tuning": {
+    "nodelay": 1,
+    "interval": 1,
+    "resend": 2,
+    "nc": 1,
+    "snd_wnd": 4096,
+    "rcv_wnd": 4096
+  },
+  "paths": {
+    "safe_root": "/export/HDD_merge",
+    "log_path": "/tmp/zhiauth_gateway.log",
+    "tls_crt": "config/your_domain.crt",
+    "tls_key": "config/your_domain.key",
+    "database": "database/zhiauth.db"
+  },
+  "security": {
+    "master_sym_key": "REPLACE_WITH_YOUR_32_BYTE_SECRET_KEY",
+    "hash_salt": "REPLACE_WITH_YOUR_RANDOM_SALT",
+    "system_admin_user": "your_ubuntu_user",
+    "max_fail_attempts": 5,
+    "ban_duration_minutes": 15
+  }
+}
+
+```
+
+**Chứng chỉ TLS (Dành cho MsQUIC):**
+Đặt 2 file chứng chỉ `.crt` và `.key` vào thư mục `~/zhiauth/config/`. Đảm bảo tên file khớp với cấu hình trong `config.json`.
+
+#### 4. Thiết lập Systemd Service
+
+Để ZhiAuth Server tự động chạy ngầm và khởi động cùng hệ thống, tạo file service:
+
+```bash
+sudo nano /etc/systemd/system/zhiauth.service
+
+```
+
+Dán cấu hình sau vào (thay `your_ubuntu_user` bằng user thực tế):
+
+```ini
+[Unit]
+Description=ZhiAuth High-Performance VFS Server
+After=network.target
+
+[Service]
+Type=simple
+User=your_ubuntu_user
+Group=your_ubuntu_user
+WorkingDirectory=/home/your_ubuntu_user/zhiauth
+ExecStart=/usr/local/bin/zhiauth_server_app
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+
+```
+
+Kích hoạt và khởi chạy service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable zhiauth
+sudo systemctl start zhiauth
+sudo systemctl status zhiauth
 
 ```
 
 ---
 
-<a id="english"></a>
 ## 🇬🇧 English
 
 ### 📖 Overview
@@ -165,52 +240,143 @@ git checkout Client_Android
 
 ---
 
-### 🛠️ Build & Installation
+### 🛠️ Server Build & Deployment Guide
 
-#### 🟢 1. Build Server (Ubuntu Linux)
+#### 1. Build Server (Ubuntu Linux)
 
-*Prerequisites:* Ubuntu Server, GCC/G++, Go (>= 1.22), `make`.
+*Prerequisites:* Ubuntu Server, GCC/G++, Go (>= 1.22), `make`, `cmake`.
 
 ```bash
 git checkout main_server
-cp config/config.json.example config/config.json
-make build
+
+# Create build directory and compile C++ Core
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+
+# Move binaries to system directory
+sudo cp zhiauth_server_app /usr/local/bin/
+sudo cp zhiauth_kcp_worker /usr/local/bin/
+sudo chmod +x /usr/local/bin/zhiauth_server_app
+sudo chmod +x /usr/local/bin/zhiauth_kcp_worker
+cd ..
 
 ```
 
-#### 🟡 2. Build Windows Client
+#### 2. Firewall Configuration (UFW)
 
-*Prerequisites:* Windows 10/11, MSVC/MinGW C++, Go (>= 1.22), WinFSP (optional).
-
-```powershell
-git checkout Client_Windows
-.\build.ps1
-
-```
-
-#### 🔵 3. Build Linux Client
-
-*Prerequisites:* Ubuntu/Debian/Arch Linux, GCC/G++, Go (>= 1.22), `libfuse-dev`.
+ZhiAuth implements a dynamic Port Knocking mechanism. You only need to open the Authentication Port; the data transfer ports (KCP/QUIC) will be dynamically managed by the Daemon per authenticated Client IP.
 
 ```bash
-git checkout Client_Linux
-make client
+sudo ufw enable
+# Open default Auth Port (UDP 5555)
+sudo ufw allow 5555/udp
+sudo ufw reload
 
 ```
 
-#### 🟣 4. Build Android Client
-
-*Prerequisites:* Android Studio, JDK 21, Android NDK, Go (>= 1.22 if rebuilding AAR from `Go_mobile`).
+**Grant Passwordless Sudo for UFW:**
+The C++ Daemon requires passwordless sudo access to specific network commands to manipulate the firewall dynamically.
 
 ```bash
-git checkout Client_Android
-./gradlew assembleDebug
+sudo visudo
+# Append the following line (replace 'your_ubuntu_user' with your actual username):
+your_ubuntu_user ALL=(ALL) NOPASSWD: /usr/sbin/ufw, /usr/sbin/nft, /usr/bin/pkill
+
+```
+
+#### 3. Configuration & TLS Certificates Preparation
+
+Create the standard project directory at `/home/<user>/zhiauth`.
+
+```bash
+mkdir -p ~/zhiauth/config ~/zhiauth/database
+
+```
+
+**Setup config.json:**
+Copy `config/config.json.example` to `~/zhiauth/config/config.json` and configure your own secret keys:
+
+```json
+{
+  "network": {
+    "auth_port": 5555,
+    "quic_data_port": 4433,
+    "kcp_data_port": 6666,
+    "custom_mtu": 1350
+  },
+  "kcp_tuning": {
+    "nodelay": 1,
+    "interval": 1,
+    "resend": 2,
+    "nc": 1,
+    "snd_wnd": 4096,
+    "rcv_wnd": 4096
+  },
+  "paths": {
+    "safe_root": "/export/HDD_merge",
+    "log_path": "/tmp/zhiauth_gateway.log",
+    "tls_crt": "config/your_domain.crt",
+    "tls_key": "config/your_domain.key",
+    "database": "database/zhiauth.db"
+  },
+  "security": {
+    "master_sym_key": "REPLACE_WITH_YOUR_32_BYTE_SECRET_KEY",
+    "hash_salt": "REPLACE_WITH_YOUR_RANDOM_SALT",
+    "system_admin_user": "your_ubuntu_user",
+    "max_fail_attempts": 5,
+    "ban_duration_minutes": 15
+  }
+}
+
+```
+
+**TLS Certificates (For MsQUIC):**
+Place your `.crt` and `.key` files in `~/zhiauth/config/`. Ensure the filenames match the configuration in `config.json`.
+
+#### 4. Systemd Service Setup
+
+Run ZhiAuth Server as a background daemon that starts on boot:
+
+```bash
+sudo nano /etc/systemd/system/zhiauth.service
+
+```
+
+Insert the following configuration (replace `your_ubuntu_user` with your actual username):
+
+```ini
+[Unit]
+Description=ZhiAuth High-Performance VFS Server
+After=network.target
+
+[Service]
+Type=simple
+User=your_ubuntu_user
+Group=your_ubuntu_user
+WorkingDirectory=/home/your_ubuntu_user/zhiauth
+ExecStart=/usr/local/bin/zhiauth_server_app
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+
+```
+
+Enable and start the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable zhiauth
+sudo systemctl start zhiauth
+sudo systemctl status zhiauth
 
 ```
 
 ---
 
-<a id="chinese"></a>
 ## 🇨🇳 中文
 
 ### 📖 项目简介
@@ -257,45 +423,137 @@ git checkout Client_Android
 
 ---
 
-### 🛠️ 编译与构建
+### 🛠️ 服务端编译与部署指南
 
-#### 🟢 1. 编译服务端 (Ubuntu Linux)
+#### 1. 编译服务端 (Ubuntu Linux)
 
-*环境要求：* Ubuntu Server, GCC/G++, Go (>= 1.22), `make`。
+*环境要求：* Ubuntu Server, GCC/G++, Go (>= 1.22), `make`, `cmake`。
 
 ```bash
 git checkout main_server
-cp config/config.json.example config/config.json
-make build
+
+# 创建构建目录并编译 C++ Core
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+
+# 移动二进制文件至系统目录
+sudo cp zhiauth_server_app /usr/local/bin/
+sudo cp zhiauth_kcp_worker /usr/local/bin/
+sudo chmod +x /usr/local/bin/zhiauth_server_app
+sudo chmod +x /usr/local/bin/zhiauth_kcp_worker
+cd ..
 
 ```
 
-#### 🟡 2. 编译 Windows 客户端
+#### 2. 配置防火墙 (UFW)
 
-*环境要求：* Windows 10/11, MSVC/MinGW C++, Go (>= 1.22), WinFSP (可选)。
-
-```powershell
-git checkout Client_Windows
-.\build.ps1
-
-```
-
-#### 🔵 3. 编译 Linux 客户端
-
-*环境要求：* Ubuntu/Debian/Arch Linux, GCC/G++, Go (>= 1.22), `libfuse-dev`。
+ZhiAuth 采用动态端口敲门（Port Knocking）机制。您只需开放身份验证端口，数据传输端口（KCP/QUIC）将由后台程序根据已验证的客户端 IP 动态开启/关闭。
 
 ```bash
-git checkout Client_Linux
-make client
+sudo ufw enable
+# 开放默认身份验证端口 (UDP 5555)
+sudo ufw allow 5555/udp
+sudo ufw reload
 
 ```
 
-#### 🟣 4. 编译 Android 客户端
-
-*环境要求：* Android Studio, JDK 21, Android NDK, Go (>= 1.22，若需重新构建 `Go_mobile` AAR)。
+**为 UFW 配置免密 Sudo 权限：**
+为了让 C++ 后台程序能够动态操作防火墙，需赋予运行用户特定命令的免密权限。
 
 ```bash
-git checkout Client_Android
-./gradlew assembleDebug
+sudo visudo
+# 在文件末尾添加以下内容（请将 'your_ubuntu_user' 替换为实际用户名）：
+your_ubuntu_user ALL=(ALL) NOPASSWD: /usr/sbin/ufw, /usr/sbin/nft, /usr/bin/pkill
+
+```
+
+#### 3. 准备配置文件与 TLS 证书
+
+在 `/home/<user>/zhiauth` 创建标准项目目录。
+
+```bash
+mkdir -p ~/zhiauth/config ~/zhiauth/database
+
+```
+
+**设置 config.json：**
+复制 `config/config.json.example` 为 `~/zhiauth/config/config.json` 并填写您自己的安全密钥：
+
+```json
+{
+  "network": {
+    "auth_port": 5555,
+    "quic_data_port": 4433,
+    "kcp_data_port": 6666,
+    "custom_mtu": 1350
+  },
+  "kcp_tuning": {
+    "nodelay": 1,
+    "interval": 1,
+    "resend": 2,
+    "nc": 1,
+    "snd_wnd": 4096,
+    "rcv_wnd": 4096
+  },
+  "paths": {
+    "safe_root": "/export/HDD_merge",
+    "log_path": "/tmp/zhiauth_gateway.log",
+    "tls_crt": "config/your_domain.crt",
+    "tls_key": "config/your_domain.key",
+    "database": "database/zhiauth.db"
+  },
+  "security": {
+    "master_sym_key": "REPLACE_WITH_YOUR_32_BYTE_SECRET_KEY",
+    "hash_salt": "REPLACE_WITH_YOUR_RANDOM_SALT",
+    "system_admin_user": "your_ubuntu_user",
+    "max_fail_attempts": 5,
+    "ban_duration_minutes": 15
+  }
+}
+
+```
+
+**TLS 证书（用于 MsQUIC）：**
+将 `.crt` 和 `.key` 证书文件放入 `~/zhiauth/config/` 目录。请确保文件名与 `config.json` 中的配置一致。
+
+#### 4. 使用 Systemd 运行服务
+
+将 ZhiAuth 设置为开机自启的后台守护进程：
+
+```bash
+sudo nano /etc/systemd/system/zhiauth.service
+
+```
+
+粘贴以下配置内容（请将 `your_ubuntu_user` 替换为实际用户名）：
+
+```ini
+[Unit]
+Description=ZhiAuth High-Performance VFS Server
+After=network.target
+
+[Service]
+Type=simple
+User=your_ubuntu_user
+Group=your_ubuntu_user
+WorkingDirectory=/home/your_ubuntu_user/zhiauth
+ExecStart=/usr/local/bin/zhiauth_server_app
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+
+```
+
+启用并启动服务：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable zhiauth
+sudo systemctl start zhiauth
+sudo systemctl status zhiauth
 
 ```
