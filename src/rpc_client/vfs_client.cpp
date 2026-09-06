@@ -1,3 +1,4 @@
+// src/rpc_client/vfs_client.cpp
 #include "rpc_client/vfs_client.h"
 #include "rpc_client/crypto_box.h"
 #include "rpc_client/vfs_packet.h"
@@ -9,12 +10,22 @@
 
 using asio::ip::udp;
 
+static uint32_t crc32_hash(const std::string& str) {
+    uint32_t crc = 0xFFFFFFFF;
+    for (char c : str) {
+        crc ^= static_cast<uint32_t>(c);
+        for (int i = 0; i < 8; i++) crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320 : crc >> 1;
+    }
+    return ~crc;
+}
+
 VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
-                     int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd)
+                     int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd, const std::string& hwid)
     : socket_(io_context_, udp::endpoint(udp::v4(), 0)), is_running_(false), 
       recv_buffer_(16777216), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu),
       nodelay_(nodelay), interval_(interval), resend_(resend), nc_(nc), snd_wnd_(snd_wnd), rcv_wnd_(rcv_wnd)
 {
+    client_id_ = crc32_hash(hwid);
     asio::ip::udp::resolver resolver(io_context_);
     server_endpoint_ = *resolver.resolve(udp::v4(), server_ip, std::to_string(port)).begin();
     try { socket_.set_option(asio::socket_base::receive_buffer_size(16777216)); socket_.set_option(asio::socket_base::send_buffer_size(16777216)); } catch(...) {}
@@ -115,4 +126,17 @@ std::vector<uint8_t> VfsClient::send_rpc_sync(const std::vector<uint8_t>& payloa
     ZHI_LOG_ERR("[RPC-TIMEOUT] C++ KCP đứt gánh với ReqID: " + std::to_string(req_id));
     std::lock_guard<std::mutex> clean_lock(rpc_map_mutex_); rpc_map_.erase(req_id);
     return {};
+}
+
+void VfsClient::send_rpc_async(const std::vector<uint8_t>& payload, uint32_t req_id) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+    std::vector<uint8_t> encrypted;
+    if (CryptoBox::encrypt_payload(payload, sym_key_, encrypted)) {
+        std::lock_guard<std::mutex> lock(kcp_mutex_);
+        ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted.data()), encrypted.size());
+        ikcp_flush(kcp_cb_);
+    }
+    auto enc_time = std::chrono::high_resolution_clock::now();
+    auto encrypt_us = std::chrono::duration_cast<std::chrono::microseconds>(enc_time - start_time).count();
+    ZHI_LOG_DEBUG("[KCP-PERF] [ASYNC] ReqID: " + std::to_string(req_id) + " | Payload: " + std::to_string(payload.size()) + "B | Encrypt: " + std::to_string(encrypt_us) + "us");
 }

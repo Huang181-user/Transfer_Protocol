@@ -57,13 +57,18 @@ void RemoveFromRAMCache(const std::string& fullPath) {
     std::lock_guard<std::mutex> lock(g_cache_mtx); g_ram_cache.erase(fullPath);
 }
 
-std::vector<uint8_t> DispatchRpc(VfsOpcode opcode, const std::string& path, uint64_t offset, uint32_t reqLen, const std::vector<uint8_t>& in_data, int override_kcp = -1) {
+std::vector<uint8_t> DispatchRpc(VfsOpcode opcode, const std::string& path, uint64_t offset, uint32_t reqLen, const std::vector<uint8_t>& in_data, int override_kcp = -1, bool is_async = false) {
     uint32_t req_id = g_req_id.fetch_add(1);
     uint32_t data_len = (opcode == VfsOpcode::OP_READ) ? reqLen : in_data.size();
     std::vector<uint8_t> req(sizeof(VfsPacketHeader) + path.size() + in_data.size());
     
     VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req.data());
-    hdr->magic = 0x5A484941; hdr->opcode = opcode; hdr->session_id = req_id;
+    hdr->magic = 0x5A484941; hdr->opcode = opcode; 
+    if (g_vfs_client) {
+        hdr->session_id = ((uint64_t)g_vfs_client->get_client_id() << 32) | req_id;
+    } else {
+        hdr->session_id = req_id;
+    }
     hdr->offset = offset; hdr->data_len = data_len; hdr->path_len = path.size();
 
     memcpy(req.data() + sizeof(VfsPacketHeader), path.data(), path.size());
@@ -72,20 +77,31 @@ std::vector<uint8_t> DispatchRpc(VfsOpcode opcode, const std::string& path, uint
     bool use_kcp = true;
     if (override_kcp != -1) {
         use_kcp = (override_kcp == 1);
-    } else if (fuse_get_context() != nullptr) {
+    } else if (fuse_get_context() != nullptr && fuse_get_context()->private_data != nullptr) {
         use_kcp = (bool)fuse_get_context()->private_data;
     }
+    
     if (use_kcp && g_vfs_client) {
-        auto res = g_vfs_client->send_rpc_sync(req, req_id);
-        if (!res.empty() && res.size() >= sizeof(VfsPacketHeader)) {
-            VfsPacketHeader* resHdr = reinterpret_cast<VfsPacketHeader*>(res.data());
-            if (resHdr->opcode != VfsOpcode::OP_ERROR) return res;
+        if (is_async) {
+            g_vfs_client->send_rpc_async(req, req_id);
+            return {1}; // Fake response thành công
+        } else {
+            auto res = g_vfs_client->send_rpc_sync(req, req_id);
+            if (!res.empty() && res.size() >= sizeof(VfsPacketHeader)) {
+                VfsPacketHeader* resHdr = reinterpret_cast<VfsPacketHeader*>(res.data());
+                if (resHdr->opcode != VfsOpcode::OP_ERROR) return res;
+            }
         }
     }
     
-    auto fallback_res = MsQuicClient::send_vfs_sync(req, req_id);
-    if (!fallback_res.empty()) return fallback_res;
-    return {};
+    if (is_async) {
+        MsQuicClient::send_vfs_async(req, req_id);
+        return {1};
+    } else {
+        auto fallback_res = MsQuicClient::send_vfs_sync(req, req_id);
+        if (!fallback_res.empty()) return fallback_res;
+        return {};
+    }
 }
 
 struct WriteBuffer {
@@ -97,31 +113,31 @@ struct WriteBuffer {
     bool use_kcp;
 };
 
-static std::unordered_map<std::string, std::shared_ptr<WriteBuffer>> g_write_buffers;
-static std::mutex g_wb_mtx;
+// static std::unordered_map<std::string, std::shared_ptr<WriteBuffer>> g_write_buffers;
+// static std::mutex g_wb_mtx;
 
-void FlushChunkAsync(std::shared_ptr<WriteBuffer> wb, bool forceAll) {
-    while (true) {
-        wb->mu.lock();
-        if (wb->data.empty() || (!forceAll && wb->data.size() < 2097152)) {
-            wb->isFlushing = false;
-            wb->mu.unlock();
-            return;
-        }
+// void FlushChunkAsync(std::shared_ptr<WriteBuffer> wb, bool forceAll) {
+//     while (true) {
+//         wb->mu.lock();
+//         if (wb->data.empty() || (!forceAll && wb->data.size() < 2097152)) {
+//             wb->isFlushing = false;
+//             wb->mu.unlock();
+//             return;
+//         }
 
-        size_t toSendLen = wb->data.size();
-        if (toSendLen > 2097152) toSendLen = 2097152;
+//         size_t toSendLen = wb->data.size();
+//         if (toSendLen > 2097152) toSendLen = 2097152;
 
-        std::vector<uint8_t> chunk(wb->data.begin(), wb->data.begin() + toSendLen);
-        uint64_t currentOffset = wb->startOffset;
+//         std::vector<uint8_t> chunk(wb->data.begin(), wb->data.begin() + toSendLen);
+//         uint64_t currentOffset = wb->startOffset;
 
-        wb->startOffset += toSendLen;
-        wb->data.erase(wb->data.begin(), wb->data.begin() + toSendLen);
-        wb->mu.unlock();
+//         wb->startOffset += toSendLen;
+//         wb->data.erase(wb->data.begin(), wb->data.begin() + toSendLen);
+//         wb->mu.unlock();
 
-        DispatchRpc(VfsOpcode::OP_WRITE, wb->realPath, currentOffset, 0, chunk, wb->use_kcp ? 1 : 0);
-    }
-}
+//         DispatchRpc(VfsOpcode::OP_WRITE, wb->realPath, currentOffset, 0, chunk, wb->use_kcp ? 1 : 0);
+//     }
+// }
 
 static int vfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_info* fi) {
     memset(stbuf, 0, sizeof(struct stat));
@@ -208,46 +224,20 @@ static int vfs_read(const char* path, char* buf, size_t size, off_t offset, stru
 }
 
 static int vfs_write(const char* path, const char* buf, size_t size, off_t offset, struct fuse_file_info* fi) {
-    bool use_kcp = true;
-    if (fuse_get_context() != nullptr) {
-        use_kcp = (bool)fuse_get_context()->private_data;
-    }
     std::string full_path = g_remote_base;
     if (std::string(path) != "/") full_path += path;
     
     RemoveFromRAMCache(full_path);
 
     if (size == 0) {
-        DispatchRpc(VfsOpcode::OP_WRITE, full_path, offset, 0, {});
+        DispatchRpc(VfsOpcode::OP_WRITE, full_path, offset, 0, {}, -1, false);
         return 0;
     }
-
-    std::shared_ptr<WriteBuffer> wb;
-    {
-        std::lock_guard<std::mutex> lock(g_wb_mtx);
-        if (g_write_buffers.find(full_path) == g_write_buffers.end()) {
-            g_write_buffers[full_path] = std::make_shared<WriteBuffer>();
-            g_write_buffers[full_path]->realPath = full_path;
-            g_write_buffers[full_path]->startOffset = offset;
-            g_write_buffers[full_path]->use_kcp = use_kcp;
-            g_write_buffers[full_path]->isFlushing = false;
-        }
-        wb = g_write_buffers[full_path];
-    }
-
-    bool shouldFlush = false;
-    wb->mu.lock();
-    wb->data.insert(wb->data.end(), buf, buf + size);
-    if (wb->data.size() >= 2097152 && !wb->isFlushing) {
-        wb->isFlushing = true;
-        shouldFlush = true;
-    }
-    wb->mu.unlock();
-
-    if (shouldFlush) {
-        std::thread(FlushChunkAsync, wb, false).detach();
-    }
-    return size;
+    
+    std::vector<uint8_t> data(buf, buf + size);
+    // 🔥 GỌI ASYNC GHI FILE SIÊU TỐC, KHÔNG CẦN CHỜ!
+    auto res = DispatchRpc(VfsOpcode::OP_WRITE, full_path, offset, 0, data, -1, true);
+    return res.empty() ? -EIO : size;
 }
 
 static int vfs_mkdir(const char* path, mode_t mode) {
@@ -293,34 +283,7 @@ static int vfs_open(const char* path, struct fuse_file_info* fi) { return 0; }
 static int vfs_fsync(const char* path, int isdatasync, struct fuse_file_info* fi) { return 0; }
 
 static int vfs_flush(const char* path, struct fuse_file_info* fi) {
-    std::string full_path = g_remote_base;
-    if (std::string(path) != "/") full_path += path;
-
-    std::shared_ptr<WriteBuffer> wb;
-    {
-        std::lock_guard<std::mutex> lock(g_wb_mtx);
-        auto it = g_write_buffers.find(full_path);
-        if (it != g_write_buffers.end()) {
-            wb = it->second;
-        }
-    }
-
-    if (wb) {
-        wb->mu.lock();
-        std::vector<uint8_t> remaining = wb->data;
-        uint64_t currentOffset = wb->startOffset;
-        bool kcp_flag = wb->use_kcp;
-        wb->data.clear();
-        wb->startOffset += remaining.size();
-        wb->mu.unlock();
-
-        if (!remaining.empty()) {
-            DispatchRpc(VfsOpcode::OP_WRITE, full_path, currentOffset, 0, remaining, kcp_flag ? 1 : 0);
-        }
-
-        std::lock_guard<std::mutex> lock(g_wb_mtx);
-        g_write_buffers.erase(full_path);
-    }
+    // 🔥 Đã xóa bộ đệm rườm rà, trả về 0 luôn cho nhẹ nợ
     return 0;
 }
 
@@ -331,7 +294,14 @@ static struct fuse_operations vfs_oper = {
 
 int FuseDriver::start_fuse(const std::string& mountpoint, const std::string& remote_base, bool use_kcp) {
     g_remote_base = remote_base;
-    char* argv[] = { (char*)"zhiauth_fuse", (char*)mountpoint.c_str(), (char*)"-f", (char*)"-o", (char*)"allow_other,kernel_cache,auto_cache" };
+    // Bỏ max_read và max_write đi vì libfuse3 trên Linux không hỗ trợ nhồi vào argv
+    char* argv[] = { 
+        (char*)"zhiauth_fuse", 
+        (char*)mountpoint.c_str(), 
+        (char*)"-f", 
+        (char*)"-o", 
+        (char*)"allow_other,kernel_cache,auto_cache" 
+    };
     ZHI_LOG_INFO("[FUSE-DRIVER] Kích hoạt Ổ đĩa ảo C++ tại: " + mountpoint);
     return fuse_main(5, argv, &vfs_oper, (void*)use_kcp);
 }

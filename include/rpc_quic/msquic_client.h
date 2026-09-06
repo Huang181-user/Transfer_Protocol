@@ -13,7 +13,7 @@ public:
     
     // 🔥 Tính năng tối quan trọng để VFS_QUIC không bị đơ
     static std::vector<uint8_t> send_vfs_sync(const std::vector<uint8_t>& payload, uint32_t req_id);
-    
+    static bool send_vfs_async(const std::vector<uint8_t>& payload, uint32_t req_id); // 🔥 THÊM DÒNG NÀY
 private:
     static QUIC_STATUS QUIC_API RpcStreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVENT* Event);
     static QUIC_STATUS QUIC_API AuthStreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVENT* Event);

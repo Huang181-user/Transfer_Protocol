@@ -127,3 +127,19 @@ std::vector<uint8_t> MsQuicClient::send_vfs_sync(const std::vector<uint8_t>& pay
     { std::lock_guard<std::mutex> lock(g_msquic_rpc_mtx); g_msquic_rpc_map.erase(req_id); }
     return {};
 }
+
+bool MsQuicClient::send_vfs_async(const std::vector<uint8_t>& payload, uint32_t req_id) {
+    if (!DataConnection) return false;
+    auto* ctx = new RpcClientContext{req_id, {}, nullptr};
+    HQUIC Stream = nullptr;
+    if (QUIC_FAILED(MsQuic->StreamOpen(DataConnection, QUIC_STREAM_OPEN_FLAG_NONE, RpcStreamCallback, ctx, &Stream))) {
+        delete ctx; return false;
+    }
+    MsQuic->StreamStart(Stream, QUIC_STREAM_START_FLAG_NONE);
+    ctx->qBuf = new QUIC_BUFFER;
+    ctx->qBuf->Buffer = new uint8_t[payload.size()];
+    memcpy(ctx->qBuf->Buffer, payload.data(), payload.size());
+    ctx->qBuf->Length = payload.size();
+    MsQuic->StreamSend(Stream, ctx->qBuf, 1, QUIC_SEND_FLAG_FIN, ctx->qBuf);
+    return true;
+}

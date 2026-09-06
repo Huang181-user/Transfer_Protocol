@@ -18,13 +18,20 @@ struct RpcContext {
 
 class VfsClient {
 public:
+    // 🔥 Thêm const std::string& hwid vào cuối Constructor
     VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
-              int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
+              int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd, const std::string& hwid);
     ~VfsClient();
     bool start();
     void stop();
     std::vector<uint8_t> send_rpc_sync(const std::vector<uint8_t>& payload, uint32_t req_id);
+    void send_rpc_async(const std::vector<uint8_t>& payload, uint32_t req_id);
+    
     static int kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user);
+    
+    // 🔥 Thêm hàm này
+    uint32_t get_client_id() const { return client_id_; }
+
 private:
     void receive_loop();
     void kcp_update_loop();
@@ -39,6 +46,10 @@ private:
     std::mutex kcp_mutex_;
     std::string sym_key_;
     int mtu_, nodelay_, interval_, resend_, nc_, snd_wnd_, rcv_wnd_;
+    
+    // 🔥 Thêm biến này vào cuối
+    uint32_t client_id_;
+    
     std::unordered_map<uint32_t, std::shared_ptr<RpcContext>> rpc_map_;
     std::mutex rpc_map_mutex_;
 };
