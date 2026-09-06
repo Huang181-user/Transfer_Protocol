@@ -1,4 +1,3 @@
-```markdown
 <div align="center">
 
 # 🚀 Transfer Protocol / ZhiAuth Ecosystem
@@ -76,8 +75,6 @@ sudo cp zhiauth_kcp_worker /usr/local/bin/
 sudo chmod +x /usr/local/bin/zhiauth_server_app
 sudo chmod +x /usr/local/bin/zhiauth_kcp_worker
 cd ..
-
-```
 
 #### 2. Cấu hình Tường lửa (UFW)
 
