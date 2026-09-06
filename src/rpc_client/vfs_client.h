@@ -26,6 +26,10 @@ public:
     bool start();
     void stop();
     std::vector<uint8_t> send_rpc_sync(const std::vector<uint8_t>& payload, uint32_t req_id);
+    
+    // 🔥 BƠM THÊM HÀM GỬI BẤT ĐỒNG BỘ
+    void send_rpc_async(const std::vector<uint8_t>& payload, uint32_t req_id);
+    
     static int kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user);
     uint32_t get_client_id() const { return client_id_; }
 private:

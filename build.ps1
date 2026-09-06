@@ -1,4 +1,4 @@
-﻿function Log-Realtime {
+function Log-Realtime {
     param([string]$Message, [string]$Color = "Cyan")
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
     Write-Host "[$ts] $Message" -ForegroundColor $Color
@@ -51,11 +51,32 @@ if ($foundLib) {
     exit 1
 }
 
-$libs = @("-L$buildDir", "-lws2_32", "-liphlpapi", "-lcredui", $fuseLibArg, "-lsodium", "-lmsquic")
-$cppFiles = Get-ChildItem -Path "src" -Recurse -Include *.cpp, *.c | ForEach-Object { $_.FullName }
+# T? d?ng tr? v o thu m?c build d? t m thu vi?n
+$libs = @("-L$buildDir", "-Llib", "-lws2_32", "-liphlpapi", "-lcredui", $fuseLibArg, "-lsodium", "-lmsquic", "-lwinmm")
+$cppFiles = @(
+    "src\client_main.cpp",
+    "src\bridge\client_bridge.cpp",
+    "src\bridge\win_auth.cpp",
+    "src\common\logger.cpp",
+    "src\rpc_client\crypto_box.cpp",
+    "src\rpc_client\ikcp.c",
+    "src\rpc_client\vfs_client.cpp",
+    "src\rpc_quic\msquic_client.cpp",
+    "src\system\sys_utils.cpp",
+    "src\vfs\fuse_driver.cpp"
+)
 
-Log-Realtime "[COMPILE] Dang bien dich..." "Magenta"
-$argsList = $gppIncArgs + $cppFiles + @("-std=c++17", "-O3", "-DQUIC_SAL_STUB", "-o", "$buildDir\huang_client.exe") + $libs
+Log-Realtime "[COMPILE] Dang bien dich bang g++ (co ep xung luong)..." "Magenta"
+
+# B? sung c c Define Flags tuong duong v?i CMake v o d y
+$argsList = $gppIncArgs + $cppFiles + @(
+    "-std=c++17", 
+    "-O3", "-static", "-static-libgcc", "-static-libstdc++", 
+    "-DQUIC_SAL_STUB", 
+    "-D_FILE_OFFSET_BITS=64", 
+    "-DFUSE_USE_VERSION=28", 
+    "-o", "$buildDir\huang_client_win.exe"
+) + $libs
 
 & g++ @argsList
 
@@ -64,7 +85,10 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# THÊM DÒNG NÀY: Tự động bơm msquic.dll vào ổ build để chạy
+Copy-Item "lib\msquic.dll" -Destination "$buildDir\" -Force
+
 $elapsed = $startTime.Elapsed.TotalSeconds.ToString("F2")
 Log-Realtime "==========================================================================" "Yellow"
-Log-Realtime "[SUCCESS] PURE C++ CLIENT ĐÃ SẴN SÀNG TRONG $elapsed GIÂY!" "Green"
+Log-Realtime "[SUCCESS] PURE C++ CLIENT (320KB LIMIT) DA SAN SANG TRONG $elapsed GIAY!" "Green"
 Log-Realtime "==========================================================================" "Yellow"

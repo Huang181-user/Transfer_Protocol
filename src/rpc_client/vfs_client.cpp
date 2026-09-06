@@ -85,13 +85,18 @@ void VfsClient::receive_loop() {
                 if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext) && plaintext.size() >= sizeof(VfsPacketHeader)) {
                     VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
                     uint32_t req_id = (uint32_t)(hdr->session_id & 0xFFFFFFFF);
-                    std::lock_guard<std::mutex> rpc_lock(rpc_map_mutex_);
-                    auto it = rpc_map_.find(req_id);
-                    if (it != rpc_map_.end()) {
-                        it->second->response = plaintext;
-                        it->second->done = true;
-                        it->second->cv.notify_all();
-                    }
+                    std::shared_ptr<RpcContext> ctx;
+                            {
+                                std::lock_guard<std::mutex> rpc_lock(rpc_map_mutex_);
+                                auto it = rpc_map_.find(req_id);
+                                if (it != rpc_map_.end()) ctx = it->second;
+                            }
+                            if (ctx) {
+                                std::lock_guard<std::mutex> ctx_lock(ctx->mtx);
+                                ctx->response = std::move(plaintext);
+                                ctx->done = true;
+                                ctx->cv.notify_all();
+                            }
                 }
             }
         } else { std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
@@ -100,7 +105,7 @@ void VfsClient::receive_loop() {
 
 void VfsClient::kcp_update_loop() {
     while (is_running_) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
         uint32_t clock = GetTickCount();
         std::lock_guard<std::mutex> lock(kcp_mutex_);
         if (kcp_cb_) ikcp_update(kcp_cb_, clock);
@@ -108,6 +113,8 @@ void VfsClient::kcp_update_loop() {
 }
 
 std::vector<uint8_t> VfsClient::send_rpc_sync(const std::vector<uint8_t>& payload, uint32_t req_id) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
     auto ctx = std::make_shared<RpcContext>();
     { std::lock_guard<std::mutex> lock(rpc_map_mutex_); rpc_map_[req_id] = ctx; }
 
@@ -117,15 +124,42 @@ std::vector<uint8_t> VfsClient::send_rpc_sync(const std::vector<uint8_t>& payloa
         ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted.data()), encrypted.size());
         ikcp_flush(kcp_cb_);
     }
+    
+    auto enc_time = std::chrono::high_resolution_clock::now();
 
     std::unique_lock<std::mutex> wait_lock(ctx->mtx);
-    if (ctx->cv.wait_for(wait_lock, std::chrono::seconds(10), [&]{ return ctx->done; })) {
+    if (ctx->cv.wait_for(wait_lock, std::chrono::seconds(60), [&]{ return ctx->done; })) {
         std::vector<uint8_t> res = ctx->response;
-        std::lock_guard<std::mutex> clean_lock(rpc_map_mutex_); rpc_map_.erase(req_id);
+        { std::lock_guard<std::mutex> clean_lock(rpc_map_mutex_); rpc_map_.erase(req_id); }
+        
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto encrypt_us = std::chrono::duration_cast<std::chrono::microseconds>(enc_time - start_time).count();
+        auto rtt_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - enc_time).count();
+        
+        // 🔥 IN DEBUG ĐO LƯỜNG TẦNG NETWORK & ENCRYPTION
+        ZHI_LOG_DEBUG("[KCP-PERF] ReqID: " + std::to_string(req_id) + " | Payload: " + std::to_string(payload.size()) + "B | Encrypt: " + std::to_string(encrypt_us) + "us | Net RTT: " + std::to_string(rtt_ms) + "ms");
+        
         return res;
     }
 
-    ZHI_LOG_ERR("[RPC-TIMEOUT] C++ KCP dut ganh voi ReqID: " + std::to_string(req_id));
-    std::lock_guard<std::mutex> clean_lock(rpc_map_mutex_); rpc_map_.erase(req_id);
+    ZHI_LOG_ERR("[RPC-TIMEOUT] C++ KCP dut ganh voi ReqID: " + std::to_string(req_id) + " sau 60s cho doi!");
+    { std::lock_guard<std::mutex> clean_lock(rpc_map_mutex_); rpc_map_.erase(req_id); }
     return {};
+}
+
+// 🔥 HÀM BẮN TỈA KHÔNG CẦN CHỜ ĐỢI
+void VfsClient::send_rpc_async(const std::vector<uint8_t>& payload, uint32_t req_id) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
+    std::vector<uint8_t> encrypted;
+    if (CryptoBox::encrypt_payload(payload, sym_key_, encrypted)) {
+        std::lock_guard<std::mutex> lock(kcp_mutex_);
+        ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted.data()), encrypted.size());
+        ikcp_flush(kcp_cb_);
+    }
+    
+    auto enc_time = std::chrono::high_resolution_clock::now();
+    auto encrypt_us = std::chrono::duration_cast<std::chrono::microseconds>(enc_time - start_time).count();
+    
+    ZHI_LOG_DEBUG("[KCP-PERF] [ASYNC] ReqID: " + std::to_string(req_id) + " | Payload: " + std::to_string(payload.size()) + "B | Encrypt: " + std::to_string(encrypt_us) + "us");
 }

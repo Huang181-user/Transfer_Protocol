@@ -35,7 +35,7 @@ extern "C" {
         cui.pszMessageText = L"Enter system credentials to bridge with ZhiAuth Server.";
         cui.pszCaptionText = L"ZhiAuth VFS Secure Login";
         WCHAR u[256] = {0}; WCHAR p[256] = {0}; BOOL s = FALSE;
-        if (CredUIPromptForCredentialsW(&cui, TARGET.c_str(), NULL, 0, u, 256, p, 256, &s, CREDUI_FLAGS_GENERIC_CREDENTIALS | CREDUI_FLAGS_ALWAYS_SHOW_UI | CREDUI_FLAGS_DO_NOT_PERSIST | CREDUI_FLAGS_EXPECT_CONFIRMATION) == ERROR_SUCCESS) {
+        if (CredUIPromptForCredentialsW(&cui, TARGET.c_str(), NULL, 0, u, 256, p, 256, &s, CREDUI_FLAGS_GENERIC_CREDENTIALS | CREDUI_FLAGS_ALWAYS_SHOW_UI | CREDUI_FLAGS_SHOW_SAVE_CHECK_BOX | CREDUI_FLAGS_EXPECT_CONFIRMATION) == ERROR_SUCCESS) {
             strcpy(user, to_utf8(u).c_str());
             strcpy(pass, to_utf8(p).c_str());
             *save = s ? 1 : 0;

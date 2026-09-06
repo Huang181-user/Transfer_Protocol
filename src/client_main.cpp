@@ -1,4 +1,4 @@
-﻿#include "common/logger.h"
+#include "common/logger.h"
 #include "system/sys_utils.hpp"
 #include "bridge/win_auth.h"
 #include "rpc_quic/msquic_client.h"
@@ -12,6 +12,10 @@
 #include <thread>
 #include <chrono>
 #include <cstdlib>
+#include <windows.h>
+#include <timeapi.h>
+#include <vector>
+#include <sstream>
 
 using json = nlohmann::json;
 
@@ -29,6 +33,12 @@ std::string DiscoverBestRoute(const std::string& lan, const std::string& ts) {
 }
 
 int main() {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+
+    // 🔥 FIX TỬ HUYỆT WINDOWS: Ép độ phân giải đồng hồ hệ thống xuống 1ms thay vì 15.6ms mặc định
+    timeBeginPeriod(1);
+
     ZHI_LOG_INFO("==================================================");
     ZHI_LOG_INFO("🚀 HUANG HYBRID C++ CLIENT v6.0 - FUSE API EDITION");
     ZHI_LOG_INFO("==================================================");
@@ -70,28 +80,41 @@ int main() {
     std::string auth_res = MsQuicClient::auth_sync(auth_payload);
 
     if (auth_res.find("AUTH_SUCCESS|") == 0) {
-        ZHI_LOG_INFO("🎉 XAC THUC THANH CONG! He thong chuan bi no may...");
+        ZHI_LOG_INFO("✅ XAC THUC THANH CONG! He thong chuan bi no may...");
         
+        std::vector<std::string> parts;
+        std::stringstream ss(auth_res);
+        std::string item;
+        while (std::getline(ss, item, '|')) { parts.push_back(item); }
+
         std::string remote_base = "/";
-        size_t first_pipe = auth_res.find('|');
-        if (first_pipe != std::string::npos) {
-            size_t second_pipe = auth_res.find('|', first_pipe + 1);
-            if (second_pipe != std::string::npos) {
-                remote_base = auth_res.substr(first_pipe + 1, second_pipe - first_pipe - 1);
-            }
+        int s_quic_port = 4433, s_kcp_port = 6666;
+        int s_nodelay = 1, s_interval = 1, s_resend = 2, s_nc = 1, s_snd_wnd = 4096, s_rcv_wnd = 4096;
+
+        if (parts.size() >= 10) {
+            remote_base = parts[1];
+            s_quic_port = std::stoi(parts[2]);
+            s_kcp_port  = std::stoi(parts[3]);
+            s_nodelay   = std::stoi(parts[4]);
+            s_interval  = std::stoi(parts[5]);
+            s_resend    = std::stoi(parts[6]);
+            s_nc        = std::stoi(parts[7]);
+            s_snd_wnd   = std::stoi(parts[8]);
+            s_rcv_wnd   = std::stoi(parts[9]);
+            ZHI_LOG_INFO("✅ Đã đồng bộ 8 thông số KCP/QUIC từ Server thành công!");
         }
         
         ZHI_LOG_INFO("Danh thuc C++ KCP Engine (MTU: " + std::to_string(kcpMtu) + ")...");
-        g_vfs_client = new VfsClient(activeIp, kcp_port, kcp_key, kcpMtu, 1, 10, 2, 1, 16384, 16384, hwid);
+        g_vfs_client = new VfsClient(activeIp, s_kcp_port, kcp_key, kcpMtu, s_nodelay, s_interval, s_resend, s_nc, s_snd_wnd, s_rcv_wnd, hwid);
         g_vfs_client->start();
 
         ZHI_LOG_INFO("==========================================================================");
-        ZHI_LOG_INFO("👉 Kich no he thong FUSE Dual-Mount len o dia " + mount_kcp + " va " + mount_quic);
+        ZHI_LOG_INFO("🚀 Kich no he thong FUSE Dual-Mount len o dia " + mount_kcp + " va " + mount_quic);
         ZHI_LOG_INFO("==========================================================================");
 
-        std::thread t1(FuseDriver::start_fuse, mount_kcp, remote_base, true);
+        std::thread t1(FuseDriver::start_fuse, mount_kcp , remote_base, true);
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        std::thread t2(FuseDriver::start_fuse, mount_quic, remote_base, false);
+        std::thread t2(FuseDriver::start_fuse, mount_quic , remote_base, false);
 
         std::thread hb_quic([&]() {
             while(true) {
@@ -115,15 +138,14 @@ int main() {
             }
         });
 
-        // 🔥 FIX: Thêm user, pass, hwid vào lambda capture!
         SysUtils::start_network_monitor([user_str = std::string(user), pass_str = std::string(pass), hwid]() {
-            ZHI_LOG_WARN("📡 Card mang thay doi! Tien hanh Re-Auth...");
+            ZHI_LOG_WARN("⚠️ Card mang thay doi! Tien hanh Re-Auth...");
             std::string l, t; SysUtils::auto_detect_ips(l, t);
             std::string p = "AUTH_REQ|USER:" + user_str + "|PASS:" + pass_str + "|LAN:" + l + "|TS:" + t + "|HWID:" + hwid;
             MsQuicClient::auth_sync(p);
         });
 
-        ZHI_LOG_INFO("✅ Daemon running in background at MAXIMUM SPEED. Type 'exit' to quit, 'logout' to sign out.");
+        ZHI_LOG_INFO("⚡ Daemon running in background at MAXIMUM SPEED. Type 'exit' to quit, 'logout' to sign out.");
 
         std::string cmd;
         while (std::getline(std::cin, cmd)) {
@@ -144,11 +166,10 @@ int main() {
         
         t1.join(); t2.join(); hb_quic.join(); hb_kcp.join();
     } else {
-        ZHI_LOG_ERR("❌ Xác thuc that bai: " + auth_res);
+        ZHI_LOG_ERR("❌ Xac thuc that bai: " + auth_res);
     }
 
     MsQuicClient::shutdown();
     if (g_vfs_client) { g_vfs_client->stop(); delete g_vfs_client; }
     return 0;
 }
-
