@@ -1,4 +1,3 @@
-```markdown
 <a id="top"></a>
 
 <div align="center">
@@ -65,7 +64,6 @@ zhiauth_client/
     ├── bridge/                  # client_bridge.cpp (Gọi hàm CGO Async Callback)
     └── rpc_client/              # vfs_client.cpp, ikcp.c (WND 4096), Libsodium CryptoBox
 
-```
 
 ---
 
