@@ -7,12 +7,24 @@ android {
     namespace = "com.example.transfer_server"
     compileSdk = 35
 
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/main/cpp/libsodium/lib", "src/main/cpp/msquic/lib")
+        }
+    }
+
     ndkVersion = "28.2.13676358"
     defaultConfig {
         externalNativeBuild {
             cmake {
                 cppFlags += "-std=c++20"
+                // 🔥 KHOÁ CỨNG CHỈ BUILD ARM64-V8A ĐỂ TRÁNH LỖI THIẾU FILE MSQUIC
+                abiFilters += listOf("arm64-v8a")
             }
+        }
+        // 🔥 ĐỒNG THỜI KHÓA LUÔN APK ĐẦU RA CHỈ CHỨA ARM64-V8A
+        ndk {
+            abiFilters += listOf("arm64-v8a")
         }
         applicationId = "com.example.transfer_server"
         minSdk = 35
@@ -62,7 +74,6 @@ dependencies {
 
     implementation("com.github.mwiede:jsch:0.2.17")
     implementation("com.squareup.okhttp3:okhttp-android:5.0.0-alpha.11")
-    implementation(files("libs/quicdroid.aar"))
 }
 
 layout.buildDirectory.set(File("/tmp/android_builds/transfer_server_app"))

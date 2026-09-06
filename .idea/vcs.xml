@@ -4,5 +4,42 @@
     <mapping directory="$USER_HOME$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/.." vcs="Git" />
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/clog" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/googletest" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/cloudflare-quiche" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/cloudflare-quiche/quiche/deps/boringssl" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/fuzz/corpora" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/gost-engine" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/gost-engine/libprov" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/krb5" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/oqs-provider" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/pkcs11-provider" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/pkcs11-provider/python-ecdsa" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/pkcs11-provider/tlsfuzzer" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/pkcs11-provider/tlslite-ng" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/pyca-cryptography" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/python-ecdsa" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/tlsfuzzer" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/tlslite-ng" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/openssl/wycheproof" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/quictls" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/quictls/gost-engine" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/quictls/gost-engine/libprov" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/quictls/krb5" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/quictls/oqs-provider" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/quictls/pyca-cryptography" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/quictls/python-ecdsa" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/quictls/tlsfuzzer" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/quictls/tlslite-ng" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/quictls/wycheproof" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/xdp-for-windows" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/xdp-for-windows/submodules/cxplat" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/xdp-for-windows/submodules/cxplat/submodules/googletest" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/xdp-for-windows/submodules/cxplat/submodules/undocked" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/xdp-for-windows/submodules/ndis-driver-library" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/xdp-for-windows/submodules/net-offloads" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/app/src/main/cpp/msquic/submodules/xdp-for-windows/submodules/wil" vcs="Git" />
   </component>
 </project>

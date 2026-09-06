@@ -4,9 +4,12 @@ import time
 
 # --- CẤU HÌNH DÀNH RIÊNG CHO ANDROID PROJECT ---
 MAX_LINES_PER_FILE = 3000
+
+# 🔥 ĐÃ BỔ SUNG CHẶN ĐỨNG MSQUIC VÀ OPENSSL
 IGNORE_DIRS = {
     'build', '.gradle', '.idea', '.git', '__pycache__', 
-    'captures', '.externalNativeBuild', '.cxx', 'app/build','libsodium', 'libsodium-stable'
+    'captures', '.externalNativeBuild', '.cxx', 'libsodium', 
+    'libsodium-stable', 'msquic', 'openssl'
 }
 VALID_EXTENSIONS = {
     '.kt', '.java', '.xml', '.gradle', '.kts', 
@@ -30,7 +33,7 @@ def run_tree_command():
     log_debug("Đang quét cấu trúc thư mục Android Project...")
     try:
         output = subprocess.check_output(
-            ['tree', '-I', 'build|.gradle|.idea|.cxx|captures'], 
+            ['tree', '-I', 'build|.gradle|.idea|.cxx|captures|msquic|libsodium|libsodium-stable'], 
             text=True
         )
         log_success("Thu thập sơ đồ cây Android thành công!")
@@ -40,21 +43,19 @@ def run_tree_command():
         return "Tree command not available.\n"
 
 def main():
-    log_info("Khởi động hệ thống gom mã nguồn ANDROID CLIENT v2.0")
+    log_info("Khởi động hệ thống gom mã nguồn ANDROID CLIENT v2.0 (Đã fix chặn thư viện)")
     
     files_to_pack = []
-    
-    # Ưu tiên các file cốt lõi
     priority_files = ["AndroidManifest.xml", "build.gradle", "build.gradle.kts"]
     
     log_debug("Bắt đầu quét sâu dự án Android...")
     for root, dirs, files in os.walk('.'):
+        # Chặn ngay từ vòng gửi xe các thư mục rác
         dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
         
         for file in files:
             file_path = os.path.relpath(os.path.join(root, file), '.')
-            
-            if file == "compress_android_code.py" or file.startswith('.'):
+            if file == "compress_code.py" or file.startswith('.'):
                 continue
                 
             ext = os.path.splitext(file)[1]
@@ -94,7 +95,6 @@ def main():
             with open(output_name, 'w', encoding='utf-8') as out_f:
                 out_f.writelines(current_lines)
             log_success(f"Ghi thành công: {output_name} ({len(current_lines)} dòng)")
-            
             file_index += 1
             current_lines = []
 

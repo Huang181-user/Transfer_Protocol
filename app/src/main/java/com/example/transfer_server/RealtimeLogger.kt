@@ -65,6 +65,14 @@ object RealtimeLogger {
         appendToAppUI(formattedMessage)
     }
 
+    fun w(tag: String, message: String) {
+        val safeMessage = maskSensitiveData(message)
+        val formattedMessage = "[${getTimestamp()}] [WARN] [$tag] $safeMessage"
+        Log.w(DEFAULT_TAG, formattedMessage)
+        println(formattedMessage)
+        appendToAppUI(formattedMessage)
+    }
+
     fun e(tag: String, message: String, throwable: Throwable? = null) {
         val safeMessage = maskSensitiveData(message)
         val formattedMessage = "[${getTimestamp()}] [ERROR] [$tag] $safeMessage"

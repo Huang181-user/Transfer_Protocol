@@ -20,7 +20,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import quicclient.Quicclient
 import com.example.transfer_server.ui.theme.Transfer_serverTheme
 import com.example.app.network.RealtimeLogger
 
@@ -28,25 +27,18 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppSecrets.init(this)
-
         NetworkConfig.LOCAL_IP = AppSecrets.LOCAL_IP
         NetworkConfig.TS_IP = AppSecrets.TS_IP
         NetworkConfig.AUTH_PORT = AppSecrets.AUTH_PORT
         NetworkConfig.SNI_DOMAIN = AppSecrets.SNI_DOMAIN
         NetworkConfig.MASTER_SYM_KEY = AppSecrets.MASTER_SYM_KEY
-
         val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
         NetworkConfig.HW_ID = androidId ?: "UNKNOWN_ANDROID_DEVICE"
-
         val prefs = getSharedPreferences("HuangQuicPrefs", Context.MODE_PRIVATE)
         NetworkConfig.QUIC_USER = prefs.getString("user", "") ?: ""
         NetworkConfig.QUIC_PASS = prefs.getString("pass", "") ?: ""
 
-        setContent {
-            Transfer_serverTheme {
-                Surface(modifier = Modifier.fillMaxSize()) { QuicSuperScreen() }
-            }
-        }
+        setContent { Transfer_serverTheme { Surface(modifier = Modifier.fillMaxSize()) { QuicSuperScreen() } } }
     }
 }
 
@@ -54,16 +46,13 @@ class MainActivity : ComponentActivity() {
 fun QuicSuperScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-
-    // 🔥 LẮNG NGHE STATEFLOW TỪ REALTIME LOGGER
     val appLogs by RealtimeLogger.appLogs.collectAsState()
 
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("ZHIAUTH V6.0 CLIENT", style = MaterialTheme.typography.headlineMedium)
+        Text("ZHIAUTH V6.0 CLIENT (PURE C++)", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(10.dp))
-
-        OutlinedTextField(NetworkConfig.LOCAL_IP, { NetworkConfig.LOCAL_IP = it }, label = { Text("IP LAN") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(NetworkConfig.TS_IP, { NetworkConfig.TS_IP = it }, label = { Text("IP Tailscale") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(NetworkConfig.LOCAL_IP, { NetworkConfig.LOCAL_IP = it }, label = { Text("IP LAN Server") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(NetworkConfig.TS_IP, { NetworkConfig.TS_IP = it }, label = { Text("IP Tailscale Server") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(NetworkConfig.QUIC_USER, { NetworkConfig.QUIC_USER = it }, label = { Text("Tài khoản") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(NetworkConfig.QUIC_PASS, { NetworkConfig.QUIC_PASS = it }, label = { Text("Mật khẩu") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
 
@@ -71,83 +60,77 @@ fun QuicSuperScreen() {
             Button(onClick = {
                 val prefs = context.getSharedPreferences("HuangQuicPrefs", Context.MODE_PRIVATE)
                 prefs.edit().putString("user", NetworkConfig.QUIC_USER).putString("pass", NetworkConfig.QUIC_PASS).apply()
-
                 scope.launch {
-                    RealtimeLogger.i("AUTH", "Đang rà soát mạng và gõ cửa UFW Server...")
-                    val result = withContext(Dispatchers.IO) {
-                        Quicclient.initializeQUIC(
-                            NetworkConfig.LOCAL_IP, NetworkConfig.TS_IP,
-                            NetworkConfig.QUIC_USER, NetworkConfig.QUIC_PASS,
-                            NetworkConfig.HW_ID, NetworkConfig.AUTH_PORT,
-                            NetworkConfig.MASTER_SYM_KEY, NetworkConfig.SNI_DOMAIN
-                        )
+                    RealtimeLogger.i("AUTH", "Đang quét định tuyến mạng tối ưu...")
+
+                    var bestIp = ""
+                    withContext(Dispatchers.IO) {
+                        bestIp = NetworkConfig.discoverBestRouteSync()
+                    }
+                    NetworkConfig.SERVER_IP = bestIp
+
+                    if (bestIp == NetworkConfig.LOCAL_IP) {
+                        RealtimeLogger.i("AUTH", "Định tuyến ưu tiên mạng LAN/Wi-Fi: $bestIp")
+                    } else {
+                        RealtimeLogger.w("AUTH", "Đảo tuyến sang mạng riêng ảo Tailscale: $bestIp")
                     }
 
-                    if (result.startsWith("SUCCESS")) {
-                        val parts = result.split("|")
-                        NetworkConfig.QUIC_MTU = parts[1].toInt()
-                        NetworkConfig.SERVER_IP = parts[2]
-                        NetworkConfig.QUIC_PORT = parts[3]
-                        NetworkConfig.KCP_PORT = parts[4]
-                        if (parts.size > 5) KcpNative.remoteRoot = parts[5]
+                    // Dùng if-else bọc lại thay vì xài return@launch để né lỗi Kotlin
+                    if (NetworkConfig.SERVER_IP.isEmpty() || NetworkConfig.SERVER_IP == "NONE") {
+                        RealtimeLogger.e("AUTH", "❌ Không có IP Server nào được cấu hình!")
+                    } else {
+                        RealtimeLogger.i("AUTH", "Đang gõ cửa UFW Server bằng MsQUIC C++...")
+                        val result: String = withContext(Dispatchers.IO) {
+                            val deviceIps = ZhiAuthNative.getDeviceIps().split("|")
+                            val realLan = deviceIps.getOrNull(0) ?: "NONE"
+                            val realTs = deviceIps.getOrNull(1) ?: "NONE"
+                            RealtimeLogger.d("AUTH", "IP thật của điện thoại -> LAN: $realLan | TS: $realTs")
 
-                        if (parts.size >= 12) {
-                            NetworkConfig.KCP_NODELAY = parts[6].toIntOrNull() ?: 1
-                            NetworkConfig.KCP_INTERVAL = parts[7].toIntOrNull() ?: 10
-                            NetworkConfig.KCP_RESEND = parts[8].toIntOrNull() ?: 2
-                            NetworkConfig.KCP_NC = parts[9].toIntOrNull() ?: 1
-                            NetworkConfig.KCP_SND_WND = parts[10].toIntOrNull() ?: 4096
-                            NetworkConfig.KCP_RCV_WND = parts[11].toIntOrNull() ?: 4096
+                            ZhiAuthNative.shutdownQuic()
+                            ZhiAuthNative.initMsQuic(NetworkConfig.SERVER_IP, NetworkConfig.AUTH_PORT.toInt(), NetworkConfig.QUIC_PORT.toInt())
+
+                            val authPayload = "AUTH_REQ|USER:${NetworkConfig.QUIC_USER}|PASS:${NetworkConfig.QUIC_PASS}|LAN:$realLan|TS:$realTs|HWID:${NetworkConfig.HW_ID}"
+                            ZhiAuthNative.authMsQuic(authPayload)
                         }
 
-                        val kcpInit = KcpNative.initKcp(
-                            NetworkConfig.SERVER_IP,
-                            NetworkConfig.KCP_PORT.toInt(),
-                            NetworkConfig.MASTER_SYM_KEY,
-                            NetworkConfig.QUIC_MTU,
-                            NetworkConfig.KCP_NODELAY,
-                            NetworkConfig.KCP_INTERVAL,
-                            NetworkConfig.KCP_RESEND,
-                            NetworkConfig.KCP_NC,
-                            NetworkConfig.KCP_SND_WND,
-                            NetworkConfig.KCP_RCV_WND
-                        )
+                        if (result.startsWith("AUTH_SUCCESS")) {
+                            val parts = result.split("|")
+                            ZhiAuthNative.remoteRoot = parts[1]
 
-                        context.startService(Intent(context, ZhiAuthService::class.java))
+                            var bestMtu = withContext(Dispatchers.IO) { ZhiAuthNative.discoverMtu(NetworkConfig.SERVER_IP) }
 
-                        RealtimeLogger.i("AUTH", "✅ ĐĂNG NHẬP THÀNH CÔNG! Host: ${NetworkConfig.SERVER_IP} | Q-Port: ${NetworkConfig.QUIC_PORT} | K-Port: ${NetworkConfig.KCP_PORT}")
-                    } else {
-                        RealtimeLogger.e("AUTH", "❌ Lỗi đăng nhập: $result")
+                            if (NetworkConfig.SERVER_IP.startsWith("100.")) {
+                                bestMtu = 1200
+                                RealtimeLogger.i("AUTH", "Phát hiện đi qua Tailscale, ép MTU = 1200 chống rớt gói!")
+                            }
+                            NetworkConfig.QUIC_MTU = bestMtu
+
+                            ZhiAuthNative.initKcp(NetworkConfig.SERVER_IP, parts[3].toInt(), NetworkConfig.MASTER_SYM_KEY, bestMtu, parts[4].toInt(), parts[5].toInt(), parts[6].toInt(), parts[7].toInt(), parts[8].toInt(), parts[9].toInt())
+
+                            context.startService(Intent(context, ZhiAuthService::class.java))
+                            RealtimeLogger.i("AUTH", "✅ ĐĂNG NHẬP THÀNH CÔNG! Host: ${NetworkConfig.SERVER_IP} | MTU: $bestMtu")
+                        } else {
+                            RealtimeLogger.e("AUTH", "❌ Lỗi đăng nhập: $result")
+                        }
                     }
                 }
             }) { Text("KẾT NỐI") }
-
             Button(onClick = {
-                val prefs = context.getSharedPreferences("HuangQuicPrefs", Context.MODE_PRIVATE)
-                prefs.edit().clear().apply()
+                context.getSharedPreferences("HuangQuicPrefs", Context.MODE_PRIVATE).edit().clear().apply()
                 NetworkConfig.QUIC_USER = ""; NetworkConfig.QUIC_PASS = ""
-
                 scope.launch {
                     withContext(Dispatchers.IO) {
-                        Quicclient.logout()
-                        KcpNative.shutdownKcp()
+                        ZhiAuthNative.shutdownQuic()
+                        ZhiAuthNative.shutdownKcp()
                     }
                     context.stopService(Intent(context, ZhiAuthService::class.java))
                     RealtimeLogger.i("AUTH", "👋 Đã đăng xuất! Tiến trình ngầm đã bị triệt tiêu.")
                 }
             }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text("ĐĂNG XUẤT") }
         }
-
         Spacer(Modifier.height(16.dp))
-
-        // 🔥 GIAO DIỆN HIỂN THỊ LOGCAT NGAY TRÊN APP ĐỂ KHỎI PHẢI CẮM MÁY TÍNH
         Card(Modifier.fillMaxWidth().weight(1f), colors = CardDefaults.cardColors(containerColor = Color.DarkGray)) {
-            Text(
-                text = appLogs,
-                modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
-                color = Color.Cyan,
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text(text = appLogs, modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState()), color = Color.Cyan, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
