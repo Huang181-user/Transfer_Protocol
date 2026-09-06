@@ -10,7 +10,8 @@ Log-Realtime "[START] BAT DAU BIEN DICH PURE C++ CLIENT (FUSE API)..." "Yellow"
 $buildDir = "build"
 if (-not (Test-Path $buildDir)) { New-Item -ItemType Directory -Path $buildDir | Out-Null }
 
-$rawIncDirs = @("src", "src\bridge", "src\rpc_client", "src\system", "src\vfs", "src\rpc_quic", "src\common", "src\nlohmann")
+# 🔥 Cập nhật mảng Include chuẩn hóa
+$rawIncDirs = @("include", "src")
 $gppIncArgs = @()
 foreach ($d in ($rawIncDirs | Select-Object -Unique)) { $gppIncArgs += "-I`"$d`"" }
 
@@ -51,7 +52,6 @@ if ($foundLib) {
     exit 1
 }
 
-# T? d?ng tr? v o thu m?c build d? t m thu vi?n
 $libs = @("-L$buildDir", "-Llib", "-lws2_32", "-liphlpapi", "-lcredui", $fuseLibArg, "-lsodium", "-lmsquic", "-lwinmm")
 $cppFiles = @(
     "src\client_main.cpp",
@@ -68,7 +68,6 @@ $cppFiles = @(
 
 Log-Realtime "[COMPILE] Dang bien dich bang g++ (co ep xung luong)..." "Magenta"
 
-# B? sung c c Define Flags tuong duong v?i CMake v o d y
 $argsList = $gppIncArgs + $cppFiles + @(
     "-std=c++17", 
     "-O3", "-static", "-static-libgcc", "-static-libstdc++", 
@@ -85,7 +84,6 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# THÊM DÒNG NÀY: Tự động bơm msquic.dll vào ổ build để chạy
 Copy-Item "lib\msquic.dll" -Destination "$buildDir\" -Force
 
 $elapsed = $startTime.Elapsed.TotalSeconds.ToString("F2")

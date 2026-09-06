@@ -1,7 +1,7 @@
-#include "client_bridge.h"
-#include "../rpc_client/ikcp.h"
-#include "../rpc_client/crypto_box.h"
-#include "../rpc_client/vfs_packet.h"
+#include "bridge/client_bridge.h"
+#include "rpc_client/ikcp.h"
+#include "rpc_client/crypto_box.h"
+#include "rpc_client/vfs_packet.h"
 #include <winsock2.h>
 #include <windows.h>
 #include <stdio.h>

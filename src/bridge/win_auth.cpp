@@ -1,4 +1,4 @@
-#include "win_auth.h"
+#include "bridge/win_auth.h"
 #include <windows.h>
 #include <wincred.h>
 #include <string>

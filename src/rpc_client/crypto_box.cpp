@@ -1,5 +1,5 @@
-﻿#include "crypto_box.h"
-#include "logger.h"
+﻿#include "rpc_client/crypto_box.h"
+#include "common/logger.h"
 #include <sodium.h>
 bool CryptoBox::initialize() {
     if (sodium_init() < 0) {
