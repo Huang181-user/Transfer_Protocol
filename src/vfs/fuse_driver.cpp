@@ -331,18 +331,26 @@ int FuseDriver::start_fuse(const std::string& mountpoint, const std::string& rem
     vfs_oper.readdir = vfs_readdir;
     vfs_oper.create = vfs_create;
     vfs_oper.statfs = vfs_statfs;
-    vfs_oper.chmod = vfs_chmod;      // 🔥 Phá bẫy Read-Only
-    vfs_oper.chown = vfs_chown;      // 🔥 Phá bẫy Read-Only
-    vfs_oper.utimens = vfs_utimens;  // 🔥 Phá bẫy Read-Only
-    vfs_oper.fsync = vfs_fsync;      // 🔥 Phá bẫy Cấm Lưu Đè (Save)
+    vfs_oper.chmod = vfs_chmod;      
+    vfs_oper.chown = vfs_chown;      
+    vfs_oper.utimens = vfs_utimens;  
+    vfs_oper.fsync = vfs_fsync;      
 
-    // 🔥 VÁ TỬ HUYỆT WINDOWS: Ép max_read và max_write xuống 64KB (65536).
+    // 🔥 CÚ LỪA KHOÁ MÕM WINDOWS CACHE MANAGER
+    // Đóng giả làm ổ đĩa mạng UNC path: \\zhiauth\kcp hoặc \\zhiauth\quic
+    std::string unc_path = use_kcp ? "/zhiauth/kcp" : "/zhiauth/quic";
+    
+    // Tắt FileInfoTimeout (=0) để ép Windows hỏi lại Server liên tục, tránh ngáo file khi dùng qua mạng
+    // Thêm direct_io và writethrough để Bypass hoàn toàn bộ đệm cục bộ của Windows
+    std::string fuse_opts = "direct_io,writethrough,max_read=65536,max_write=65536,ThreadCount=64,FileInfoTimeout=0,uid=-1,gid=-1,umask=000,VolumePrefix=" + unc_path;
+
     char* argv[] = { 
         (char*)"zhiauth_fuse", 
         (char*)"-f", 
-        (char*)"-o", (char*)"max_read=65536,max_write=65536,ThreadCount=16,FileInfoTimeout=-1,uid=-1,gid=-1,umask=000", 
+        (char*)"-o", (char*)fuse_opts.c_str(), 
         (char*)mountpoint.c_str() 
     };
-    ZHI_LOG_INFO("[FUSE-DRIVER] Kich hoat O dia ao C++ tai o dia: " + mountpoint + " (MS Office Unlock & RAM-Cache Enabled)");
+    
+    ZHI_LOG_INFO("[FUSE-DRIVER] Kich hoat O dia ao C++ tai o dia: " + mountpoint + " (Network Drive: " + unc_path + ")");
     return fuse_main(5, argv, &vfs_oper, (void*)use_kcp);
 }
