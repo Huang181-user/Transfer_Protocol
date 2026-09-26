@@ -1,0 +1,49 @@
+name: Build ZhiAuth iOS App
+
+on:
+  push:
+    branches: [ "Client_iOS" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-14
+
+    steps:
+      - name: Lấy source code về
+        uses: actions/checkout@v4
+
+      - name: Kiểm tra cấu trúc (Debug)
+        run: |
+          echo "==== CẤU TRÚC THƯ MỤC LÚC BUILD ===="
+          ls -la
+          tree . -L 2
+
+      - name: Biên dịch Xcode Project (Realtime Log)
+        run: |
+          set -o pipefail
+          xcodebuild clean build \
+            -project ZhiAuth.xcodeproj \
+            -scheme ZhiAuthApp \
+            -sdk iphoneos \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            -verbose
+
+      - name: Đóng gói thành file .ipa
+        run: |
+          echo "==== ĐANG ĐÓNG GÓI THÀNH IPA ===="
+          mkdir -p Payload
+          # Tìm file .app ném vào Payload (nếu tên app là ZhiAuth.app thì tự sửa dòng dưới nha)
+          mv build/Release-iphoneos/ZhiAuthApp.app Payload/
+          zip -r ZhiAuthApp.ipa Payload
+
+      - name: Xuất file IPA cho Ný tải
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZhiAuthApp-iOS
+          path: ZhiAuthApp.ipa
+          retention-days: 7
