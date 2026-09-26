@@ -16,10 +16,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Ép dùng Xcode 16.0 (Trị dứt điểm Format 77)
+      - name: Ép dùng Xcode 16.2.0 (Theo danh sách có sẵn của GitHub)
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.0'
+          xcode-version: '16.2.0'
 
       - name: Kiểm tra cấu trúc (Debug)
         run: |
