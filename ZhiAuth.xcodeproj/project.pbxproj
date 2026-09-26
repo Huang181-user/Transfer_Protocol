@@ -1,0 +1,543 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		26F58BF76DF305A912F7BFD3 /* ZhiFileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51E200793B80C2E9C3729032 /* ZhiFileProviderExtension.swift */; };
+		276017D4F1DB9C157501024F /* ikcp.c in Sources */ = {isa = PBXBuildFile; fileRef = 2F68961E5AF8DA86CA787362 /* ikcp.c */; };
+		4852CC6359F8BCF577F401A1 /* ZhiNetworkAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 551511312B4C077E3C0E7C27 /* ZhiNetworkAuth.swift */; };
+		5705F402581950F9D6B4EF33 /* ZhiKcpEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F4272D8CDAD3B3CC9AE6543 /* ZhiKcpEngine.swift */; };
+		841A87C85A732BB6C129C1B8 /* Sodium in Frameworks */ = {isa = PBXBuildFile; productRef = 20EBBB156676D840875CCC6C /* Sodium */; };
+		87E895D60AAFD7AF68FB2A4F /* ZhiLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD5F5657E7EA2CB698F7E9FE /* ZhiLogger.swift */; };
+		97252721957CD9AB9129D97A /* vfs_client.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 675F432D8E746343C6E0B308 /* vfs_client.cpp */; };
+		B97BCE44C9CE60DAD70953D9 /* ZhiQuicTunnel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF7CCEBD1DB4A789CF26FCA /* ZhiQuicTunnel.swift */; };
+		D83D906B0ADDADB34942A721 /* crypto_box.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C28A8B622AC4E385396E59C7 /* crypto_box.cpp */; };
+		DE556D4CAA999C1B310F50D1 /* ZhiAuthFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8D24AC31853C66A180AF1206 /* ZhiAuthFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E5D3010A63723ED879187B9C /* ZhiAuthApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDD75CD8F2265E29878A2029 /* ZhiAuthApp.swift */; };
+		EB3B4B4EE19988EB5818115B /* client_bridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B8509CDBCFAFEE452BC6F268 /* client_bridge.cpp */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		585AAA7B794676A7219B27D4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 364B95D3B8F96C05DDD0C216 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 54E025B706AEFB46A335EF14;
+			remoteInfo = ZhiAuthFileProvider;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		E0F4B94149F1922A95ACBEAB /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				DE556D4CAA999C1B310F50D1 /* ZhiAuthFileProvider.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		1130B32A14EA8E10D92D77C0 /* ZhiAuthApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ZhiAuthApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2F4272D8CDAD3B3CC9AE6543 /* ZhiKcpEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZhiKcpEngine.swift; sourceTree = "<group>"; };
+		2F68961E5AF8DA86CA787362 /* ikcp.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = ikcp.c; sourceTree = "<group>"; };
+		3AB3D91224F8A7FC7D86B811 /* ZhiAuth-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "ZhiAuth-Bridging-Header.h"; sourceTree = "<group>"; };
+		3BBBA4F67216BCCB04B2FA1A /* ikcp.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ikcp.h; sourceTree = "<group>"; };
+		46CCB068FC6A5F931E63A00F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		51E200793B80C2E9C3729032 /* ZhiFileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZhiFileProviderExtension.swift; sourceTree = "<group>"; };
+		551511312B4C077E3C0E7C27 /* ZhiNetworkAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZhiNetworkAuth.swift; sourceTree = "<group>"; };
+		675F432D8E746343C6E0B308 /* vfs_client.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = vfs_client.cpp; sourceTree = "<group>"; };
+		6F3DC70DC51F3908453FB826 /* client_bridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = client_bridge.h; sourceTree = "<group>"; };
+		8C77D4E34CB0EB9405BDF0DC /* vfs_packet.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = vfs_packet.h; sourceTree = "<group>"; };
+		8D24AC31853C66A180AF1206 /* ZhiAuthFileProvider.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ZhiAuthFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		9BE51BA47200AE19C8C868D9 /* vfs_client.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = vfs_client.h; sourceTree = "<group>"; };
+		B632BCA28EDFF58295BCEC00 /* crypto_box.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = crypto_box.h; sourceTree = "<group>"; };
+		B8509CDBCFAFEE452BC6F268 /* client_bridge.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = client_bridge.cpp; sourceTree = "<group>"; };
+		BDD75CD8F2265E29878A2029 /* ZhiAuthApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZhiAuthApp.swift; sourceTree = "<group>"; };
+		C28A8B622AC4E385396E59C7 /* crypto_box.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = crypto_box.cpp; sourceTree = "<group>"; };
+		CC455B7A7C1BAF64135B88A0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		FBF7CCEBD1DB4A789CF26FCA /* ZhiQuicTunnel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZhiQuicTunnel.swift; sourceTree = "<group>"; };
+		FD5F5657E7EA2CB698F7E9FE /* ZhiLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZhiLogger.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B77D3EE2AB858C0DB947705D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				841A87C85A732BB6C129C1B8 /* Sodium in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		22515D8E2496B4285C80D13A /* ZhiAuthApp */ = {
+			isa = PBXGroup;
+			children = (
+				46CCB068FC6A5F931E63A00F /* Info.plist */,
+				BDD75CD8F2265E29878A2029 /* ZhiAuthApp.swift */,
+			);
+			path = ZhiAuthApp;
+			sourceTree = "<group>";
+		};
+		2DFC5DC8B042C4E8BE90A637 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1130B32A14EA8E10D92D77C0 /* ZhiAuthApp.app */,
+				8D24AC31853C66A180AF1206 /* ZhiAuthFileProvider.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		3C62CFF40C9885CC6415CC1D /* ZhiAuth */ = {
+			isa = PBXGroup;
+			children = (
+				CC455B7A7C1BAF64135B88A0 /* Info.plist */,
+				51E200793B80C2E9C3729032 /* ZhiFileProviderExtension.swift */,
+				2F4272D8CDAD3B3CC9AE6543 /* ZhiKcpEngine.swift */,
+				FD5F5657E7EA2CB698F7E9FE /* ZhiLogger.swift */,
+				551511312B4C077E3C0E7C27 /* ZhiNetworkAuth.swift */,
+				FBF7CCEBD1DB4A789CF26FCA /* ZhiQuicTunnel.swift */,
+				DBBB70532853819CE81EA89E /* Bridge */,
+			);
+			path = ZhiAuth;
+			sourceTree = "<group>";
+		};
+		444A2562A1A421EB7A30A3ED /* bridge */ = {
+			isa = PBXGroup;
+			children = (
+				B8509CDBCFAFEE452BC6F268 /* client_bridge.cpp */,
+				6F3DC70DC51F3908453FB826 /* client_bridge.h */,
+			);
+			path = bridge;
+			sourceTree = "<group>";
+		};
+		7D891C0A5FF355456CE880C9 = {
+			isa = PBXGroup;
+			children = (
+				FF53770E1086B85508ADAD13 /* src */,
+				3C62CFF40C9885CC6415CC1D /* ZhiAuth */,
+				22515D8E2496B4285C80D13A /* ZhiAuthApp */,
+				2DFC5DC8B042C4E8BE90A637 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A91E2FDC21A0EC08B2993B30 /* rpc_client */ = {
+			isa = PBXGroup;
+			children = (
+				C28A8B622AC4E385396E59C7 /* crypto_box.cpp */,
+				B632BCA28EDFF58295BCEC00 /* crypto_box.h */,
+				2F68961E5AF8DA86CA787362 /* ikcp.c */,
+				3BBBA4F67216BCCB04B2FA1A /* ikcp.h */,
+				675F432D8E746343C6E0B308 /* vfs_client.cpp */,
+				9BE51BA47200AE19C8C868D9 /* vfs_client.h */,
+				8C77D4E34CB0EB9405BDF0DC /* vfs_packet.h */,
+			);
+			path = rpc_client;
+			sourceTree = "<group>";
+		};
+		DBBB70532853819CE81EA89E /* Bridge */ = {
+			isa = PBXGroup;
+			children = (
+				3AB3D91224F8A7FC7D86B811 /* ZhiAuth-Bridging-Header.h */,
+			);
+			path = Bridge;
+			sourceTree = "<group>";
+		};
+		FF53770E1086B85508ADAD13 /* src */ = {
+			isa = PBXGroup;
+			children = (
+				444A2562A1A421EB7A30A3ED /* bridge */,
+				A91E2FDC21A0EC08B2993B30 /* rpc_client */,
+			);
+			path = src;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		54E025B706AEFB46A335EF14 /* ZhiAuthFileProvider */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F4C62AD8362F5C783D0F148B /* Build configuration list for PBXNativeTarget "ZhiAuthFileProvider" */;
+			buildPhases = (
+				2920AADFA9591BDA5C7C75E0 /* Sources */,
+				B77D3EE2AB858C0DB947705D /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ZhiAuthFileProvider;
+			packageProductDependencies = (
+				20EBBB156676D840875CCC6C /* Sodium */,
+			);
+			productName = ZhiAuthFileProvider;
+			productReference = 8D24AC31853C66A180AF1206 /* ZhiAuthFileProvider.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		A1BFBF67749EEE8DBF2E5445 /* ZhiAuthApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C32A96666E1A9E23D88FD79E /* Build configuration list for PBXNativeTarget "ZhiAuthApp" */;
+			buildPhases = (
+				EE8F89BA28C253282AD1B501 /* Sources */,
+				E0F4B94149F1922A95ACBEAB /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				BE11F2287BBB2A228ADD4523 /* PBXTargetDependency */,
+			);
+			name = ZhiAuthApp;
+			packageProductDependencies = (
+			);
+			productName = ZhiAuthApp;
+			productReference = 1130B32A14EA8E10D92D77C0 /* ZhiAuthApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		364B95D3B8F96C05DDD0C216 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					A1BFBF67749EEE8DBF2E5445 = {
+						CreatedOnToolsVersion = 15.0;
+						ProvisioningStyle = Automatic;
+					};
+					54E025B706AEFB46A335EF14 = {
+						CreatedOnToolsVersion = 15.0;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = FDFB50EDF77BCB5C2ADE6299 /* Build configuration list for PBXProject "ZhiAuth" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 7D891C0A5FF355456CE880C9;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				7F646F0C422016FFFA501638 /* XCRemoteSwiftPackageReference "swift-sodium" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2DFC5DC8B042C4E8BE90A637 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A1BFBF67749EEE8DBF2E5445 /* ZhiAuthApp */,
+				54E025B706AEFB46A335EF14 /* ZhiAuthFileProvider */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		2920AADFA9591BDA5C7C75E0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				26F58BF76DF305A912F7BFD3 /* ZhiFileProviderExtension.swift in Sources */,
+				5705F402581950F9D6B4EF33 /* ZhiKcpEngine.swift in Sources */,
+				87E895D60AAFD7AF68FB2A4F /* ZhiLogger.swift in Sources */,
+				4852CC6359F8BCF577F401A1 /* ZhiNetworkAuth.swift in Sources */,
+				B97BCE44C9CE60DAD70953D9 /* ZhiQuicTunnel.swift in Sources */,
+				EB3B4B4EE19988EB5818115B /* client_bridge.cpp in Sources */,
+				D83D906B0ADDADB34942A721 /* crypto_box.cpp in Sources */,
+				276017D4F1DB9C157501024F /* ikcp.c in Sources */,
+				97252721957CD9AB9129D97A /* vfs_client.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EE8F89BA28C253282AD1B501 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E5D3010A63723ED879187B9C /* ZhiAuthApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		BE11F2287BBB2A228ADD4523 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 54E025B706AEFB46A335EF14 /* ZhiAuthFileProvider */;
+			targetProxy = 585AAA7B794676A7219B27D4 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0340AD9C9B1F0F96E4205501 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = ZhiAuthApp/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ruanhuang.ZhiAuthApp;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		0CB11F93FA768AA341042CE9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = "ASIO_STANDALONE=1";
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/src/bridge",
+					"$(SRCROOT)/src/rpc_client",
+					"$(SRCROOT)/src",
+					/opt/homebrew/include,
+					/usr/local/include,
+				);
+				INFOPLIST_FILE = ZhiAuth/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				OTHER_LDFLAGS = "-lc++";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ruanhuang.ZhiAuthApp.ZhiAuthFileProvider;
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		721264450BE5D4AA2A484C28 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = ZhiAuthApp/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ruanhuang.ZhiAuthApp;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		85573317B73559AC1C6E3DF4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		D2998C12D54E4C90C7CD93D5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = "ASIO_STANDALONE=1";
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/src/bridge",
+					"$(SRCROOT)/src/rpc_client",
+					"$(SRCROOT)/src",
+					/opt/homebrew/include,
+					/usr/local/include,
+				);
+				INFOPLIST_FILE = ZhiAuth/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				OTHER_LDFLAGS = "-lc++";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ruanhuang.ZhiAuthApp.ZhiAuthFileProvider;
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E332301CE8DD48E770F6E754 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		C32A96666E1A9E23D88FD79E /* Build configuration list for PBXNativeTarget "ZhiAuthApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				721264450BE5D4AA2A484C28 /* Debug */,
+				0340AD9C9B1F0F96E4205501 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F4C62AD8362F5C783D0F148B /* Build configuration list for PBXNativeTarget "ZhiAuthFileProvider" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0CB11F93FA768AA341042CE9 /* Debug */,
+				D2998C12D54E4C90C7CD93D5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FDFB50EDF77BCB5C2ADE6299 /* Build configuration list for PBXProject "ZhiAuth" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				85573317B73559AC1C6E3DF4 /* Debug */,
+				E332301CE8DD48E770F6E754 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7F646F0C422016FFFA501638 /* XCRemoteSwiftPackageReference "swift-sodium" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jedisct1/swift-sodium.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.11.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		20EBBB156676D840875CCC6C /* Sodium */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7F646F0C422016FFFA501638 /* XCRemoteSwiftPackageReference "swift-sodium" */;
+			productName = Sodium;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 364B95D3B8F96C05DDD0C216 /* Project object */;
+}

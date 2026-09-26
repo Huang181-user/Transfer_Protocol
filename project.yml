@@ -1,0 +1,44 @@
+name: ZhiAuth
+options:
+  bundleIdPrefix: com.ruanhuang
+
+packages:
+  Sodium:
+    url: https://github.com/jedisct1/swift-sodium.git
+    from: 0.11.0
+
+targets:
+  ZhiAuthApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - ZhiAuthApp
+    infoPlist: ZhiAuthApp/Info.plist
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.ruanhuang.ZhiAuthApp
+    dependencies:
+      - target: ZhiAuthFileProvider
+      
+  ZhiAuthFileProvider:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - ZhiAuth
+      - src
+    infoPlist: ZhiAuth/Info.plist
+    dependencies:
+      - package: Sodium
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.ruanhuang.ZhiAuthApp.ZhiAuthFileProvider
+      SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h
+      HEADER_SEARCH_PATHS: 
+        - $(SRCROOT)/src/bridge
+        - $(SRCROOT)/src/rpc_client
+        - $(SRCROOT)/src
+        - /opt/homebrew/include
+        - /usr/local/include
+      CLANG_ENABLE_MODULES: "YES"
+      OTHER_LDFLAGS: "-lc++"
+      GCC_PREPROCESSOR_DEFINITIONS: "ASIO_STANDALONE=1"
