@@ -21,10 +21,12 @@ jobs:
         with:
           xcode-version: '16.2.0'
 
+      - name: Nạp thư viện C++ (Fix lỗi thiếu asio.hpp)
+        run: brew install asio
+
       - name: Biên dịch Xcode Project (Realtime Log)
         run: |
           set -o pipefail
-          # Thêm SYMROOT=$(PWD)/build để ép nó xuất file ra đúng thư mục hiện tại
           xcodebuild clean build \
             -project ZhiAuth.xcodeproj \
             -scheme ZhiAuthApp \
@@ -40,7 +42,6 @@ jobs:
         run: |
           echo "==== ĐANG ĐÓNG GÓI THÀNH IPA ===="
           mkdir -p Payload
-          # Dùng *.app để tóm cổ file bất kể ný đặt tên scheme là gì
           mv build/Release-iphoneos/*.app Payload/
           zip -r ZhiAuthApp.ipa Payload
 
