@@ -14,13 +14,17 @@ jobs:
       - name: Lấy source code về
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fix triệt để lỗi git exit code 128
+          fetch-depth: 0
+
+      - name: Ép dùng Xcode mới nhất (Fix lỗi format 77)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
       - name: Kiểm tra cấu trúc (Debug)
         run: |
           echo "==== CẤU TRÚC THƯ MỤC LÚC BUILD ===="
           ls -la
-          # Dùng find thay cho tree để né lỗi 127
           find . -maxdepth 2
 
       - name: Biên dịch Xcode Project (Realtime Log)
@@ -40,7 +44,6 @@ jobs:
         run: |
           echo "==== ĐANG ĐÓNG GÓI THÀNH IPA ===="
           mkdir -p Payload
-          # Chỗ này nếu chạy xong vẫn lỗi thiếu file .app thì ný hú tui check lại tên scheme nha
           mv build/Release-iphoneos/ZhiAuthApp.app Payload/
           zip -r ZhiAuthApp.ipa Payload
 
