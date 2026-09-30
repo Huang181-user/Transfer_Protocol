@@ -13,9 +13,9 @@ struct ZhiAuthApp: App {
         
         NSFileProviderManager.add(domain) { error in
             if let error = error {
-                print("❌ Lỗi đăng ký ổ đĩa: \(error.localizedDescription)")
+                NSLog("%@", "❌ Lỗi đăng ký ổ đĩa: \(error.localizedDescription)")
             } else {
-                print("✅ Đã chèn ổ đĩa ảo ZhiAuth vào app Tệp thành công!")
+                NSLog("%@", "✅ Đã chèn ổ đĩa ảo ZhiAuth vào app Tệp thành công!")
             }
         }
     }

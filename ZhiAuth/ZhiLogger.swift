@@ -22,7 +22,7 @@ class ZhiLogger {
         
         let timestamp = dateFormatter.string(from: Date())
         let fileName = (file as NSString).lastPathComponent
-        print("[\(timestamp)] [\(level.rawValue)] [\(fileName):\(line)::\(function)] -> \(message)")
+        NSLog("%@", "[\(timestamp)] [\(level.rawValue)] [\(fileName):\(line)::\(function)] -> \(message)")
     }
     
     static func debug(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
