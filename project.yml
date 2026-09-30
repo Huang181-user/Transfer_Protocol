@@ -15,6 +15,7 @@ targets:
     sources:
       - ZhiAuthApp
     infoPlist: ZhiAuthApp/Info.plist
+    entitlements: ZhiAuth.entitlements
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.ruanhuang.ZhiAuthApp
     dependencies:
@@ -29,6 +30,7 @@ targets:
       - ZhiAuth
       - src
     infoPlist: ZhiAuth/Info.plist
+    entitlements: ZhiAuth.entitlements
     dependencies:
       - package: Sodium
     settings:

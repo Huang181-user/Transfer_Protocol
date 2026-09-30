@@ -20,6 +20,9 @@
 		<string>com.apple.fileprovider-nonui</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).ZhiFileProviderExtension</string>
+
+                <key>NSExtensionFileProviderDocumentGroup</key>
+                <string>group.com.ruanhuang.ZhiAuth</string>
 	</dict>
 </dict>
 </plist>
