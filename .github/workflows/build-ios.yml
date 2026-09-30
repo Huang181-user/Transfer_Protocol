@@ -42,11 +42,12 @@ jobs:
 
       - name: Đóng gói thành file .ipa
         run: |
-          echo "==== ĐANG ĐÓNG GÓI THÀNH IPA ===="
+          echo "==== ĐANG ĐÓNG GÓI THÀNH IPA CHUẨN APPLE ===="
           mkdir -p Payload
           # Copy toàn bộ app (đã nhúng C++) vào Payload
           cp -R build/Release-iphoneos/ZhiAuthApp.app Payload/
-          zip -qr ZhiAuthApp.ipa Payload
+          # Dùng lệnh ditto của Apple để nén chuẩn xác, lọc sạch rác hệ điều hành
+          ditto -c -k --sequesterRsrc --keepParent Payload ZhiAuthApp.ipa
           echo "✅ Đóng gói hoàn tất!"
 
       - name: Xuất file IPA cho Ný tải
