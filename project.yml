@@ -19,6 +19,7 @@ targets:
       PRODUCT_BUNDLE_IDENTIFIER: com.ruanhuang.ZhiAuthApp
     dependencies:
       - target: ZhiAuthFileProvider
+        embed: true
       
   ZhiAuthFileProvider:
     type: app-extension

@@ -16,15 +16,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Cài đặt XcodeGen & ASIO
+        run: |
+          brew install xcodegen asio
+          xcodegen generate # Ép dịch lại project.yml thành file .xcodeproj mới nhất!
+
       - name: Ép dùng Xcode 16.2.0
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '16.2.0'
 
-      - name: Nạp thư viện C++ (Fix lỗi thiếu asio.hpp)
-        run: brew install asio
-
-      - name: Biên dịch Xcode Project (Realtime Log)
+      - name: Biên dịch Xcode Project
         run: |
           set -o pipefail
           xcodebuild clean build \
@@ -42,8 +44,10 @@ jobs:
         run: |
           echo "==== ĐANG ĐÓNG GÓI THÀNH IPA ===="
           mkdir -p Payload
-          mv build/Release-iphoneos/*.app Payload/
-          zip -r ZhiAuthApp.ipa Payload
+          # Copy toàn bộ app (đã nhúng C++) vào Payload
+          cp -R build/Release-iphoneos/ZhiAuthApp.app Payload/
+          zip -qr ZhiAuthApp.ipa Payload
+          echo "✅ Đóng gói hoàn tất!"
 
       - name: Xuất file IPA cho Ný tải
         uses: actions/upload-artifact@v4

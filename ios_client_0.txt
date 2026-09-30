@@ -2,6 +2,23 @@
 📂 PROJECT TREE STRUCTURE OUTPUT (ZHIAUTH iOS CLIENT)
 ==================================================
 .
+├── compress_code.py
+├── connect_xcode_usbmux.sh
+├── project.yml
+├── quic-go-custom
+├── src
+│   ├── bridge
+│   │   ├── client_bridge.cpp
+│   │   └── client_bridge.h
+│   ├── common
+│   └── rpc_client
+│       ├── crypto_box.cpp
+│       ├── crypto_box.h
+│       ├── ikcp.c
+│       ├── ikcp.h
+│       ├── vfs_client.cpp
+│       ├── vfs_client.h
+│       └── vfs_packet.h
 ├── ZhiAuth
 │   ├── Bridge
 │   │   └── ZhiAuth-Bridging-Header.h
@@ -11,44 +28,28 @@
 │   ├── ZhiLogger.swift
 │   ├── ZhiNetworkAuth.swift
 │   └── ZhiQuicTunnel.swift
-├── ZhiAuth.xcodeproj
-│   ├── project.pbxproj
-│   ├── project.xcworkspace
-│   │   ├── contents.xcworkspacedata
-│   │   ├── xcshareddata
-│   │   │   ├── IDEWorkspaceChecks.plist
-│   │   │   └── swiftpm
-│   │   │       ├── Package.resolved
-│   │   │       └── configuration
-│   │   └── xcuserdata
-│   │       └── ruanhuang.xcuserdatad
-│   │           └── UserInterfaceState.xcuserstate
-│   ├── xcshareddata
-│   └── xcuserdata
-│       └── ruanhuang.xcuserdatad
-│           └── xcschemes
-│               └── xcschememanagement.plist
 ├── ZhiAuthApp
 │   ├── Info.plist
 │   └── ZhiAuthApp.swift
-├── compress_code.py
-├── connect_xcode_usbmux.sh
-├── project.yml
-└── src
-    ├── bridge
-    │   ├── client_bridge.cpp
-    │   └── client_bridge.h
-    ├── common
-    └── rpc_client
-        ├── crypto_box.cpp
-        ├── crypto_box.h
-        ├── ikcp.c
-        ├── ikcp.h
-        ├── vfs_client.cpp
-        ├── vfs_client.h
-        └── vfs_packet.h
+└── ZhiAuth.xcodeproj
+    ├── project.pbxproj
+    ├── project.xcworkspace
+    │   ├── contents.xcworkspacedata
+    │   ├── xcshareddata
+    │   │   ├── IDEWorkspaceChecks.plist
+    │   │   └── swiftpm
+    │   │       ├── configuration
+    │   │       └── Package.resolved
+    │   └── xcuserdata
+    │       └── ruanhuang.xcuserdatad
+    │           └── UserInterfaceState.xcuserstate
+    ├── xcshareddata
+    └── xcuserdata
+        └── ruanhuang.xcuserdatad
+            └── xcschemes
+                └── xcschememanagement.plist
 
-19 directories, 27 files
+20 directories, 27 files
 
 
 --- START FILE PATH: project.yml ---
@@ -98,27 +99,6 @@ targets:
       GCC_PREPROCESSOR_DEFINITIONS: "ASIO_STANDALONE=1"
 --- END OF FILE: project.yml ---
 
---- START FILE PATH: ZhiAuthApp/ZhiAuthApp.swift ---
-import SwiftUI
-
-@main
-struct ZhiAuthApp: App {
-    var body: some Scene {
-        WindowGroup {
-            VStack(spacing: 20) {
-                Text("💀 ZhiAuth v6.0")
-                    .font(.largeTitle).bold()
-                Text("KCP Dual-Tunnel is running...")
-                    .foregroundColor(.gray)
-                Text("Hãy mở ứng dụng 'Tệp' (Files) trên iPhone để xem ổ đĩa ảo!")
-                    .multilineTextAlignment(.center)
-                    .padding()
-            }
-        }
-    }
-}
---- END OF FILE: ZhiAuthApp/ZhiAuthApp.swift ---
-
 --- START FILE PATH: ZhiAuthApp/Info.plist ---
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -144,824 +124,638 @@ struct ZhiAuthApp: App {
 </plist>
 --- END OF FILE: ZhiAuthApp/Info.plist ---
 
---- START FILE PATH: ZhiAuth/ZhiKcpEngine.swift ---
-import Foundation
+--- START FILE PATH: ZhiAuthApp/ZhiAuthApp.swift ---
+import SwiftUI
 
-struct KcpTuningParams {
-    var noDelay: Int32 = 1
-    var interval: Int32 = 10
-    var resend: Int32 = 2
-    var nc: Int32 = 0
-    var sndWnd: Int32 = 512
-    var rcvWnd: Int32 = 512
-    var isDynamic: Bool = false
-}
-
-enum VfsOpcode: UInt8 {
-    case OP_PING     = 0x00
-    case OP_STAT     = 0x01
-    case OP_LIST     = 0x02
-    case OP_READ     = 0x03
-    case OP_WRITE    = 0x04
-    case OP_MKDIR    = 0x05
-    case OP_DELETE   = 0x06
-    case OP_RENAME   = 0x07
-    case OP_TRUNCATE = 0x08
-    case OP_ERROR    = 0xFF
-}
-
-private var pendingRequests: [UInt32: (Data) -> Void] = [:]
-private let requestLock = NSLock()
-private var globalReqId: UInt32 = 0
-private let appClientID: UInt32 = UInt32((Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 1) * 1_000_000_000).rounded())
-
-@_cdecl("zhiauth_cgo_on_response")
-public func zhiauth_cgo_on_response(reqId: UInt64, data: UnsafePointer<UInt8>?, length: Int) {
-    guard let dataPtr = data, length > 0 else {
-        ZhiLogger.error("C++ Core returned EMPTY payload for Request ID: \(reqId)!")
-        return
-    }
-    
-    let goReqId = UInt32(truncatingIfNeeded: reqId)
-    let responseData = Data(bytes: dataPtr, count: length)
-    
-    requestLock.lock()
-    let completion = pendingRequests[goReqId]
-    pendingRequests.removeValue(forKey: goReqId)
-    requestLock.unlock()
-    
-    if let completion = completion {
-        completion(responseData)
-    } else {
-        ZhiLogger.warning("Phantom callback! Request ID \(goReqId) not found in pending queue.")
-    }
-}
-
-class ZhiKcpEngine {
-    static func initCore(ip: String, port: Int32, symKey: String, mtu: Int32, tuning: KcpTuningParams) -> Bool {
-        ZhiLogger.info("Igniting C++ KCP Engine... Target: \(ip):\(port)")
-        
-        let result = ip.withCString { ipPtr in
-            symKey.withCString { keyPtr in
-                zhiauth_client_init(
-                    ipPtr, port, keyPtr, mtu,
-                    tuning.noDelay, tuning.interval, tuning.resend, tuning.nc,
-                    tuning.sndWnd, tuning.rcvWnd
-                )
-            }
-        }
-        
-        if result == 0 {
-            ZhiLogger.info("C++ KCP Engine Operational!")
-            return true
-        } else {
-            ZhiLogger.error("C++ KCP Engine Initialization FAILED!")
-            return false
-        }
-    }
-    
-    static func shutdownCore() {
-        ZhiLogger.warning("Halting C++ KCP Engine...")
-        zhiauth_client_shutdown()
-    }
-    
-    static func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
-        return try await withCheckedThrowingContinuation { continuation in
-            var buf = Data()
-            
-            requestLock.lock()
-            globalReqId &+= 1
-            let currentReqId = globalReqId
-            requestLock.unlock()
-            
-            let combinedSessionId: UInt64 = (UInt64(appClientID) << 32) | UInt64(currentReqId)
-            let dataLen: UInt32 = (opcode == .OP_READ) ? reqLen : UInt32(payloadData?.count ?? 0)
-            let pathData = path.data(using: .utf8) ?? Data()
-            let pathLen: UInt16 = UInt16(pathData.count)
-            
-            withUnsafeBytes(of: UInt32(0x5A484941).littleEndian) { buf.append(contentsOf: $0) }
-            buf.append(opcode.rawValue)
-            withUnsafeBytes(of: combinedSessionId.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: offset.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: dataLen.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: pathLen.littleEndian) { buf.append(contentsOf: $0) }
-            
-            buf.append(pathData)
-            if let pData = payloadData {
-                buf.append(pData)
-            }
-            
-            ZhiLogger.debug("Pumping Request [ID: \(currentReqId)] [OP: \(opcode.rawValue)] down to C++ Core... (Payload Size: \(buf.count) bytes)")
-            
-            requestLock.lock()
-            pendingRequests[currentReqId] = { responseBytes in
-                if responseBytes.count < 27 {
-                    continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "VFS Packet Corrupted"]))
-                    return
-                }
-                if responseBytes[4] == VfsOpcode.OP_ERROR.rawValue {
-                    continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -2, userInfo: [NSLocalizedDescriptionKey: "Server VFS Error"]))
-                    return
-                }
-                let actualData = responseBytes.subdata(in: 27..<responseBytes.count)
-                continuation.resume(returning: actualData)
-            }
-            requestLock.unlock()
-            
-            Task {
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
-                var didTimeout = false
-                requestLock.lock()
-                if pendingRequests.keys.contains(currentReqId) {
-                    pendingRequests.removeValue(forKey: currentReqId)
-                    didTimeout = true
-                }
-                requestLock.unlock()
-                
-                if didTimeout {
-                    ZhiLogger.error("CRITICAL! Signal lost. 15-second Timeout on Request ID: \(currentReqId) [OP: \(opcode.rawValue)] [Path: \(path)]")
-                    continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -3, userInfo: [NSLocalizedDescriptionKey: "VFS RPC Timeout"]))
-                }
-            }
-            
-            buf.withUnsafeBytes { rawBuffer in
-                if let ptr = rawBuffer.bindMemory(to: UInt8.self).baseAddress {
-                    zhiauth_send_vfs_command_async(ptr, buf.count)
-                }
+@main
+struct ZhiAuthApp: App {
+    var body: some Scene {
+        WindowGroup {
+            VStack(spacing: 20) {
+                Text("💀 ZhiAuth v6.0")
+                    .font(.largeTitle).bold()
+                Text("KCP Dual-Tunnel is running...")
+                    .foregroundColor(.gray)
+                Text("Hãy mở ứng dụng 'Tệp' (Files) trên iPhone để xem ổ đĩa ảo!")
+                    .multilineTextAlignment(.center)
+                    .padding()
             }
         }
     }
 }
---- END OF FILE: ZhiAuth/ZhiKcpEngine.swift ---
+--- END OF FILE: ZhiAuthApp/ZhiAuthApp.swift ---
 
---- START FILE PATH: ZhiAuth/ZhiFileProviderExtension.swift ---
-import FileProvider
-import Foundation
-import UniformTypeIdentifiers
-import UIKit
+--- START FILE PATH: .github/workflows/build-ios.yml ---
+name: Build ZhiAuth iOS App
 
-class ZhiFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
-    var quicTunnel: ZhiQuicTunnel?
-    var serverIP = "192.168.1.83"
-    
-    required init(domain: NSFileProviderDomain) {
-        super.init()
-        ZhiLogger.info("ZhiAuth FileProvider Extension initialized for domain: \(domain.identifier.rawValue)")
-        
-        Task { [self] in
-            do {
-                // Bọc MainActor.run để lấy HWID an toàn từ UIKit
-                let hwid = await MainActor.run {
-                    UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS"
-                }
-                
-                let authCmd = "AUTH_REQ|USER:huang|PASS:123456|LAN:\(self.serverIP)|TS:NONE|HWID:\(hwid)"
-                
-                let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: self.serverIP, authPort: 5555, authCmd: authCmd)
-                
-                if auth.isSuccess {
-                    _ = ZhiKcpEngine.initCore(ip: self.serverIP, port: Int32(auth.kcpPort), symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1350, tuning: auth.tuning)
-                    
-                    self.quicTunnel = ZhiQuicTunnel(ip: self.serverIP, port: auth.quicPort)
-                    self.quicTunnel?.connect()
-                    
-                    ZhiLogger.info("Dual-Tunnel (KCP + QUIC) is fully operational!")
-                }
-            } catch {
-                ZhiLogger.error("Authentication/Tunnel ignition failed: \(error.localizedDescription)")
-            }
-        }
-    }
-    
-    func invalidate() {
-        ZhiLogger.warning("ZhiAuth FileProvider Extension invalidated.")
-        ZhiKcpEngine.shutdownCore()
-    }
-    
-    // 1. LẤY THÔNG TIN FILE (OP_STAT)
-    func item(for identifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest, completionHandler: @escaping (NSFileProviderItem?, Error?) -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 1)
-        Task {
-            do {
-                let path = identifier.rawValue == NSFileProviderItemIdentifier.rootContainer.rawValue ? "/" : identifier.rawValue
-                let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: path, offset: 0, reqLen: 0, payloadData: nil)
-                
-                if statData.count >= 37 {
-                    let size = statData.subdata(in: 0..<8).withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
-                    let isDir = statData[8] == 1
-                    let item = ZhiFileItem(identifier: identifier, filename: (path as NSString).lastPathComponent, isDirectory: isDir, size: Int64(size))
-                    completionHandler(item, nil)
-                } else {
-                    completionHandler(nil, NSFileProviderError(.noSuchItem))
-                }
-            } catch {
-                ZhiLogger.error("Failed to stat item at path: \(identifier.rawValue) - Error: \(error.localizedDescription)")
-                completionHandler(nil, error)
-            }
-        }
-        return progress
-    }
-    
-    // 2. TẢI NỘI DUNG FILE (OP_READ)
-    func fetchContents(for itemIdentifier: NSFileProviderItemIdentifier, version requestedVersion: NSFileProviderItemVersion?, request: NSFileProviderRequest, completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 100)
-        Task {
-            do {
-                let path = itemIdentifier.rawValue
-                ZhiLogger.info("Fetching contents via KCP for file: \(path)")
-                let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: path, offset: 0, reqLen: 0, payloadData: nil)
-                var size: UInt64 = 0
-                if statData.count >= 37 {
-                    size = statData.subdata(in: 0..<8).withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
-                }
-                
-                let fileData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_READ, path: path, offset: 0, reqLen: UInt32(size), payloadData: nil)
-                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-                try fileData.write(to: tempURL)
-                
-                let item = ZhiFileItem(identifier: itemIdentifier, filename: (path as NSString).lastPathComponent, isDirectory: false, size: Int64(fileData.count))
-                completionHandler(tempURL, item, nil)
-            } catch {
-                ZhiLogger.error("Fetch contents failed for \(itemIdentifier.rawValue) - Error: \(error.localizedDescription)")
-                completionHandler(nil, nil, error)
-            }
-        }
-        return progress
-    }
+on:
+  push:
+    branches: [ "Client_iOS" ]
+  workflow_dispatch:
 
-    // 3. TẠO FILE/THƯ MỤC MỚI (OP_MKDIR / OP_WRITE)
-    func createItem(basedOn itemTemplate: NSFileProviderItem, fields: NSFileProviderItemFields, contents url: URL?, options: NSFileProviderCreateItemOptions = [], request: NSFileProviderRequest, completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 1)
-        Task {
-            do {
-                let path = itemTemplate.itemIdentifier.rawValue
-                let isDir = itemTemplate.contentType == .folder
-                let opcode: VfsOpcode = isDir ? .OP_MKDIR : .OP_WRITE
-                var payloadData: Data? = nil
-                if let url = url, !isDir {
-                    payloadData = try Data(contentsOf: url)
-                }
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: opcode, path: path, offset: 0, reqLen: 0, payloadData: payloadData)
-                let createdItem = ZhiFileItem(identifier: itemTemplate.itemIdentifier, filename: itemTemplate.filename, isDirectory: isDir, size: Int64(payloadData?.count ?? 0))
-                completionHandler(createdItem, [], false, nil)
-            } catch {
-                ZhiLogger.error("Create item failed: \(error.localizedDescription)")
-                completionHandler(nil, [], false, error)
-            }
-        }
-        return progress
-    }
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-14
 
-    // 4. SỬA FILE (OP_WRITE)
-    func modifyItem(_ item: NSFileProviderItem, baseVersion: NSFileProviderItemVersion, changedFields: NSFileProviderItemFields, contents newContents: URL?, options: NSFileProviderModifyItemOptions = [], request: NSFileProviderRequest, completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 1)
-        Task {
-            do {
-                let path = item.itemIdentifier.rawValue
-                var payloadData: Data? = nil
-                if let newContents = newContents {
-                    payloadData = try Data(contentsOf: newContents)
-                }
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_WRITE, path: path, offset: 0, reqLen: 0, payloadData: payloadData)
-                completionHandler(item, [], false, nil)
-            } catch {
-                ZhiLogger.error("Modify item failed: \(error.localizedDescription)")
-                completionHandler(nil, [], false, error)
-            }
-        }
-        return progress
-    }
+    steps:
+      - name: Lấy source code về
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    // 5. XÓA FILE/THƯ MỤC (OP_DELETE)
-    func deleteItem(identifier: NSFileProviderItemIdentifier, baseVersion: NSFileProviderItemVersion, options: NSFileProviderDeleteItemOptions = [], request: NSFileProviderRequest, completionHandler: @escaping (Error?) -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 1)
-        Task {
-            do {
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_DELETE, path: identifier.rawValue, offset: 0, reqLen: 0, payloadData: nil)
-                completionHandler(nil)
-            } catch {
-                ZhiLogger.error("Delete item failed: \(error.localizedDescription)")
-                completionHandler(error)
-            }
-        }
-        return progress
-    }
-    
-    // 6. XEM DANH SÁCH THƯ MỤC
-    func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest) throws -> NSFileProviderEnumerator {
-        return ZhiFileEnumerator(containerIdentifier: containerItemIdentifier)
-    }
-}
+      - name: Ép dùng Xcode 16.2.0
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.2.0'
 
-class ZhiFileItem: NSObject, NSFileProviderItem {
-    var itemIdentifier: NSFileProviderItemIdentifier
-    var parentItemIdentifier: NSFileProviderItemIdentifier
-    var filename: String
-    var contentType: UTType
-    var documentSize: NSNumber?
-    
-    init(identifier: NSFileProviderItemIdentifier, filename: String, isDirectory: Bool, size: Int64) {
-        self.itemIdentifier = identifier
-        self.parentItemIdentifier = .rootContainer
-        self.filename = filename
-        self.contentType = isDirectory ? .folder : .data
-        self.documentSize = NSNumber(value: size)
-    }
-}
+      - name: Nạp thư viện C++ (Fix lỗi thiếu asio.hpp)
+        run: brew install asio
 
-class ZhiFileEnumerator: NSObject, NSFileProviderEnumerator {
-    let containerIdentifier: NSFileProviderItemIdentifier
-    init(containerIdentifier: NSFileProviderItemIdentifier) {
-        self.containerIdentifier = containerIdentifier
-    }
-    func invalidate() {}
-    
-    func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
-        Task {
-            do {
-                let path = containerIdentifier.rawValue == NSFileProviderItemIdentifier.rootContainer.rawValue ? "/" : containerIdentifier.rawValue
-                ZhiLogger.info("Enumerating items for folder: \(path)")
-                let listData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_LIST, path: path, offset: 0, reqLen: 0, payloadData: nil)
-                
-                var items: [ZhiFileItem] = []
-                var offset = 0
-                let totalLen = listData.count
-                
-                while offset + 15 <= totalLen {
-                    let nameLen = Int(listData.subdata(in: offset..<offset+2).withUnsafeBytes { $0.load(as: UInt16.self).littleEndian })
-                    let isDirVal = listData[offset + 2]
-                    let size = listData.subdata(in: offset+3..<offset+11).withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
-                    offset += 15
-                    if offset + nameLen > totalLen { break }
-                    
-                    let nameData = listData.subdata(in: offset..<offset+nameLen)
-                    let name = String(data: nameData, encoding: .utf8) ?? "Unknown"
-                    offset += nameLen
-                    
-                    let itemID = NSFileProviderItemIdentifier(path == "/" ? "/\(name)" : "\(path)/\(name)")
-                    let item = ZhiFileItem(identifier: itemID, filename: name, isDirectory: isDirVal == 1, size: Int64(size))
-                    items.append(item)
-                }
-                observer.didEnumerate(items)
-                observer.finishEnumerating(upTo: nil)
-            } catch {
-                ZhiLogger.error("Enumerate items failed: \(error.localizedDescription)")
-                observer.finishEnumeratingWithError(error)
-            }
-        }
-    }
-}
---- END OF FILE: ZhiAuth/ZhiFileProviderExtension.swift ---
+      - name: Biên dịch Xcode Project (Realtime Log)
+        run: |
+          set -o pipefail
+          xcodebuild clean build \
+            -project ZhiAuth.xcodeproj \
+            -scheme ZhiAuthApp \
+            -sdk iphoneos \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            SYMROOT=$(PWD)/build \
+            -verbose
 
---- START FILE PATH: ZhiAuth/ZhiQuicTunnel.swift ---
-import Foundation
-import Network
+      - name: Đóng gói thành file .ipa
+        run: |
+          echo "==== ĐANG ĐÓNG GÓI THÀNH IPA ===="
+          mkdir -p Payload
+          mv build/Release-iphoneos/*.app Payload/
+          zip -r ZhiAuthApp.ipa Payload
 
-class ZhiQuicTunnel {
-    private var connection: NWConnection?
-    private var activeIp: String
-    private var quicPort: UInt16
-    private var isConnected: Bool = false
-    private let tunnelLock = NSLock()
-    
-    private var pendingRequests: [UInt32: CheckedContinuation<Data, Error>] = [:]
-    private var globalReqId: UInt32 = 0
-    private let appClientID: UInt32 = UInt32((Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 1) * 1_000_000_000).rounded())
+      - name: Xuất file IPA cho Ný tải
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZhiAuthApp-iOS
+          path: ZhiAuthApp.ipa
+          retention-days: 7
 
-    init(ip: String, port: Int) {
-        self.activeIp = ip
-        self.quicPort = UInt16(port)
-        ZhiLogger.info("Initializing Native QUIC Tunnel to \(ip):\(port)")
-    }
+--- END OF FILE: .github/workflows/build-ios.yml ---
 
-    func connect() {
-        tunnelLock.lock()
-        defer { tunnelLock.unlock() }
+--- START FILE PATH: src/rpc_client/crypto_box.h ---
+#ifndef ZHIAUTH_CRYPTO_BOX_H
+#define ZHIAUTH_CRYPTO_BOX_H
 
-        if isConnected { return }
+#include <vector>
+#include <string>
+#include <cstdint>
 
-        let host = NWEndpoint.Host(activeIp)
-        guard let port = NWEndpoint.Port(rawValue: quicPort) else {
-            ZhiLogger.error("Invalid QUIC Port: \(quicPort)")
-            return
-        }
+class CryptoBox {
+public:
+    static bool initialize();
+    static bool encrypt_payload(const std::vector<uint8_t>& plaintext, const std::string& symmetric_key, std::vector<uint8_t>& ciphertext);
+    static bool decrypt_payload(const std::vector<uint8_t>& ciphertext, const std::string& symmetric_key, std::vector<uint8_t>& plaintext);
+};
+#endif // ZHIAUTH_CRYPTO_BOX_H
 
-        // Cấu hình QUIC Native (Bỏ qua xác thực SSL tự ký)
-        let options = NWProtocolQUIC.Options(alpn: ["zhiauth-raw-quic"])
-        let secOptions = options.securityProtocolOptions as! sec_protocol_options_t
-        sec_protocol_options_set_verify_block(secOptions, { _, _, sec_protocol_verify_complete in
-            sec_protocol_verify_complete(true) 
-        }, .main)
+--- END OF FILE: src/rpc_client/crypto_box.h ---
 
-        let parameters = NWParameters(quic: options)
-        connection = NWConnection(host: host, port: port, using: parameters)
+--- START FILE PATH: src/rpc_client/vfs_packet.h ---
+#ifndef ZHIAUTH_VFS_PACKET_H
+#define ZHIAUTH_VFS_PACKET_H
 
-        connection?.stateUpdateHandler = { [weak self] state in
-            guard let self = self else { return }
-            switch state {
-            case .ready:
-                ZhiLogger.info("✅ QUIC Tunnel ESTABLISHED!")
-                self.isConnected = true
-                self.receiveLoop() 
-            case .failed(let error):
-                ZhiLogger.error("❌ QUIC Tunnel FAILED: \(error)")
-                self.isConnected = false
-                self.reconnectSilently()
-            case .cancelled:
-                self.isConnected = false
-            default:
-                break
-            }
-        }
-        
-        connection?.start(queue: .global())
-    }
+#include <cstdint>
 
-    private func reconnectSilently() {
-        ZhiLogger.warning("QUIC Tunnel dropped. Reconnecting in 2s...")
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-            self.connect()
-        }
-    }
+#pragma pack(push, 1)
 
-    private func receiveLoop() {
-        connection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            guard let self = self else { return }
-            
-            if let data = data, !data.isEmpty {
-                self.handleIncomingData(data)
-            }
-            
-            if isComplete || error != nil {
-                self.isConnected = false
-                self.reconnectSilently()
-                return
-            }
-            
-            self.receiveLoop()
-        }
-    }
+enum class VfsOpcode : uint8_t {
+    OP_PING     = 0x00,
+    OP_STAT     = 0x01,
+    OP_LIST     = 0x02,
+    OP_READ     = 0x03,
+    OP_WRITE    = 0x04,
+    OP_MKDIR    = 0x05,
+    OP_DELETE   = 0x06,
+    OP_RENAME   = 0x07,
+    OP_TRUNCATE = 0x08, 
+    OP_ERROR    = 0xFF
+};
 
-    private func handleIncomingData(_ data: Data) {
-        if data.count < 27 { return }
-        
-        let reqIdBytes = data.subdata(in: 5..<9)
-        let reqId = reqIdBytes.withUnsafeBytes { $0.load(as: UInt32.self).littleEndian }
-        
-        tunnelLock.lock()
-        let continuation = pendingRequests[reqId]
-        pendingRequests.removeValue(forKey: reqId)
-        tunnelLock.unlock()
-        
-        if data[4] == VfsOpcode.OP_ERROR.rawValue {
-            continuation?.resume(throwing: NSError(domain: "ZhiAuth", code: -2, userInfo: [NSLocalizedDescriptionKey: "Server QUIC Error"]))
-        } else {
-            let actualData = data.subdata(in: 27..<data.count)
-            continuation?.resume(returning: actualData)
-        }
-    }
+// TRẢ LẠI NGUYÊN BẢN CHO V6.0
+struct VfsPacketHeader {
+    uint32_t magic;      // 0x5A484941 ("ZHIA")
+    VfsOpcode opcode;
+    uint64_t session_id; // Sẽ giấu cả client_id và req_id vào đây!
+    uint64_t offset;     
+    uint32_t data_len;
+    uint16_t path_len;
+};
 
-    func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
-        return try await withCheckedThrowingContinuation { continuation in
-            guard isConnected, let connection = connection else {
-                continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -404, userInfo: [NSLocalizedDescriptionKey: "QUIC Not Connected"]))
-                return
-            }
+#pragma pack(pop)
 
-            var buf = Data()
-            tunnelLock.lock()
-            globalReqId &+= 1
-            let currentReqId = globalReqId
-            tunnelLock.unlock()
+#endif // ZHIAUTH_VFS_PACKET_H
+--- END OF FILE: src/rpc_client/vfs_packet.h ---
 
-            let combinedSessionId: UInt64 = (UInt64(appClientID) << 32) | UInt64(currentReqId)
-            let dataLen: UInt32 = (opcode == .OP_READ) ? reqLen : UInt32(payloadData?.count ?? 0)
-            let pathData = path.data(using: .utf8) ?? Data()
-            let pathLen: UInt16 = UInt16(pathData.count)
-
-            withUnsafeBytes(of: UInt32(0x5A484941).littleEndian) { buf.append(contentsOf: $0) }
-            buf.append(opcode.rawValue)
-            withUnsafeBytes(of: combinedSessionId.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: offset.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: dataLen.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: pathLen.littleEndian) { buf.append(contentsOf: $0) }
-            
-            buf.append(pathData)
-            if let pData = payloadData {
-                buf.append(pData)
-            }
-
-            tunnelLock.lock()
-            pendingRequests[currentReqId] = continuation
-            tunnelLock.unlock()
-
-            connection.send(content: buf, completion: .contentProcessed({ [weak self] error in
-                if let error = error {
-                    self?.tunnelLock.lock()
-                    self?.pendingRequests.removeValue(forKey: currentReqId)
-                    self?.tunnelLock.unlock()
-                    continuation.resume(throwing: error)
-                }
-            }))
-            
-            Task {
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
-                var didTimeout = false
-                tunnelLock.lock()
-                if pendingRequests.keys.contains(currentReqId) {
-                    pendingRequests.removeValue(forKey: currentReqId)
-                    didTimeout = true
-                }
-                tunnelLock.unlock()
-                
-                if didTimeout {
-                    ZhiLogger.error("QUIC Timeout on Request ID: \(currentReqId)")
-                    continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -3, userInfo: [NSLocalizedDescriptionKey: "QUIC RPC Timeout"]))
-                }
-            }
-        }
-    }
-}
---- END OF FILE: ZhiAuth/ZhiQuicTunnel.swift ---
-
---- START FILE PATH: ZhiAuth/ZhiLogger.swift ---
-import Foundation
-
-enum LogLevel: String {
-    case DEBUG = "DEBUG"
-    case INFO = "INFO"
-    case WARNING = "WARNING"
-    case ERROR = "ERROR"
-}
-
-class ZhiLogger {
-    private static let lock = NSLock()
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        return formatter
-    }()
-    
-    static func log(level: LogLevel, file: String = #file, line: Int = #line, function: String = #function, message: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        let timestamp = dateFormatter.string(from: Date())
-        let fileName = (file as NSString).lastPathComponent
-        print("[\(timestamp)] [\(level.rawValue)] [\(fileName):\(line)::\(function)] -> \(message)")
-    }
-    
-    static func debug(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
-        log(level: .DEBUG, file: file, line: line, function: function, message: message)
-    }
-    
-    static func info(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
-        log(level: .INFO, file: file, line: line, function: function, message: message)
-    }
-    
-    static func warning(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
-        log(level: .WARNING, file: file, line: line, function: function, message: message)
-    }
-    
-    static func error(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
-        log(level: .ERROR, file: file, line: line, function: function, message: message)
-    }
-}
---- END OF FILE: ZhiAuth/ZhiLogger.swift ---
-
---- START FILE PATH: ZhiAuth/ZhiNetworkAuth.swift ---
-import Foundation
-import Network
-
-struct AuthResponse {
-    var isSuccess: Bool = false
-    var sharedPath: String = ""
-    var quicPort: Int = 4433
-    var kcpPort: Int = 6666
-    var tuning: KcpTuningParams = KcpTuningParams()
-}
-
-class ZhiNetworkAuth {
-    static func executePortKnockingAuth(ip: String, authPort: UInt16, authCmd: String) async throws -> AuthResponse {
-        return try await withCheckedThrowingContinuation { continuation in
-            let host = NWEndpoint.Host(ip)
-            guard let port = NWEndpoint.Port(rawValue: authPort) else {
-                continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -400, userInfo: [NSLocalizedDescriptionKey: "Invalid Port"]))
-                return
-            }
-            
-            let connection = NWConnection(host: host, port: port, using: .udp)
-            
-            connection.stateUpdateHandler = { state in
-                if case .ready = state {
-                    guard let cmdData = authCmd.data(using: .utf8) else { return }
-                    connection.send(content: cmdData, completion: .idempotent)
-                    connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, _, error in
-                        connection.cancel()
-                        if let data = data, let respStr = String(data: data, encoding: .utf8), respStr.hasPrefix("AUTH_SUCCESS") {
-                            var resp = AuthResponse(isSuccess: true)
-                            let parts = respStr.split(separator: "|")
-                            if parts.count >= 4 {
-                                resp.sharedPath = String(parts[1])
-                                resp.quicPort = Int(parts[2]) ?? 4433
-                                resp.kcpPort = Int(parts[3]) ?? 6666
-                            }
-                            if parts.count >= 10 {
-                                resp.tuning.noDelay = Int32(parts[4]) ?? 1
-                                resp.tuning.interval = Int32(parts[5]) ?? 10
-                                resp.tuning.resend = Int32(parts[6]) ?? 2
-                                resp.tuning.nc = Int32(parts[7]) ?? 0
-                                resp.tuning.sndWnd = Int32(parts[8]) ?? 512
-                                resp.tuning.rcvWnd = Int32(parts[9]) ?? 512
-                                resp.tuning.isDynamic = true
-                            }
-                            continuation.resume(returning: resp)
-                        } else {
-                            continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -401, userInfo: [NSLocalizedDescriptionKey: "Authentication Failed"]))
-                        }
-                    }
-                }
-            }
-            connection.start(queue: .global())
-        }
-    }
-}
---- END OF FILE: ZhiAuth/ZhiNetworkAuth.swift ---
-
---- START FILE PATH: ZhiAuth/Info.plist ---
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundlePackageType</key>
-	<string>XPC!</string>
-	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>NSExtension</key>
-	<dict>
-		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.fileprovider-nonui</string>
-		<key>NSExtensionPrincipalClass</key>
-		<string>$(PRODUCT_MODULE_NAME).ZhiFileProviderExtension</string>
-	</dict>
-</dict>
-</plist>
---- END OF FILE: ZhiAuth/Info.plist ---
-
---- START FILE PATH: ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h ---
-#ifndef ZhiAuth_Bridging_Header_h
-#define ZhiAuth_Bridging_Header_h
-
-#include "client_bridge.h"
-
-#endif /* ZhiAuth_Bridging_Header_h */
---- END OF FILE: ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h ---
-
---- START FILE PATH: src/rpc_client/vfs_client.cpp ---
-#include "bridge/client_bridge.h"
-#include "rpc_client/vfs_client.h"
+--- START FILE PATH: src/rpc_client/crypto_box.cpp ---
 #include "rpc_client/crypto_box.h"
-#include "rpc_client/vfs_packet.h"
+#include <sodium.h>
 #include <iostream>
-#include <chrono>
-#include <iomanip>
-#include <sstream>
-#include <algorithm>
-#include <fstream>
-// #include <sys/sysinfo.h>
 
-using asio::ip::udp;
-
-static std::string getRealtimeLog() {
-    auto now = std::chrono::system_clock::now();
-    auto time_t_now = std::chrono::system_clock::to_time_t(now);
-    auto duration = now.time_since_epoch();
-    auto micros = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() % 1000000;
-    std::tm bt{}; localtime_r(&time_t_now, &bt);
-    std::ostringstream oss;
-    oss << std::put_time(&bt, "%Y-%m-%d %H:%M:%S") << "." << std::setfill('0') << std::setw(6) << micros;
-    return oss.str();
-}
-
-static size_t calculateAbsoluteMaxSocketBuffer() {
-    return 16777216; // Chơi khô máu, phang thẳng 16MB bộ đệm cho chắc cốp
-}
-
-VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
-                     int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd)
-    : socket_(io_context_, udp::endpoint(udp::v4(), 0)), is_running_(false), 
-      recv_buffer_(65536), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu),
-      nodelay_(nodelay), interval_(interval), resend_(resend), nc_(nc), snd_wnd_(snd_wnd), rcv_wnd_(rcv_wnd)
-{
-    asio::ip::udp::resolver resolver(io_context_);
-    server_endpoint_ = *resolver.resolve(udp::v4(), server_ip, std::to_string(port)).begin();
-    size_t auto_buf_sz = calculateAbsoluteMaxSocketBuffer();
-    try {
-        socket_.set_option(asio::socket_base::receive_buffer_size(auto_buf_sz));
-        socket_.set_option(asio::socket_base::send_buffer_size(auto_buf_sz));
-    } catch(...) {}
-}
-
-VfsClient::~VfsClient() { stop(); }
-
-bool VfsClient::start() {
-    if (is_running_) return true;
-    is_running_ = true;
-    kcp_cb_ = ikcp_create(0x11223344, this);
-    kcp_cb_->output = kcp_output_callback;
-    
-    // 🔥 ÉP THAM SỐ KCP TUNING ĐỘNG ĐƯỢC NHẬN TỪ SERVER HOẶC FALLBACK
-    ikcp_nodelay(kcp_cb_, nodelay_, interval_, resend_, nc_);
-    int safe_mtu = (mtu_ > 100) ? (mtu_ - 56) : 1350; 
-    ikcp_wndsize(kcp_cb_, snd_wnd_, rcv_wnd_); 
-    kcp_cb_->stream = 0; 
-    ikcp_setmtu(kcp_cb_, safe_mtu); 
-    kcp_cb_->rx_minrto = 10;
-
-    std::cout << "[" << getRealtimeLog() << "] [DYNAMIC_SPEED_CLIENT] KCP Engine Operational | Tuning Params -> NoDelay: " 
-              << nodelay_ << ", Interval: " << interval_ << "ms, Resend: " << resend_ << ", NC: " << nc_ 
-              << ", WND (SND/RCV): " << snd_wnd_ << "/" << rcv_wnd_ << " | Safe MTU: " << safe_mtu << std::endl;
-
-    io_thread_ = std::thread(&VfsClient::receive_loop, this);
-    timer_thread_ = std::thread(&VfsClient::kcp_update_loop, this);
+bool CryptoBox::initialize() {
+    if (sodium_init() < 0) return false;
     return true;
 }
 
-void VfsClient::stop() {
-    if (!is_running_) return;
-    is_running_ = false; socket_.close();
-    if (io_thread_.joinable()) io_thread_.join();
-    if (timer_thread_.joinable()) timer_thread_.join();
-    if (kcp_cb_) { ikcp_release(kcp_cb_); kcp_cb_ = nullptr; }
+bool CryptoBox::encrypt_payload(const std::vector<uint8_t>& plaintext, const std::string& symmetric_key, std::vector<uint8_t>& ciphertext) {
+    if (symmetric_key.size() != crypto_aead_chacha20poly1305_ietf_KEYBYTES) return false;
+    ciphertext.resize(crypto_aead_chacha20poly1305_ietf_NPUBBYTES + plaintext.size() + crypto_aead_chacha20poly1305_ietf_ABYTES);
+    unsigned char* nonce = ciphertext.data();
+    randombytes_buf(nonce, crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
+    unsigned long long ciphertext_len;
+    int result = crypto_aead_chacha20poly1305_ietf_encrypt(
+        ciphertext.data() + crypto_aead_chacha20poly1305_ietf_NPUBBYTES, &ciphertext_len,
+        plaintext.data(), plaintext.size(), nullptr, 0, nullptr, nonce,
+        reinterpret_cast<const unsigned char*>(symmetric_key.data())
+    );
+    if (result != 0) return false;
+    ciphertext.resize(crypto_aead_chacha20poly1305_ietf_NPUBBYTES + ciphertext_len);
+    return true;
 }
 
-int VfsClient::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user) {
-    VfsClient* client = static_cast<VfsClient*>(user);
-    std::error_code ec;
-    client->socket_.send_to(asio::buffer(buf, len), client->server_endpoint_, 0, ec);
-    return 0;
+bool CryptoBox::decrypt_payload(const std::vector<uint8_t>& ciphertext, const std::string& symmetric_key, std::vector<uint8_t>& plaintext) {
+    if (symmetric_key.size() != crypto_aead_chacha20poly1305_ietf_KEYBYTES) return false;
+    if (ciphertext.size() < crypto_aead_chacha20poly1305_ietf_NPUBBYTES + crypto_aead_chacha20poly1305_ietf_ABYTES) return false;
+    const unsigned char* nonce = ciphertext.data();
+    const unsigned char* actual_cipher = ciphertext.data() + crypto_aead_chacha20poly1305_ietf_NPUBBYTES;
+    unsigned long long actual_cipher_len = ciphertext.size() - crypto_aead_chacha20poly1305_ietf_NPUBBYTES;
+    plaintext.resize(actual_cipher_len - crypto_aead_chacha20poly1305_ietf_ABYTES);
+    unsigned long long plaintext_len;
+    int result = crypto_aead_chacha20poly1305_ietf_decrypt(
+        plaintext.data(), &plaintext_len, nullptr, actual_cipher, actual_cipher_len,
+        nullptr, 0, nonce, reinterpret_cast<const unsigned char*>(symmetric_key.data())
+    );
+    if (result != 0) return false;
+    plaintext.resize(plaintext_len);
+    return true;
 }
 
-// 🔥 VÒNG LẶP HÚT CẠN CỦA CLIENT
-void VfsClient::receive_loop() {
-    while (is_running_) {
-        std::error_code ec;
-        asio::ip::udp::endpoint sender;
-        size_t bytes_recvd = socket_.receive_from(asio::buffer(recv_buffer_), sender, 0, ec);
-        
-        if (ec || bytes_recvd == 0) {
-            if (ec == asio::error::would_block || ec == asio::error::try_again) continue;
-            break;
-        }
+--- END OF FILE: src/rpc_client/crypto_box.cpp ---
 
-        std::lock_guard<std::mutex> lock(kcp_mutex_);
-        ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
-        
-        int len;
-        while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
-            std::vector<uint8_t> encrypted_payload(len);
-            ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
-            std::vector<uint8_t> plaintext;
-            if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
-                if (plaintext.size() >= sizeof(VfsPacketHeader)) {
-                    VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
-                    uint32_t req_id = (uint32_t)(hdr->session_id & 0xFFFFFFFF);
-                    zhiauth_cgo_on_response(req_id, plaintext.data(), plaintext.size());
-                }
-            }
-        }
-    }
-}
+--- START FILE PATH: src/rpc_client/ikcp.h ---
+//=====================================================================
+//
+// KCP - A Better ARQ Protocol Implementation
+// skywind3000 (at) gmail.com, 2010-2011
+//  
+// Features:
+// + Average RTT reduce 30% - 40% vs traditional ARQ like tcp.
+// + Maximum RTT reduce three times vs tcp.
+// + Lightweight, distributed as a single source file.
+//
+//=====================================================================
+#ifndef _IKCP_H_
+#define _IKCP_H_
 
-void VfsClient::kcp_update_loop() {
-    while (is_running_) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        uint32_t current_clock = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        std::lock_guard<std::mutex> lock(kcp_mutex_);
-        if (kcp_cb_) ikcp_update(kcp_cb_, current_clock);
-    }
-}
+#include <stddef.h>
+#include <stdlib.h>
+#include <assert.h>
 
-void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
-    if (request_payload.size() < sizeof(VfsPacketHeader)) return;
-    std::vector<uint8_t> encrypted_payload;
-    if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) return;
-    {
-        std::lock_guard<std::mutex> lock(kcp_mutex_);
-        ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), encrypted_payload.size());
-        ikcp_flush(kcp_cb_);
-    }
+
+//=====================================================================
+// 32BIT INTEGER DEFINITION 
+//=====================================================================
+#ifndef __INTEGER_32_BITS__
+#define __INTEGER_32_BITS__
+#if defined(_WIN64) || defined(WIN64) || defined(__amd64__) || \
+	defined(__x86_64) || defined(__x86_64__) || defined(_M_IA64) || \
+	defined(_M_AMD64)
+	typedef unsigned int ISTDUINT32;
+	typedef int ISTDINT32;
+#elif defined(_WIN32) || defined(WIN32) || defined(__i386__) || \
+	defined(__i386) || defined(_M_X86)
+	typedef unsigned long ISTDUINT32;
+	typedef long ISTDINT32;
+#elif defined(__MACOS__)
+	typedef UInt32 ISTDUINT32;
+	typedef SInt32 ISTDINT32;
+#elif defined(__APPLE__) && defined(__MACH__)
+	#include <sys/types.h>
+	typedef u_int32_t ISTDUINT32;
+	typedef int32_t ISTDINT32;
+#elif defined(__BEOS__)
+	#include <sys/inttypes.h>
+	typedef u_int32_t ISTDUINT32;
+	typedef int32_t ISTDINT32;
+#elif (defined(_MSC_VER) || defined(__BORLANDC__)) && (!defined(__MSDOS__))
+	typedef unsigned __int32 ISTDUINT32;
+	typedef __int32 ISTDINT32;
+#elif defined(__GNUC__)
+	#include <stdint.h>
+	typedef uint32_t ISTDUINT32;
+	typedef int32_t ISTDINT32;
+#else 
+	typedef unsigned long ISTDUINT32; 
+	typedef long ISTDINT32;
+#endif
+#endif
+
+
+//=====================================================================
+// Integer Definition
+//=====================================================================
+#ifndef __IINT8_DEFINED
+#define __IINT8_DEFINED
+typedef char IINT8;
+#endif
+
+#ifndef __IUINT8_DEFINED
+#define __IUINT8_DEFINED
+typedef unsigned char IUINT8;
+#endif
+
+#ifndef __IUINT16_DEFINED
+#define __IUINT16_DEFINED
+typedef unsigned short IUINT16;
+#endif
+
+#ifndef __IINT16_DEFINED
+#define __IINT16_DEFINED
+typedef short IINT16;
+#endif
+
+#ifndef __IINT32_DEFINED
+#define __IINT32_DEFINED
+typedef ISTDINT32 IINT32;
+#endif
+
+#ifndef __IUINT32_DEFINED
+#define __IUINT32_DEFINED
+typedef ISTDUINT32 IUINT32;
+#endif
+
+#ifndef __IINT64_DEFINED
+#define __IINT64_DEFINED
+#if defined(_MSC_VER) || defined(__BORLANDC__)
+typedef __int64 IINT64;
+#else
+typedef long long IINT64;
+#endif
+#endif
+
+#ifndef __IUINT64_DEFINED
+#define __IUINT64_DEFINED
+#if defined(_MSC_VER) || defined(__BORLANDC__)
+typedef unsigned __int64 IUINT64;
+#else
+typedef unsigned long long IUINT64;
+#endif
+#endif
+
+#ifndef INLINE
+#if defined(__GNUC__)
+
+#if (__GNUC__ > 3) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 1))
+#define INLINE         __inline__ __attribute__((always_inline))
+#else
+#define INLINE         __inline__
+#endif
+
+#elif (defined(_MSC_VER) || defined(__BORLANDC__) || defined(__WATCOMC__))
+#define INLINE __inline
+#else
+#define INLINE 
+#endif
+#endif
+
+#if (!defined(__cplusplus)) && (!defined(inline))
+#define inline INLINE
+#endif
+
+
+//=====================================================================
+// QUEUE DEFINITION                                                  
+//=====================================================================
+#ifndef __IQUEUE_DEF__
+#define __IQUEUE_DEF__
+
+struct IQUEUEHEAD {
+	struct IQUEUEHEAD *next, *prev;
+};
+
+typedef struct IQUEUEHEAD iqueue_head;
+
+
+//---------------------------------------------------------------------
+// queue init                                                         
+//---------------------------------------------------------------------
+#define IQUEUE_HEAD_INIT(name) { &(name), &(name) }
+#define IQUEUE_HEAD(name) \
+	struct IQUEUEHEAD name = IQUEUE_HEAD_INIT(name)
+
+#define IQUEUE_INIT(ptr) ( \
+	(ptr)->next = (ptr), (ptr)->prev = (ptr))
+
+#define IOFFSETOF(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
+
+#define ICONTAINEROF(ptr, type, member) ( \
+		(type*)( ((char*)((type*)ptr)) - IOFFSETOF(type, member)) )
+
+#define IQUEUE_ENTRY(ptr, type, member) ICONTAINEROF(ptr, type, member)
+
+
+//---------------------------------------------------------------------
+// queue operation                     
+//---------------------------------------------------------------------
+#define IQUEUE_ADD(node, head) ( \
+	(node)->prev = (head), (node)->next = (head)->next, \
+	(head)->next->prev = (node), (head)->next = (node))
+
+#define IQUEUE_ADD_TAIL(node, head) ( \
+	(node)->prev = (head)->prev, (node)->next = (head), \
+	(head)->prev->next = (node), (head)->prev = (node))
+
+#define IQUEUE_DEL_BETWEEN(p, n) ((n)->prev = (p), (p)->next = (n))
+
+#define IQUEUE_DEL(entry) (\
+	(entry)->next->prev = (entry)->prev, \
+	(entry)->prev->next = (entry)->next, \
+	(entry)->next = 0, (entry)->prev = 0)
+
+#define IQUEUE_DEL_INIT(entry) do { \
+	IQUEUE_DEL(entry); IQUEUE_INIT(entry); } while (0)
+
+#define IQUEUE_IS_EMPTY(entry) ((entry) == (entry)->next)
+
+#define iqueue_init		IQUEUE_INIT
+#define iqueue_entry	IQUEUE_ENTRY
+#define iqueue_add		IQUEUE_ADD
+#define iqueue_add_tail	IQUEUE_ADD_TAIL
+#define iqueue_del		IQUEUE_DEL
+#define iqueue_del_init	IQUEUE_DEL_INIT
+#define iqueue_is_empty IQUEUE_IS_EMPTY
+
+#define IQUEUE_FOREACH(iterator, head, TYPE, MEMBER) \
+	for ((iterator) = iqueue_entry((head)->next, TYPE, MEMBER); \
+		&((iterator)->MEMBER) != (head); \
+		(iterator) = iqueue_entry((iterator)->MEMBER.next, TYPE, MEMBER))
+
+#define iqueue_foreach(iterator, head, TYPE, MEMBER) \
+	IQUEUE_FOREACH(iterator, head, TYPE, MEMBER)
+
+#define iqueue_foreach_entry(pos, head) \
+	for( (pos) = (head)->next; (pos) != (head) ; (pos) = (pos)->next )
+	
+
+#define __iqueue_splice(list, head) do {	\
+		iqueue_head *first = (list)->next, *last = (list)->prev; \
+		iqueue_head *at = (head)->next; \
+		(first)->prev = (head), (head)->next = (first);		\
+		(last)->next = (at), (at)->prev = (last); }	while (0)
+
+#define iqueue_splice(list, head) do { \
+	if (!iqueue_is_empty(list)) __iqueue_splice(list, head); } while (0)
+
+#define iqueue_splice_init(list, head) do {	\
+	iqueue_splice(list, head);	iqueue_init(list); } while (0)
+
+
+#ifdef _MSC_VER
+#pragma warning(disable:4311)
+#pragma warning(disable:4312)
+#pragma warning(disable:4996)
+#endif
+
+#endif
+
+
+//---------------------------------------------------------------------
+// BYTE ORDER & ALIGNMENT
+//---------------------------------------------------------------------
+#ifndef IWORDS_BIG_ENDIAN
+    #ifdef _BIG_ENDIAN_
+        #if _BIG_ENDIAN_
+            #define IWORDS_BIG_ENDIAN 1
+        #endif
+    #endif
+    #ifndef IWORDS_BIG_ENDIAN
+        #if defined(__hppa__) || \
+            defined(__m68k__) || defined(mc68000) || defined(_M_M68K) || \
+            (defined(__MIPS__) && defined(__MIPSEB__)) || \
+            defined(__ppc__) || defined(__POWERPC__) || defined(_M_PPC) || \
+            defined(__sparc__) || defined(__powerpc__) || \
+            defined(__mc68000__) || defined(__s390x__) || defined(__s390__)
+            #define IWORDS_BIG_ENDIAN 1
+        #endif
+    #endif
+    #ifndef IWORDS_BIG_ENDIAN
+        #define IWORDS_BIG_ENDIAN  0
+    #endif
+#endif
+
+#ifndef IWORDS_MUST_ALIGN
+	#if defined(__i386__) || defined(__i386) || defined(_i386_)
+		#define IWORDS_MUST_ALIGN 0
+	#elif defined(_M_IX86) || defined(_X86_) || defined(__x86_64__)
+		#define IWORDS_MUST_ALIGN 0
+	#elif defined(__amd64) || defined(__amd64__)
+		#define IWORDS_MUST_ALIGN 0
+	#else
+		#define IWORDS_MUST_ALIGN 1
+	#endif
+#endif
+
+
+//=====================================================================
+// Predefine struct
+//=====================================================================
+struct IKCPCB;
+typedef struct IKCPCB ikcpcb;
+
+
+//=====================================================================
+// SEGMENT
+//=====================================================================
+struct IKCPSEG
+{
+	struct IQUEUEHEAD node;
+	IUINT32 conv;
+	IUINT32 cmd;
+	IUINT32 frg;
+	IUINT32 wnd;
+	IUINT32 ts;
+	IUINT32 sn;
+	IUINT32 una;
+	IUINT32 len;
+	IUINT32 resendts;
+	IUINT32 rto;
+	IUINT32 fastack;
+	IUINT32 xmit;
+	char data[1];
+};
+
+
+//---------------------------------------------------------------------
+// IKCPOPS - pluggable congestion control operations
+//---------------------------------------------------------------------
+struct IKCPOPS
+{
+	const char *name;
+	int (*init)(ikcpcb *kcp);
+	void (*release)(ikcpcb *kcp);
+	void (*on_ack)(ikcpcb *kcp, IUINT32 acked_segs, IUINT32 acked_bytes,
+			IUINT32 prior_in_flight);
+	void (*on_fast_retransmit)(ikcpcb *kcp, IUINT32 fast_retrans,
+				IUINT32 inflight, IUINT32 prior_cwnd);
+	void (*on_timeout)(ikcpcb *kcp, IUINT32 prior_cwnd);
+	void (*on_tick)(ikcpcb *kcp);
+	void (*on_app_limited)(ikcpcb *kcp, IUINT32 inflight);
+	void (*on_rtt)(ikcpcb *kcp, IINT32 rtt);
+	void (*on_pkt_sent)(ikcpcb *kcp, IUINT32 sn, IUINT32 ts,
+				IUINT32 len, IUINT32 inflight, IUINT32 xmit);
+	void (*on_pkt_acked)(ikcpcb *kcp, IUINT32 sn, IUINT32 ts,
+				IUINT32 len, IINT32 rtt, IUINT32 xmit);
+	IUINT32 (*get_info)(ikcpcb *kcp, void *buf, IUINT32 bufsize);
+	IUINT32 (*pacing_rate)(ikcpcb *kcp);
+};
+
+
+//---------------------------------------------------------------------
+// IKCPCB
+//---------------------------------------------------------------------
+struct IKCPCB
+{
+	IUINT32 conv, mtu, mss, state;
+	IUINT32 snd_una, snd_nxt, rcv_nxt;
+	IUINT32 ts_recent, ts_lastack, ssthresh;
+	IINT32 rx_rttval, rx_srtt, rx_rto, rx_minrto;
+	IUINT32 snd_wnd, rcv_wnd, rmt_wnd, cwnd, probe;
+	IUINT32 current, interval, ts_flush, xmit;
+	IUINT32 nrcv_buf, nsnd_buf;
+	IUINT32 nrcv_que, nsnd_que;
+	IUINT32 nodelay, updated;
+	IUINT32 ts_probe, probe_wait;
+	IUINT32 dead_link, incr;
+	struct IQUEUEHEAD snd_queue;
+	struct IQUEUEHEAD rcv_queue;
+	struct IQUEUEHEAD snd_buf;
+	struct IQUEUEHEAD rcv_buf;
+	IUINT32 *acklist;
+	IUINT32 ackcount;
+	IUINT32 ackblock;
+	IUINT32 ackedlen;
+	void *user;
+	char *buffer;
+	int fastresend;
+	int fastlimit;
+	int nocwnd, stream;
+	const struct IKCPOPS *ccops;
+	void *congest;
+	int logmask;
+	int (*output)(const char *buf, int len, struct IKCPCB *kcp, void *user);
+	void (*writelog)(const char *log, struct IKCPCB *kcp, void *user);
+};
+
+
+#define IKCP_LOG_OUTPUT			1
+#define IKCP_LOG_INPUT			2
+#define IKCP_LOG_SEND			4
+#define IKCP_LOG_RECV			8
+#define IKCP_LOG_IN_DATA		16
+#define IKCP_LOG_IN_ACK			32
+#define IKCP_LOG_IN_PROBE		64
+#define IKCP_LOG_IN_WINS		128
+#define IKCP_LOG_OUT_DATA		256
+#define IKCP_LOG_OUT_ACK		512
+#define IKCP_LOG_OUT_PROBE		1024
+#define IKCP_LOG_OUT_WINS		2048
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+//---------------------------------------------------------------------
+// interface
+//---------------------------------------------------------------------
+
+// create a new kcp control object, 'conv' must be equal in both endpoints
+// of the same connection. 'user' will be passed to the output callback.
+// output callback can be set up like this: 'kcp->output = my_udp_output'
+ikcpcb* ikcp_create(IUINT32 conv, void *user);
+
+// release kcp control object
+void ikcp_release(ikcpcb *kcp);
+
+// set output callback, which will be invoked by kcp
+void ikcp_setoutput(ikcpcb *kcp, int (*output)(const char *buf, int len, 
+	ikcpcb *kcp, void *user));
+
+// user/upper level recv: returns size, returns below zero for EAGAIN
+int ikcp_recv(ikcpcb *kcp, char *buffer, int len);
+
+// user/upper level send, returns below zero for error
+int ikcp_send(ikcpcb *kcp, const char *buffer, int len);
+
+// update state (call it repeatedly, every 10ms-100ms), or you can ask 
+// ikcp_check when to call it again (without ikcp_input/_send calling).
+// 'current' - current timestamp in millisec. 
+void ikcp_update(ikcpcb *kcp, IUINT32 current);
+
+// Determines when you should invoke ikcp_update next:
+// returns the timestamp (in milliseconds) at which you should call
+// ikcp_update, assuming no ikcp_input/_send calls occur in between.
+// You can call ikcp_update at that time instead of calling it repeatedly.
+// Important for reducing unnecessary ikcp_update invocations. Use it to
+// schedule ikcp_update (e.g., implementing an epoll-like mechanism,
+// or optimizing ikcp_update when handling massive kcp connections).
+IUINT32 ikcp_check(const ikcpcb *kcp, IUINT32 current);
+
+// when you receive a low-level packet (e.g., UDP packet), call this
+int ikcp_input(ikcpcb *kcp, const char *data, long size);
+
+// flush pending data
+void ikcp_flush(ikcpcb *kcp);
+
+// check the size of next message in the recv queue
+int ikcp_peeksize(const ikcpcb *kcp);
+
+// change MTU size, default is 1400
+int ikcp_setmtu(ikcpcb *kcp, int mtu);
+
+// set maximum window size: sndwnd=32, rcvwnd=32 by default
+int ikcp_wndsize(ikcpcb *kcp, int sndwnd, int rcvwnd);
+
+// get how many packets are waiting to be sent
+int ikcp_waitsnd(const ikcpcb *kcp);
+
+// fastest: ikcp_nodelay(kcp, 1, 20, 2, 1)
+// nodelay: 0:disable (default), 1:enable
+// interval: internal update timer interval in ms, default is 100ms
+// resend: 0:disable fast resend (default), 1:enable fast resend
+// nc: 0:normal congestion control (default), 1:disable congestion control
+int ikcp_nodelay(ikcpcb *kcp, int nodelay, int interval, int resend, int nc);
+
+// install congestion control algorithm, NULL restores builtin
+int ikcp_setcc(ikcpcb *kcp, const struct IKCPOPS *ops);
+
+// write log with kcp->writelog
+void ikcp_log(ikcpcb *kcp, int mask, const char *fmt, ...);
+
+// setup allocator
+void ikcp_allocator(void* (*new_malloc)(size_t), void (*new_free)(void*));
+
+// read conv
+IUINT32 ikcp_getconv(const void *ptr);
+
+
+#ifdef __cplusplus
 }
---- END OF FILE: src/rpc_client/vfs_client.cpp ---
+#endif
+
+#endif
+
+
+
+--- END OF FILE: src/rpc_client/ikcp.h ---
 
 --- START FILE PATH: src/rpc_client/ikcp.c ---
 //=====================================================================
@@ -2393,560 +2187,142 @@ int ikcp_setcc(ikcpcb *kcp, const struct IKCPOPS *ops)
 
 --- END OF FILE: src/rpc_client/ikcp.c ---
 
---- START FILE PATH: src/rpc_client/crypto_box.h ---
-#ifndef ZHIAUTH_CRYPTO_BOX_H
-#define ZHIAUTH_CRYPTO_BOX_H
-
-#include <vector>
-#include <string>
-#include <cstdint>
-
-class CryptoBox {
-public:
-    static bool initialize();
-    static bool encrypt_payload(const std::vector<uint8_t>& plaintext, const std::string& symmetric_key, std::vector<uint8_t>& ciphertext);
-    static bool decrypt_payload(const std::vector<uint8_t>& ciphertext, const std::string& symmetric_key, std::vector<uint8_t>& plaintext);
-};
-#endif // ZHIAUTH_CRYPTO_BOX_H
-
---- END OF FILE: src/rpc_client/crypto_box.h ---
-
---- START FILE PATH: src/rpc_client/vfs_packet.h ---
-#ifndef ZHIAUTH_VFS_PACKET_H
-#define ZHIAUTH_VFS_PACKET_H
-
-#include <cstdint>
-
-#pragma pack(push, 1)
-
-enum class VfsOpcode : uint8_t {
-    OP_PING     = 0x00,
-    OP_STAT     = 0x01,
-    OP_LIST     = 0x02,
-    OP_READ     = 0x03,
-    OP_WRITE    = 0x04,
-    OP_MKDIR    = 0x05,
-    OP_DELETE   = 0x06,
-    OP_RENAME   = 0x07,
-    OP_TRUNCATE = 0x08, 
-    OP_ERROR    = 0xFF
-};
-
-// TRẢ LẠI NGUYÊN BẢN CHO V6.0
-struct VfsPacketHeader {
-    uint32_t magic;      // 0x5A484941 ("ZHIA")
-    VfsOpcode opcode;
-    uint64_t session_id; // Sẽ giấu cả client_id và req_id vào đây!
-    uint64_t offset;     
-    uint32_t data_len;
-    uint16_t path_len;
-};
-
-#pragma pack(pop)
-
-#endif // ZHIAUTH_VFS_PACKET_H
---- END OF FILE: src/rpc_client/vfs_packet.h ---
-
---- START FILE PATH: src/rpc_client/crypto_box.cpp ---
+--- START FILE PATH: src/rpc_client/vfs_client.cpp ---
+#include "bridge/client_bridge.h"
+#include "rpc_client/vfs_client.h"
 #include "rpc_client/crypto_box.h"
-#include <sodium.h>
+#include "rpc_client/vfs_packet.h"
 #include <iostream>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
+#include <algorithm>
+#include <fstream>
+// #include <sys/sysinfo.h>
 
-bool CryptoBox::initialize() {
-    if (sodium_init() < 0) return false;
+using asio::ip::udp;
+
+static std::string getRealtimeLog() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    auto duration = now.time_since_epoch();
+    auto micros = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() % 1000000;
+    std::tm bt{}; localtime_r(&time_t_now, &bt);
+    std::ostringstream oss;
+    oss << std::put_time(&bt, "%Y-%m-%d %H:%M:%S") << "." << std::setfill('0') << std::setw(6) << micros;
+    return oss.str();
+}
+
+static size_t calculateAbsoluteMaxSocketBuffer() {
+    return 16777216; // Chơi khô máu, phang thẳng 16MB bộ đệm cho chắc cốp
+}
+
+VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
+                     int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd)
+    : socket_(io_context_, udp::endpoint(udp::v4(), 0)), is_running_(false), 
+      recv_buffer_(65536), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu),
+      nodelay_(nodelay), interval_(interval), resend_(resend), nc_(nc), snd_wnd_(snd_wnd), rcv_wnd_(rcv_wnd)
+{
+    asio::ip::udp::resolver resolver(io_context_);
+    server_endpoint_ = *resolver.resolve(udp::v4(), server_ip, std::to_string(port)).begin();
+    size_t auto_buf_sz = calculateAbsoluteMaxSocketBuffer();
+    try {
+        socket_.set_option(asio::socket_base::receive_buffer_size(auto_buf_sz));
+        socket_.set_option(asio::socket_base::send_buffer_size(auto_buf_sz));
+    } catch(...) {}
+}
+
+VfsClient::~VfsClient() { stop(); }
+
+bool VfsClient::start() {
+    if (is_running_) return true;
+    is_running_ = true;
+    kcp_cb_ = ikcp_create(0x11223344, this);
+    kcp_cb_->output = kcp_output_callback;
+    
+    // 🔥 ÉP THAM SỐ KCP TUNING ĐỘNG ĐƯỢC NHẬN TỪ SERVER HOẶC FALLBACK
+    ikcp_nodelay(kcp_cb_, nodelay_, interval_, resend_, nc_);
+    int safe_mtu = (mtu_ > 100) ? (mtu_ - 56) : 1350; 
+    ikcp_wndsize(kcp_cb_, snd_wnd_, rcv_wnd_); 
+    kcp_cb_->stream = 0; 
+    ikcp_setmtu(kcp_cb_, safe_mtu); 
+    kcp_cb_->rx_minrto = 10;
+
+    std::cout << "[" << getRealtimeLog() << "] [DYNAMIC_SPEED_CLIENT] KCP Engine Operational | Tuning Params -> NoDelay: " 
+              << nodelay_ << ", Interval: " << interval_ << "ms, Resend: " << resend_ << ", NC: " << nc_ 
+              << ", WND (SND/RCV): " << snd_wnd_ << "/" << rcv_wnd_ << " | Safe MTU: " << safe_mtu << std::endl;
+
+    io_thread_ = std::thread(&VfsClient::receive_loop, this);
+    timer_thread_ = std::thread(&VfsClient::kcp_update_loop, this);
     return true;
 }
 
-bool CryptoBox::encrypt_payload(const std::vector<uint8_t>& plaintext, const std::string& symmetric_key, std::vector<uint8_t>& ciphertext) {
-    if (symmetric_key.size() != crypto_aead_chacha20poly1305_ietf_KEYBYTES) return false;
-    ciphertext.resize(crypto_aead_chacha20poly1305_ietf_NPUBBYTES + plaintext.size() + crypto_aead_chacha20poly1305_ietf_ABYTES);
-    unsigned char* nonce = ciphertext.data();
-    randombytes_buf(nonce, crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
-    unsigned long long ciphertext_len;
-    int result = crypto_aead_chacha20poly1305_ietf_encrypt(
-        ciphertext.data() + crypto_aead_chacha20poly1305_ietf_NPUBBYTES, &ciphertext_len,
-        plaintext.data(), plaintext.size(), nullptr, 0, nullptr, nonce,
-        reinterpret_cast<const unsigned char*>(symmetric_key.data())
-    );
-    if (result != 0) return false;
-    ciphertext.resize(crypto_aead_chacha20poly1305_ietf_NPUBBYTES + ciphertext_len);
-    return true;
+void VfsClient::stop() {
+    if (!is_running_) return;
+    is_running_ = false; socket_.close();
+    if (io_thread_.joinable()) io_thread_.join();
+    if (timer_thread_.joinable()) timer_thread_.join();
+    if (kcp_cb_) { ikcp_release(kcp_cb_); kcp_cb_ = nullptr; }
 }
 
-bool CryptoBox::decrypt_payload(const std::vector<uint8_t>& ciphertext, const std::string& symmetric_key, std::vector<uint8_t>& plaintext) {
-    if (symmetric_key.size() != crypto_aead_chacha20poly1305_ietf_KEYBYTES) return false;
-    if (ciphertext.size() < crypto_aead_chacha20poly1305_ietf_NPUBBYTES + crypto_aead_chacha20poly1305_ietf_ABYTES) return false;
-    const unsigned char* nonce = ciphertext.data();
-    const unsigned char* actual_cipher = ciphertext.data() + crypto_aead_chacha20poly1305_ietf_NPUBBYTES;
-    unsigned long long actual_cipher_len = ciphertext.size() - crypto_aead_chacha20poly1305_ietf_NPUBBYTES;
-    plaintext.resize(actual_cipher_len - crypto_aead_chacha20poly1305_ietf_ABYTES);
-    unsigned long long plaintext_len;
-    int result = crypto_aead_chacha20poly1305_ietf_decrypt(
-        plaintext.data(), &plaintext_len, nullptr, actual_cipher, actual_cipher_len,
-        nullptr, 0, nonce, reinterpret_cast<const unsigned char*>(symmetric_key.data())
-    );
-    if (result != 0) return false;
-    plaintext.resize(plaintext_len);
-    return true;
+int VfsClient::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user) {
+    VfsClient* client = static_cast<VfsClient*>(user);
+    std::error_code ec;
+    client->socket_.send_to(asio::buffer(buf, len), client->server_endpoint_, 0, ec);
+    return 0;
 }
 
---- END OF FILE: src/rpc_client/crypto_box.cpp ---
-
---- START FILE PATH: src/rpc_client/ikcp.h ---
-//=====================================================================
-//
-// KCP - A Better ARQ Protocol Implementation
-// skywind3000 (at) gmail.com, 2010-2011
-//  
-// Features:
-// + Average RTT reduce 30% - 40% vs traditional ARQ like tcp.
-// + Maximum RTT reduce three times vs tcp.
-// + Lightweight, distributed as a single source file.
-//
-//=====================================================================
-#ifndef _IKCP_H_
-#define _IKCP_H_
-
-#include <stddef.h>
-#include <stdlib.h>
-#include <assert.h>
-
-
-//=====================================================================
-// 32BIT INTEGER DEFINITION 
-//=====================================================================
-#ifndef __INTEGER_32_BITS__
-#define __INTEGER_32_BITS__
-#if defined(_WIN64) || defined(WIN64) || defined(__amd64__) || \
-	defined(__x86_64) || defined(__x86_64__) || defined(_M_IA64) || \
-	defined(_M_AMD64)
-	typedef unsigned int ISTDUINT32;
-	typedef int ISTDINT32;
-#elif defined(_WIN32) || defined(WIN32) || defined(__i386__) || \
-	defined(__i386) || defined(_M_X86)
-	typedef unsigned long ISTDUINT32;
-	typedef long ISTDINT32;
-#elif defined(__MACOS__)
-	typedef UInt32 ISTDUINT32;
-	typedef SInt32 ISTDINT32;
-#elif defined(__APPLE__) && defined(__MACH__)
-	#include <sys/types.h>
-	typedef u_int32_t ISTDUINT32;
-	typedef int32_t ISTDINT32;
-#elif defined(__BEOS__)
-	#include <sys/inttypes.h>
-	typedef u_int32_t ISTDUINT32;
-	typedef int32_t ISTDINT32;
-#elif (defined(_MSC_VER) || defined(__BORLANDC__)) && (!defined(__MSDOS__))
-	typedef unsigned __int32 ISTDUINT32;
-	typedef __int32 ISTDINT32;
-#elif defined(__GNUC__)
-	#include <stdint.h>
-	typedef uint32_t ISTDUINT32;
-	typedef int32_t ISTDINT32;
-#else 
-	typedef unsigned long ISTDUINT32; 
-	typedef long ISTDINT32;
-#endif
-#endif
-
-
-//=====================================================================
-// Integer Definition
-//=====================================================================
-#ifndef __IINT8_DEFINED
-#define __IINT8_DEFINED
-typedef char IINT8;
-#endif
-
-#ifndef __IUINT8_DEFINED
-#define __IUINT8_DEFINED
-typedef unsigned char IUINT8;
-#endif
-
-#ifndef __IUINT16_DEFINED
-#define __IUINT16_DEFINED
-typedef unsigned short IUINT16;
-#endif
-
-#ifndef __IINT16_DEFINED
-#define __IINT16_DEFINED
-typedef short IINT16;
-#endif
-
-#ifndef __IINT32_DEFINED
-#define __IINT32_DEFINED
-typedef ISTDINT32 IINT32;
-#endif
-
-#ifndef __IUINT32_DEFINED
-#define __IUINT32_DEFINED
-typedef ISTDUINT32 IUINT32;
-#endif
-
-#ifndef __IINT64_DEFINED
-#define __IINT64_DEFINED
-#if defined(_MSC_VER) || defined(__BORLANDC__)
-typedef __int64 IINT64;
-#else
-typedef long long IINT64;
-#endif
-#endif
-
-#ifndef __IUINT64_DEFINED
-#define __IUINT64_DEFINED
-#if defined(_MSC_VER) || defined(__BORLANDC__)
-typedef unsigned __int64 IUINT64;
-#else
-typedef unsigned long long IUINT64;
-#endif
-#endif
-
-#ifndef INLINE
-#if defined(__GNUC__)
-
-#if (__GNUC__ > 3) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 1))
-#define INLINE         __inline__ __attribute__((always_inline))
-#else
-#define INLINE         __inline__
-#endif
-
-#elif (defined(_MSC_VER) || defined(__BORLANDC__) || defined(__WATCOMC__))
-#define INLINE __inline
-#else
-#define INLINE 
-#endif
-#endif
-
-#if (!defined(__cplusplus)) && (!defined(inline))
-#define inline INLINE
-#endif
-
-
-//=====================================================================
-// QUEUE DEFINITION                                                  
-//=====================================================================
-#ifndef __IQUEUE_DEF__
-#define __IQUEUE_DEF__
-
-struct IQUEUEHEAD {
-	struct IQUEUEHEAD *next, *prev;
-};
-
-typedef struct IQUEUEHEAD iqueue_head;
-
-
-//---------------------------------------------------------------------
-// queue init                                                         
-//---------------------------------------------------------------------
-#define IQUEUE_HEAD_INIT(name) { &(name), &(name) }
-#define IQUEUE_HEAD(name) \
-	struct IQUEUEHEAD name = IQUEUE_HEAD_INIT(name)
-
-#define IQUEUE_INIT(ptr) ( \
-	(ptr)->next = (ptr), (ptr)->prev = (ptr))
-
-#define IOFFSETOF(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
-
-#define ICONTAINEROF(ptr, type, member) ( \
-		(type*)( ((char*)((type*)ptr)) - IOFFSETOF(type, member)) )
-
-#define IQUEUE_ENTRY(ptr, type, member) ICONTAINEROF(ptr, type, member)
-
-
-//---------------------------------------------------------------------
-// queue operation                     
-//---------------------------------------------------------------------
-#define IQUEUE_ADD(node, head) ( \
-	(node)->prev = (head), (node)->next = (head)->next, \
-	(head)->next->prev = (node), (head)->next = (node))
-
-#define IQUEUE_ADD_TAIL(node, head) ( \
-	(node)->prev = (head)->prev, (node)->next = (head), \
-	(head)->prev->next = (node), (head)->prev = (node))
-
-#define IQUEUE_DEL_BETWEEN(p, n) ((n)->prev = (p), (p)->next = (n))
-
-#define IQUEUE_DEL(entry) (\
-	(entry)->next->prev = (entry)->prev, \
-	(entry)->prev->next = (entry)->next, \
-	(entry)->next = 0, (entry)->prev = 0)
-
-#define IQUEUE_DEL_INIT(entry) do { \
-	IQUEUE_DEL(entry); IQUEUE_INIT(entry); } while (0)
-
-#define IQUEUE_IS_EMPTY(entry) ((entry) == (entry)->next)
-
-#define iqueue_init		IQUEUE_INIT
-#define iqueue_entry	IQUEUE_ENTRY
-#define iqueue_add		IQUEUE_ADD
-#define iqueue_add_tail	IQUEUE_ADD_TAIL
-#define iqueue_del		IQUEUE_DEL
-#define iqueue_del_init	IQUEUE_DEL_INIT
-#define iqueue_is_empty IQUEUE_IS_EMPTY
-
-#define IQUEUE_FOREACH(iterator, head, TYPE, MEMBER) \
-	for ((iterator) = iqueue_entry((head)->next, TYPE, MEMBER); \
-		&((iterator)->MEMBER) != (head); \
-		(iterator) = iqueue_entry((iterator)->MEMBER.next, TYPE, MEMBER))
-
-#define iqueue_foreach(iterator, head, TYPE, MEMBER) \
-	IQUEUE_FOREACH(iterator, head, TYPE, MEMBER)
-
-#define iqueue_foreach_entry(pos, head) \
-	for( (pos) = (head)->next; (pos) != (head) ; (pos) = (pos)->next )
-	
-
-#define __iqueue_splice(list, head) do {	\
-		iqueue_head *first = (list)->next, *last = (list)->prev; \
-		iqueue_head *at = (head)->next; \
-		(first)->prev = (head), (head)->next = (first);		\
-		(last)->next = (at), (at)->prev = (last); }	while (0)
-
-#define iqueue_splice(list, head) do { \
-	if (!iqueue_is_empty(list)) __iqueue_splice(list, head); } while (0)
-
-#define iqueue_splice_init(list, head) do {	\
-	iqueue_splice(list, head);	iqueue_init(list); } while (0)
-
-
-#ifdef _MSC_VER
-#pragma warning(disable:4311)
-#pragma warning(disable:4312)
-#pragma warning(disable:4996)
-#endif
-
-#endif
-
-
-//---------------------------------------------------------------------
-// BYTE ORDER & ALIGNMENT
-//---------------------------------------------------------------------
-#ifndef IWORDS_BIG_ENDIAN
-    #ifdef _BIG_ENDIAN_
-        #if _BIG_ENDIAN_
-            #define IWORDS_BIG_ENDIAN 1
-        #endif
-    #endif
-    #ifndef IWORDS_BIG_ENDIAN
-        #if defined(__hppa__) || \
-            defined(__m68k__) || defined(mc68000) || defined(_M_M68K) || \
-            (defined(__MIPS__) && defined(__MIPSEB__)) || \
-            defined(__ppc__) || defined(__POWERPC__) || defined(_M_PPC) || \
-            defined(__sparc__) || defined(__powerpc__) || \
-            defined(__mc68000__) || defined(__s390x__) || defined(__s390__)
-            #define IWORDS_BIG_ENDIAN 1
-        #endif
-    #endif
-    #ifndef IWORDS_BIG_ENDIAN
-        #define IWORDS_BIG_ENDIAN  0
-    #endif
-#endif
-
-#ifndef IWORDS_MUST_ALIGN
-	#if defined(__i386__) || defined(__i386) || defined(_i386_)
-		#define IWORDS_MUST_ALIGN 0
-	#elif defined(_M_IX86) || defined(_X86_) || defined(__x86_64__)
-		#define IWORDS_MUST_ALIGN 0
-	#elif defined(__amd64) || defined(__amd64__)
-		#define IWORDS_MUST_ALIGN 0
-	#else
-		#define IWORDS_MUST_ALIGN 1
-	#endif
-#endif
-
-
-//=====================================================================
-// Predefine struct
-//=====================================================================
-struct IKCPCB;
-typedef struct IKCPCB ikcpcb;
-
-
-//=====================================================================
-// SEGMENT
-//=====================================================================
-struct IKCPSEG
-{
-	struct IQUEUEHEAD node;
-	IUINT32 conv;
-	IUINT32 cmd;
-	IUINT32 frg;
-	IUINT32 wnd;
-	IUINT32 ts;
-	IUINT32 sn;
-	IUINT32 una;
-	IUINT32 len;
-	IUINT32 resendts;
-	IUINT32 rto;
-	IUINT32 fastack;
-	IUINT32 xmit;
-	char data[1];
-};
-
-
-//---------------------------------------------------------------------
-// IKCPOPS - pluggable congestion control operations
-//---------------------------------------------------------------------
-struct IKCPOPS
-{
-	const char *name;
-	int (*init)(ikcpcb *kcp);
-	void (*release)(ikcpcb *kcp);
-	void (*on_ack)(ikcpcb *kcp, IUINT32 acked_segs, IUINT32 acked_bytes,
-			IUINT32 prior_in_flight);
-	void (*on_fast_retransmit)(ikcpcb *kcp, IUINT32 fast_retrans,
-				IUINT32 inflight, IUINT32 prior_cwnd);
-	void (*on_timeout)(ikcpcb *kcp, IUINT32 prior_cwnd);
-	void (*on_tick)(ikcpcb *kcp);
-	void (*on_app_limited)(ikcpcb *kcp, IUINT32 inflight);
-	void (*on_rtt)(ikcpcb *kcp, IINT32 rtt);
-	void (*on_pkt_sent)(ikcpcb *kcp, IUINT32 sn, IUINT32 ts,
-				IUINT32 len, IUINT32 inflight, IUINT32 xmit);
-	void (*on_pkt_acked)(ikcpcb *kcp, IUINT32 sn, IUINT32 ts,
-				IUINT32 len, IINT32 rtt, IUINT32 xmit);
-	IUINT32 (*get_info)(ikcpcb *kcp, void *buf, IUINT32 bufsize);
-	IUINT32 (*pacing_rate)(ikcpcb *kcp);
-};
-
-
-//---------------------------------------------------------------------
-// IKCPCB
-//---------------------------------------------------------------------
-struct IKCPCB
-{
-	IUINT32 conv, mtu, mss, state;
-	IUINT32 snd_una, snd_nxt, rcv_nxt;
-	IUINT32 ts_recent, ts_lastack, ssthresh;
-	IINT32 rx_rttval, rx_srtt, rx_rto, rx_minrto;
-	IUINT32 snd_wnd, rcv_wnd, rmt_wnd, cwnd, probe;
-	IUINT32 current, interval, ts_flush, xmit;
-	IUINT32 nrcv_buf, nsnd_buf;
-	IUINT32 nrcv_que, nsnd_que;
-	IUINT32 nodelay, updated;
-	IUINT32 ts_probe, probe_wait;
-	IUINT32 dead_link, incr;
-	struct IQUEUEHEAD snd_queue;
-	struct IQUEUEHEAD rcv_queue;
-	struct IQUEUEHEAD snd_buf;
-	struct IQUEUEHEAD rcv_buf;
-	IUINT32 *acklist;
-	IUINT32 ackcount;
-	IUINT32 ackblock;
-	IUINT32 ackedlen;
-	void *user;
-	char *buffer;
-	int fastresend;
-	int fastlimit;
-	int nocwnd, stream;
-	const struct IKCPOPS *ccops;
-	void *congest;
-	int logmask;
-	int (*output)(const char *buf, int len, struct IKCPCB *kcp, void *user);
-	void (*writelog)(const char *log, struct IKCPCB *kcp, void *user);
-};
-
-
-#define IKCP_LOG_OUTPUT			1
-#define IKCP_LOG_INPUT			2
-#define IKCP_LOG_SEND			4
-#define IKCP_LOG_RECV			8
-#define IKCP_LOG_IN_DATA		16
-#define IKCP_LOG_IN_ACK			32
-#define IKCP_LOG_IN_PROBE		64
-#define IKCP_LOG_IN_WINS		128
-#define IKCP_LOG_OUT_DATA		256
-#define IKCP_LOG_OUT_ACK		512
-#define IKCP_LOG_OUT_PROBE		1024
-#define IKCP_LOG_OUT_WINS		2048
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-//---------------------------------------------------------------------
-// interface
-//---------------------------------------------------------------------
-
-// create a new kcp control object, 'conv' must be equal in both endpoints
-// of the same connection. 'user' will be passed to the output callback.
-// output callback can be set up like this: 'kcp->output = my_udp_output'
-ikcpcb* ikcp_create(IUINT32 conv, void *user);
-
-// release kcp control object
-void ikcp_release(ikcpcb *kcp);
-
-// set output callback, which will be invoked by kcp
-void ikcp_setoutput(ikcpcb *kcp, int (*output)(const char *buf, int len, 
-	ikcpcb *kcp, void *user));
-
-// user/upper level recv: returns size, returns below zero for EAGAIN
-int ikcp_recv(ikcpcb *kcp, char *buffer, int len);
-
-// user/upper level send, returns below zero for error
-int ikcp_send(ikcpcb *kcp, const char *buffer, int len);
-
-// update state (call it repeatedly, every 10ms-100ms), or you can ask 
-// ikcp_check when to call it again (without ikcp_input/_send calling).
-// 'current' - current timestamp in millisec. 
-void ikcp_update(ikcpcb *kcp, IUINT32 current);
-
-// Determines when you should invoke ikcp_update next:
-// returns the timestamp (in milliseconds) at which you should call
-// ikcp_update, assuming no ikcp_input/_send calls occur in between.
-// You can call ikcp_update at that time instead of calling it repeatedly.
-// Important for reducing unnecessary ikcp_update invocations. Use it to
-// schedule ikcp_update (e.g., implementing an epoll-like mechanism,
-// or optimizing ikcp_update when handling massive kcp connections).
-IUINT32 ikcp_check(const ikcpcb *kcp, IUINT32 current);
-
-// when you receive a low-level packet (e.g., UDP packet), call this
-int ikcp_input(ikcpcb *kcp, const char *data, long size);
-
-// flush pending data
-void ikcp_flush(ikcpcb *kcp);
-
-// check the size of next message in the recv queue
-int ikcp_peeksize(const ikcpcb *kcp);
-
-// change MTU size, default is 1400
-int ikcp_setmtu(ikcpcb *kcp, int mtu);
-
-// set maximum window size: sndwnd=32, rcvwnd=32 by default
-int ikcp_wndsize(ikcpcb *kcp, int sndwnd, int rcvwnd);
-
-// get how many packets are waiting to be sent
-int ikcp_waitsnd(const ikcpcb *kcp);
-
-// fastest: ikcp_nodelay(kcp, 1, 20, 2, 1)
-// nodelay: 0:disable (default), 1:enable
-// interval: internal update timer interval in ms, default is 100ms
-// resend: 0:disable fast resend (default), 1:enable fast resend
-// nc: 0:normal congestion control (default), 1:disable congestion control
-int ikcp_nodelay(ikcpcb *kcp, int nodelay, int interval, int resend, int nc);
-
-// install congestion control algorithm, NULL restores builtin
-int ikcp_setcc(ikcpcb *kcp, const struct IKCPOPS *ops);
-
-// write log with kcp->writelog
-void ikcp_log(ikcpcb *kcp, int mask, const char *fmt, ...);
-
-// setup allocator
-void ikcp_allocator(void* (*new_malloc)(size_t), void (*new_free)(void*));
-
-// read conv
-IUINT32 ikcp_getconv(const void *ptr);
-
-
-#ifdef __cplusplus
+// 🔥 VÒNG LẶP HÚT CẠN CỦA CLIENT
+void VfsClient::receive_loop() {
+    while (is_running_) {
+        std::error_code ec;
+        asio::ip::udp::endpoint sender;
+        size_t bytes_recvd = socket_.receive_from(asio::buffer(recv_buffer_), sender, 0, ec);
+        
+        if (ec || bytes_recvd == 0) {
+            if (ec == asio::error::would_block || ec == asio::error::try_again) continue;
+            break;
+        }
+
+        std::lock_guard<std::mutex> lock(kcp_mutex_);
+        ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
+        
+        int len;
+        while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
+            std::vector<uint8_t> encrypted_payload(len);
+            ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
+            std::vector<uint8_t> plaintext;
+            if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
+                if (plaintext.size() >= sizeof(VfsPacketHeader)) {
+                    VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
+                    uint32_t req_id = (uint32_t)(hdr->session_id & 0xFFFFFFFF);
+                    zhiauth_cgo_on_response(req_id, plaintext.data(), plaintext.size());
+                }
+            }
+        }
+    }
 }
-#endif
 
-#endif
+void VfsClient::kcp_update_loop() {
+    while (is_running_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        uint32_t current_clock = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        std::lock_guard<std::mutex> lock(kcp_mutex_);
+        if (kcp_cb_) ikcp_update(kcp_cb_, current_clock);
+    }
+}
 
-
-
---- END OF FILE: src/rpc_client/ikcp.h ---
+void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
+    if (request_payload.size() < sizeof(VfsPacketHeader)) return;
+    std::vector<uint8_t> encrypted_payload;
+    if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) return;
+    {
+        std::lock_guard<std::mutex> lock(kcp_mutex_);
+        ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), encrypted_payload.size());
+        ikcp_flush(kcp_cb_);
+    }
+}
+--- END OF FILE: src/rpc_client/vfs_client.cpp ---
 
 --- START FILE PATH: src/rpc_client/vfs_client.h ---
 #ifndef ZHIAUTH_VFS_CLIENT_H
@@ -3056,4 +2432,506 @@ extern void zhiauth_cgo_on_response(uint64_t reqId, uint8_t* data, size_t length
 #endif
 
 --- END OF FILE: src/bridge/client_bridge.h ---
+
+--- START FILE PATH: ZhiAuth/ZhiLogger.swift ---
+import Foundation
+
+enum LogLevel: String {
+    case DEBUG = "DEBUG"
+    case INFO = "INFO"
+    case WARNING = "WARNING"
+    case ERROR = "ERROR"
+}
+
+class ZhiLogger {
+    private static let lock = NSLock()
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+    
+    static func log(level: LogLevel, file: String = #file, line: Int = #line, function: String = #function, message: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        
+        let timestamp = dateFormatter.string(from: Date())
+        let fileName = (file as NSString).lastPathComponent
+        print("[\(timestamp)] [\(level.rawValue)] [\(fileName):\(line)::\(function)] -> \(message)")
+    }
+    
+    static func debug(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .DEBUG, file: file, line: line, function: function, message: message)
+    }
+    
+    static func info(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .INFO, file: file, line: line, function: function, message: message)
+    }
+    
+    static func warning(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .WARNING, file: file, line: line, function: function, message: message)
+    }
+    
+    static func error(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .ERROR, file: file, line: line, function: function, message: message)
+    }
+}
+--- END OF FILE: ZhiAuth/ZhiLogger.swift ---
+
+--- START FILE PATH: ZhiAuth/Info.plist ---
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.fileprovider-nonui</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).ZhiFileProviderExtension</string>
+	</dict>
+</dict>
+</plist>
+--- END OF FILE: ZhiAuth/Info.plist ---
+
+--- START FILE PATH: ZhiAuth/ZhiFileProviderExtension.swift ---
+import FileProvider
+import Foundation
+import UniformTypeIdentifiers
+import UIKit
+
+class ZhiFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
+    var quicTunnel: ZhiQuicTunnel?
+    var serverIP = "192.168.1.83"
+    
+    required init(domain: NSFileProviderDomain) {
+        super.init()
+        ZhiLogger.info("ZhiAuth FileProvider Extension initialized for domain: \(domain.identifier.rawValue)")
+        
+        Task { [self] in
+            do {
+                // Bọc MainActor.run để lấy HWID an toàn từ UIKit
+                let hwid = await MainActor.run {
+                    UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS"
+                }
+                
+                let authCmd = "AUTH_REQ|USER:huang|PASS:123456|LAN:\(self.serverIP)|TS:NONE|HWID:\(hwid)"
+                
+                let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: self.serverIP, authPort: 5555, authCmd: authCmd)
+                
+                if auth.isSuccess {
+                    _ = ZhiKcpEngine.initCore(ip: self.serverIP, port: Int32(auth.kcpPort), symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1350, tuning: auth.tuning)
+                    
+                    self.quicTunnel = ZhiQuicTunnel(ip: self.serverIP, port: auth.quicPort)
+                    self.quicTunnel?.connect()
+                    
+                    ZhiLogger.info("Dual-Tunnel (KCP + QUIC) is fully operational!")
+                }
+            } catch {
+                ZhiLogger.error("Authentication/Tunnel ignition failed: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    func invalidate() {
+        ZhiLogger.warning("ZhiAuth FileProvider Extension invalidated.")
+        ZhiKcpEngine.shutdownCore()
+    }
+    
+    // 1. LẤY THÔNG TIN FILE (OP_STAT)
+    func item(for identifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest, completionHandler: @escaping (NSFileProviderItem?, Error?) -> Void) -> Progress {
+        let progress = Progress(totalUnitCount: 1)
+        Task {
+            do {
+                let path = identifier.rawValue == NSFileProviderItemIdentifier.rootContainer.rawValue ? "/" : identifier.rawValue
+                let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: path, offset: 0, reqLen: 0, payloadData: nil)
+                
+                if statData.count >= 37 {
+                    let size = statData.subdata(in: 0..<8).withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
+                    let isDir = statData[8] == 1
+                    let item = ZhiFileItem(identifier: identifier, filename: (path as NSString).lastPathComponent, isDirectory: isDir, size: Int64(size))
+                    completionHandler(item, nil)
+                } else {
+                    completionHandler(nil, NSFileProviderError(.noSuchItem))
+                }
+            } catch {
+                ZhiLogger.error("Failed to stat item at path: \(identifier.rawValue) - Error: \(error.localizedDescription)")
+                completionHandler(nil, error)
+            }
+        }
+        return progress
+    }
+    
+    // 2. TẢI NỘI DUNG FILE (OP_READ)
+    func fetchContents(for itemIdentifier: NSFileProviderItemIdentifier, version requestedVersion: NSFileProviderItemVersion?, request: NSFileProviderRequest, completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void) -> Progress {
+        let progress = Progress(totalUnitCount: 100)
+        Task {
+            do {
+                let path = itemIdentifier.rawValue
+                ZhiLogger.info("Fetching contents via KCP for file: \(path)")
+                let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: path, offset: 0, reqLen: 0, payloadData: nil)
+                var size: UInt64 = 0
+                if statData.count >= 37 {
+                    size = statData.subdata(in: 0..<8).withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
+                }
+                
+                let fileData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_READ, path: path, offset: 0, reqLen: UInt32(size), payloadData: nil)
+                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try fileData.write(to: tempURL)
+                
+                let item = ZhiFileItem(identifier: itemIdentifier, filename: (path as NSString).lastPathComponent, isDirectory: false, size: Int64(fileData.count))
+                completionHandler(tempURL, item, nil)
+            } catch {
+                ZhiLogger.error("Fetch contents failed for \(itemIdentifier.rawValue) - Error: \(error.localizedDescription)")
+                completionHandler(nil, nil, error)
+            }
+        }
+        return progress
+    }
+
+    // 3. TẠO FILE/THƯ MỤC MỚI (OP_MKDIR / OP_WRITE)
+    func createItem(basedOn itemTemplate: NSFileProviderItem, fields: NSFileProviderItemFields, contents url: URL?, options: NSFileProviderCreateItemOptions = [], request: NSFileProviderRequest, completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
+        let progress = Progress(totalUnitCount: 1)
+        Task {
+            do {
+                let path = itemTemplate.itemIdentifier.rawValue
+                let isDir = itemTemplate.contentType == .folder
+                let opcode: VfsOpcode = isDir ? .OP_MKDIR : .OP_WRITE
+                var payloadData: Data? = nil
+                if let url = url, !isDir {
+                    payloadData = try Data(contentsOf: url)
+                }
+                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: opcode, path: path, offset: 0, reqLen: 0, payloadData: payloadData)
+                let createdItem = ZhiFileItem(identifier: itemTemplate.itemIdentifier, filename: itemTemplate.filename, isDirectory: isDir, size: Int64(payloadData?.count ?? 0))
+                completionHandler(createdItem, [], false, nil)
+            } catch {
+                ZhiLogger.error("Create item failed: \(error.localizedDescription)")
+                completionHandler(nil, [], false, error)
+            }
+        }
+        return progress
+    }
+
+    // 4. SỬA FILE (OP_WRITE)
+    func modifyItem(_ item: NSFileProviderItem, baseVersion: NSFileProviderItemVersion, changedFields: NSFileProviderItemFields, contents newContents: URL?, options: NSFileProviderModifyItemOptions = [], request: NSFileProviderRequest, completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
+        let progress = Progress(totalUnitCount: 1)
+        Task {
+            do {
+                let path = item.itemIdentifier.rawValue
+                var payloadData: Data? = nil
+                if let newContents = newContents {
+                    payloadData = try Data(contentsOf: newContents)
+                }
+                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_WRITE, path: path, offset: 0, reqLen: 0, payloadData: payloadData)
+                completionHandler(item, [], false, nil)
+            } catch {
+                ZhiLogger.error("Modify item failed: \(error.localizedDescription)")
+                completionHandler(nil, [], false, error)
+            }
+        }
+        return progress
+    }
+
+    // 5. XÓA FILE/THƯ MỤC (OP_DELETE)
+    func deleteItem(identifier: NSFileProviderItemIdentifier, baseVersion: NSFileProviderItemVersion, options: NSFileProviderDeleteItemOptions = [], request: NSFileProviderRequest, completionHandler: @escaping (Error?) -> Void) -> Progress {
+        let progress = Progress(totalUnitCount: 1)
+        Task {
+            do {
+                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_DELETE, path: identifier.rawValue, offset: 0, reqLen: 0, payloadData: nil)
+                completionHandler(nil)
+            } catch {
+                ZhiLogger.error("Delete item failed: \(error.localizedDescription)")
+                completionHandler(error)
+            }
+        }
+        return progress
+    }
+    
+    // 6. XEM DANH SÁCH THƯ MỤC
+    func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest) throws -> NSFileProviderEnumerator {
+        return ZhiFileEnumerator(containerIdentifier: containerItemIdentifier)
+    }
+}
+
+class ZhiFileItem: NSObject, NSFileProviderItem {
+    var itemIdentifier: NSFileProviderItemIdentifier
+    var parentItemIdentifier: NSFileProviderItemIdentifier
+    var filename: String
+    var contentType: UTType
+    var documentSize: NSNumber?
+    
+    init(identifier: NSFileProviderItemIdentifier, filename: String, isDirectory: Bool, size: Int64) {
+        self.itemIdentifier = identifier
+        self.parentItemIdentifier = .rootContainer
+        self.filename = filename
+        self.contentType = isDirectory ? .folder : .data
+        self.documentSize = NSNumber(value: size)
+    }
+}
+
+class ZhiFileEnumerator: NSObject, NSFileProviderEnumerator {
+    let containerIdentifier: NSFileProviderItemIdentifier
+    init(containerIdentifier: NSFileProviderItemIdentifier) {
+        self.containerIdentifier = containerIdentifier
+    }
+    func invalidate() {}
+    
+    func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
+        Task {
+            do {
+                let path = containerIdentifier.rawValue == NSFileProviderItemIdentifier.rootContainer.rawValue ? "/" : containerIdentifier.rawValue
+                ZhiLogger.info("Enumerating items for folder: \(path)")
+                let listData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_LIST, path: path, offset: 0, reqLen: 0, payloadData: nil)
+                
+                var items: [ZhiFileItem] = []
+                var offset = 0
+                let totalLen = listData.count
+                
+                while offset + 15 <= totalLen {
+                    let nameLen = Int(listData.subdata(in: offset..<offset+2).withUnsafeBytes { $0.load(as: UInt16.self).littleEndian })
+                    let isDirVal = listData[offset + 2]
+                    let size = listData.subdata(in: offset+3..<offset+11).withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
+                    offset += 15
+                    if offset + nameLen > totalLen { break }
+                    
+                    let nameData = listData.subdata(in: offset..<offset+nameLen)
+                    let name = String(data: nameData, encoding: .utf8) ?? "Unknown"
+                    offset += nameLen
+                    
+                    let itemID = NSFileProviderItemIdentifier(path == "/" ? "/\(name)" : "\(path)/\(name)")
+                    let item = ZhiFileItem(identifier: itemID, filename: name, isDirectory: isDirVal == 1, size: Int64(size))
+                    items.append(item)
+                }
+                observer.didEnumerate(items)
+                observer.finishEnumerating(upTo: nil)
+            } catch {
+                ZhiLogger.error("Enumerate items failed: \(error.localizedDescription)")
+                observer.finishEnumeratingWithError(error)
+            }
+        }
+    }
+}
+--- END OF FILE: ZhiAuth/ZhiFileProviderExtension.swift ---
+
+--- START FILE PATH: ZhiAuth/ZhiKcpEngine.swift ---
+import Foundation
+
+struct KcpTuningParams {
+    var noDelay: Int32 = 1
+    var interval: Int32 = 10
+    var resend: Int32 = 2
+    var nc: Int32 = 0
+    var sndWnd: Int32 = 512
+    var rcvWnd: Int32 = 512
+    var isDynamic: Bool = false
+}
+
+enum VfsOpcode: UInt8 {
+    case OP_PING     = 0x00
+    case OP_STAT     = 0x01
+    case OP_LIST     = 0x02
+    case OP_READ     = 0x03
+    case OP_WRITE    = 0x04
+    case OP_MKDIR    = 0x05
+    case OP_DELETE   = 0x06
+    case OP_RENAME   = 0x07
+    case OP_TRUNCATE = 0x08
+    case OP_ERROR    = 0xFF
+}
+
+private var pendingRequests: [UInt32: (Data) -> Void] = [:]
+private let requestLock = NSLock()
+private var globalReqId: UInt32 = 0
+private let appClientID: UInt32 = UInt32((Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 1) * 1_000_000_000).rounded())
+
+@_cdecl("zhiauth_cgo_on_response")
+public func zhiauth_cgo_on_response(reqId: UInt64, data: UnsafePointer<UInt8>?, length: Int) {
+    guard let dataPtr = data, length > 0 else {
+        ZhiLogger.error("C++ Core returned EMPTY payload for Request ID: \(reqId)!")
+        return
+    }
+    
+    let goReqId = UInt32(truncatingIfNeeded: reqId)
+    let responseData = Data(bytes: dataPtr, count: length)
+    
+    requestLock.lock()
+    let completion = pendingRequests[goReqId]
+    pendingRequests.removeValue(forKey: goReqId)
+    requestLock.unlock()
+    
+    if let completion = completion {
+        completion(responseData)
+    } else {
+        ZhiLogger.warning("Phantom callback! Request ID \(goReqId) not found in pending queue.")
+    }
+}
+
+class ZhiKcpEngine {
+    static func initCore(ip: String, port: Int32, symKey: String, mtu: Int32, tuning: KcpTuningParams) -> Bool {
+        ZhiLogger.info("Igniting C++ KCP Engine... Target: \(ip):\(port)")
+        
+        let result = ip.withCString { ipPtr in
+            symKey.withCString { keyPtr in
+                zhiauth_client_init(
+                    ipPtr, port, keyPtr, mtu,
+                    tuning.noDelay, tuning.interval, tuning.resend, tuning.nc,
+                    tuning.sndWnd, tuning.rcvWnd
+                )
+            }
+        }
+        
+        if result == 0 {
+            ZhiLogger.info("C++ KCP Engine Operational!")
+            return true
+        } else {
+            ZhiLogger.error("C++ KCP Engine Initialization FAILED!")
+            return false
+        }
+    }
+    
+    static func shutdownCore() {
+        ZhiLogger.warning("Halting C++ KCP Engine...")
+        zhiauth_client_shutdown()
+    }
+    
+    static func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
+        return try await withCheckedThrowingContinuation { continuation in
+            var buf = Data()
+            
+            requestLock.lock()
+            globalReqId &+= 1
+            let currentReqId = globalReqId
+            requestLock.unlock()
+            
+            let combinedSessionId: UInt64 = (UInt64(appClientID) << 32) | UInt64(currentReqId)
+            let dataLen: UInt32 = (opcode == .OP_READ) ? reqLen : UInt32(payloadData?.count ?? 0)
+            let pathData = path.data(using: .utf8) ?? Data()
+            let pathLen: UInt16 = UInt16(pathData.count)
+            
+            withUnsafeBytes(of: UInt32(0x5A484941).littleEndian) { buf.append(contentsOf: $0) }
+            buf.append(opcode.rawValue)
+            withUnsafeBytes(of: combinedSessionId.littleEndian) { buf.append(contentsOf: $0) }
+            withUnsafeBytes(of: offset.littleEndian) { buf.append(contentsOf: $0) }
+            withUnsafeBytes(of: dataLen.littleEndian) { buf.append(contentsOf: $0) }
+            withUnsafeBytes(of: pathLen.littleEndian) { buf.append(contentsOf: $0) }
+            
+            buf.append(pathData)
+            if let pData = payloadData {
+                buf.append(pData)
+            }
+            
+            ZhiLogger.debug("Pumping Request [ID: \(currentReqId)] [OP: \(opcode.rawValue)] down to C++ Core... (Payload Size: \(buf.count) bytes)")
+            
+            requestLock.lock()
+            pendingRequests[currentReqId] = { responseBytes in
+                if responseBytes.count < 27 {
+                    continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "VFS Packet Corrupted"]))
+                    return
+                }
+                if responseBytes[4] == VfsOpcode.OP_ERROR.rawValue {
+                    continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -2, userInfo: [NSLocalizedDescriptionKey: "Server VFS Error"]))
+                    return
+                }
+                let actualData = responseBytes.subdata(in: 27..<responseBytes.count)
+                continuation.resume(returning: actualData)
+            }
+            requestLock.unlock()
+            
+            Task {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                var didTimeout = false
+                requestLock.lock()
+                if pendingRequests.keys.contains(currentReqId) {
+                    pendingRequests.removeValue(forKey: currentReqId)
+                    didTimeout = true
+                }
+                requestLock.unlock()
+                
+                if didTimeout {
+                    ZhiLogger.error("CRITICAL! Signal lost. 15-second Timeout on Request ID: \(currentReqId) [OP: \(opcode.rawValue)] [Path: \(path)]")
+                    continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -3, userInfo: [NSLocalizedDescriptionKey: "VFS RPC Timeout"]))
+                }
+            }
+            
+            buf.withUnsafeBytes { rawBuffer in
+                if let ptr = rawBuffer.bindMemory(to: UInt8.self).baseAddress {
+                    zhiauth_send_vfs_command_async(ptr, buf.count)
+                }
+            }
+        }
+    }
+}
+--- END OF FILE: ZhiAuth/ZhiKcpEngine.swift ---
+
+--- START FILE PATH: ZhiAuth/ZhiNetworkAuth.swift ---
+import Foundation
+import Network
+
+struct AuthResponse {
+    var isSuccess: Bool = false
+    var sharedPath: String = ""
+    var quicPort: Int = 4433
+    var kcpPort: Int = 6666
+    var tuning: KcpTuningParams = KcpTuningParams()
+}
+
+class ZhiNetworkAuth {
+    static func executePortKnockingAuth(ip: String, authPort: UInt16, authCmd: String) async throws -> AuthResponse {
+        return try await withCheckedThrowingContinuation { continuation in
+            let host = NWEndpoint.Host(ip)
+            guard let port = NWEndpoint.Port(rawValue: authPort) else {
+                continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -400, userInfo: [NSLocalizedDescriptionKey: "Invalid Port"]))
+                return
+            }
+            
+            let connection = NWConnection(host: host, port: port, using: .udp)
+            
+            connection.stateUpdateHandler = { state in
+                if case .ready = state {
+                    guard let cmdData = authCmd.data(using: .utf8) else { return }
+                    connection.send(content: cmdData, completion: .idempotent)
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, _, error in
+                        connection.cancel()
+                        if let data = data, let respStr = String(data: data, encoding: .utf8), respStr.hasPrefix("AUTH_SUCCESS") {
+                            var resp = AuthResponse(isSuccess: true)
+                            let parts = respStr.split(separator: "|")
+                            if parts.count >= 4 {
+                                resp.sharedPath = String(parts[1])
+                                resp.quicPort = Int(parts[2]) ?? 4433
+                                resp.kcpPort = Int(parts[3]) ?? 6666
+                            }
+                            if parts.count >= 10 {
+                                resp.tuning.noDelay = Int32(parts[4]) ?? 1
+                                resp.tuning.interval = Int32(parts[5]) ?? 10
+                                resp.tuning.resend = Int32(parts[6]) ?? 2
+                                resp.tuning.nc = Int32(parts[7]) ?? 0
+                                resp.tuning.sndWnd = Int32(parts[8]) ?? 512
+                                resp.tuning.rcvWnd = Int32(parts[9]) ?? 512
+                                resp.tuning.isDynamic = true
+                            }
+                            continuation.resume(returning: resp)
+                        } else {
+                            continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -401, userInfo: [NSLocalizedDescriptionKey: "Authentication Failed"]))
+                        }
+                    }
+                }
+            }
+            connection.start(queue: .global())
+        }
+    }
+}
+--- END OF FILE: ZhiAuth/ZhiNetworkAuth.swift ---
 
