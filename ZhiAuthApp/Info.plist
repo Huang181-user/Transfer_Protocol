@@ -17,8 +17,8 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchScreen</key>
-        <key>NSFileProviderDomainUsageDescription</key>
-        <string>App cần quyền để gắn ổ đĩa ảo ZhiAuth vào ứng dụng Tệp.</string>
 	<dict/>
+	<key>NSFileProviderDomainUsageDescription</key>
+	<string>App cần quyền để gắn ổ đĩa ảo ZhiAuth vào ứng dụng Tệp.</string>
 </dict>
 </plist>

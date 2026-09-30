@@ -5,7 +5,6 @@
 ├── compress_code.py
 ├── connect_xcode_usbmux.sh
 ├── project.yml
-├── quic-go-custom
 ├── src
 │   ├── bridge
 │   │   ├── client_bridge.cpp
@@ -31,6 +30,7 @@
 ├── ZhiAuthApp
 │   ├── Info.plist
 │   └── ZhiAuthApp.swift
+├── ZhiAuth.entitlements
 └── ZhiAuth.xcodeproj
     ├── project.pbxproj
     ├── project.xcworkspace
@@ -49,7 +49,7 @@
             └── xcschemes
                 └── xcschememanagement.plist
 
-20 directories, 27 files
+19 directories, 28 files
 
 
 --- START FILE PATH: project.yml ---
@@ -70,10 +70,14 @@ targets:
     sources:
       - ZhiAuthApp
     infoPlist: ZhiAuthApp/Info.plist
+    # SỬA LẠI ĐOẠN NÀY
+    entitlements:
+      path: ZhiAuth.entitlements
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.ruanhuang.ZhiAuthApp
     dependencies:
       - target: ZhiAuthFileProvider
+        embed: true
       
   ZhiAuthFileProvider:
     type: app-extension
@@ -83,6 +87,9 @@ targets:
       - ZhiAuth
       - src
     infoPlist: ZhiAuth/Info.plist
+    # VÀ SỬA LUÔN ĐOẠN NÀY
+    entitlements:
+      path: ZhiAuth.entitlements
     dependencies:
       - package: Sodium
     settings:
@@ -119,6 +126,8 @@ targets:
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchScreen</key>
+        <key>NSFileProviderDomainUsageDescription</key>
+        <string>App cần quyền để gắn ổ đĩa ảo ZhiAuth vào ứng dụng Tệp.</string>
 	<dict/>
 </dict>
 </plist>
@@ -126,9 +135,27 @@ targets:
 
 --- START FILE PATH: ZhiAuthApp/ZhiAuthApp.swift ---
 import SwiftUI
+import FileProvider // Bắt buộc phải import thư viện này để gọi lệnh đăng ký
 
 @main
 struct ZhiAuthApp: App {
+    
+    init() {
+        // Đăng ký "Ổ đĩa ảo" với hệ thống iOS ngay khi vừa mở app
+        let domain = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(rawValue: "ZhiAuthDomain"),
+            displayName: "ZhiAuth Server"
+        )
+        
+        NSFileProviderManager.add(domain) { error in
+            if let error = error {
+                print("❌ Lỗi đăng ký ổ đĩa: \(error.localizedDescription)")
+            } else {
+                print("✅ Đã chèn ổ đĩa ảo ZhiAuth vào app Tệp thành công!")
+            }
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             VStack(spacing: 20) {
@@ -164,15 +191,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Cài đặt XcodeGen & ASIO
+        run: |
+          brew install xcodegen asio
+          xcodegen generate # Ép dịch lại project.yml thành file .xcodeproj mới nhất!
+
       - name: Ép dùng Xcode 16.2.0
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '16.2.0'
 
-      - name: Nạp thư viện C++ (Fix lỗi thiếu asio.hpp)
-        run: brew install asio
-
-      - name: Biên dịch Xcode Project (Realtime Log)
+      - name: Biên dịch Xcode Project
         run: |
           set -o pipefail
           xcodebuild clean build \
@@ -188,10 +217,13 @@ jobs:
 
       - name: Đóng gói thành file .ipa
         run: |
-          echo "==== ĐANG ĐÓNG GÓI THÀNH IPA ===="
+          echo "==== ĐANG ĐÓNG GÓI THÀNH IPA CHUẨN APPLE ===="
           mkdir -p Payload
-          mv build/Release-iphoneos/*.app Payload/
-          zip -r ZhiAuthApp.ipa Payload
+          # Copy toàn bộ app (đã nhúng C++) vào Payload
+          cp -R build/Release-iphoneos/ZhiAuthApp.app Payload/
+          # Dùng lệnh ditto của Apple để nén chuẩn xác, lọc sạch rác hệ điều hành
+          ditto -c -k --sequesterRsrc --keepParent Payload ZhiAuthApp.ipa
+          echo "✅ Đóng gói hoàn tất!"
 
       - name: Xuất file IPA cho Ný tải
         uses: actions/upload-artifact@v4
@@ -199,7 +231,6 @@ jobs:
           name: ZhiAuthApp-iOS
           path: ZhiAuthApp.ipa
           retention-days: 7
-
 --- END OF FILE: .github/workflows/build-ios.yml ---
 
 --- START FILE PATH: src/rpc_client/crypto_box.h ---
@@ -2502,6 +2533,9 @@ class ZhiLogger {
 		<string>com.apple.fileprovider-nonui</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).ZhiFileProviderExtension</string>
+
+                <key>NSExtensionFileProviderDocumentGroup</key>
+                <string>group.com.ruanhuang.ZhiAuth</string>
 	</dict>
 </dict>
 </plist>
