@@ -14,15 +14,29 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - ZhiAuthApp
+      - path: ZhiAuth
+        excludes:
+          - ZhiFileProviderExtension.swift
+      - src
     infoPlist: ZhiAuthApp/Info.plist
-    # SỬA LẠI ĐOẠN NÀY
     entitlements:
       path: ZhiAuth.entitlements
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.ruanhuang.ZhiAuthApp
+      SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h
+      HEADER_SEARCH_PATHS: 
+        - $(SRCROOT)/src/bridge
+        - $(SRCROOT)/src/rpc_client
+        - $(SRCROOT)/src
+        - /opt/homebrew/include
+        - /usr/local/include
+      CLANG_ENABLE_MODULES: "YES"
+      OTHER_LDFLAGS: "-lc++"
+      GCC_PREPROCESSOR_DEFINITIONS: "ASIO_STANDALONE=1"
     dependencies:
       - target: ZhiAuthFileProvider
         embed: true
+      - package: Sodium
       
   ZhiAuthFileProvider:
     type: app-extension
@@ -32,7 +46,6 @@ targets:
       - ZhiAuth
       - src
     infoPlist: ZhiAuth/Info.plist
-    # VÀ SỬA LUÔN ĐOẠN NÀY
     entitlements:
       path: ZhiAuth.entitlements
     dependencies:
