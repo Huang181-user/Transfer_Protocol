@@ -3,10 +3,14 @@ import UIKit
 
 @main
 struct ZhiAuthApp: App {
+    // Lưu thông tin vào bộ nhớ máy, nhập 1 lần xài mãi mãi
+    @AppStorage("savedLanIP") private var lanIP: String = "192.168.1.83"
+    @AppStorage("savedTsIP") private var tsIP: String = ""
+    @AppStorage("savedUser") private var username: String = "huang"
+    @AppStorage("savedPass") private var password: String = ""
+    
     @State private var logText: String = "💀 Sẵn sàng chọc thủng server...\n"
     @State private var isRunning = false
-    @State private var quicTunnel: ZhiQuicTunnel?
-    let serverIP = "192.168.1.83" // Ný nhớ check lại IP của con zhiserver nha
 
     var body: some Scene {
         WindowGroup {
@@ -16,6 +20,25 @@ struct ZhiAuthApp: App {
                 
                 Text(isRunning ? "🚀 Engine đang gầm rú..." : "🛑 Đang ngủ")
                     .foregroundColor(isRunning ? .green : .red)
+                
+                // Form nhập liệu
+                VStack(spacing: 10) {
+                    TextField("LAN IP Server (vd: 192.168.1.x)", text: $lanIP)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .keyboardType(.decimalPad)
+                    
+                    TextField("Tailscale IP (vd: 100.x.x.x)", text: $tsIP)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .keyboardType(.decimalPad)
+                    
+                    TextField("Username", text: $username)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .autocapitalization(.none)
+                    
+                    SecureField("Password", text: $password)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                }
+                .padding(.horizontal)
                 
                 // Màn hình in log trực tiếp trên điện thoại
                 ScrollView {
@@ -47,8 +70,19 @@ struct ZhiAuthApp: App {
     }
     
     func testKcpCore() {
+        // Ràng buộc kiểm tra IP
+        let targetIP = !lanIP.isEmpty ? lanIP : tsIP
+        if targetIP.isEmpty {
+            appendLog("❌ Lỗi: Phải nhập ít nhất 1 IP (LAN hoặc Tailscale)!")
+            return
+        }
+        if username.isEmpty || password.isEmpty {
+            appendLog("❌ Lỗi: Username và Password không được để trống!")
+            return
+        }
+        
         isRunning = true
-        appendLog("Bắt đầu Port Knocking tới \(serverIP):5555...")
+        appendLog("Bắt đầu Port Knocking tới \(targetIP):5555...")
         
         Task {
             do {
@@ -56,15 +90,18 @@ struct ZhiAuthApp: App {
                     UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS"
                 }
                 
-                let authCmd = "AUTH_REQ|USER:huang|PASS:123456|LAN:\(serverIP)|TS:NONE|HWID:\(hwid)"
+                let safeLan = lanIP.isEmpty ? "NONE" : lanIP
+                let safeTs = tsIP.isEmpty ? "NONE" : tsIP
                 
-                let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: serverIP, authPort: 5555, authCmd: authCmd)
+                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
+                
+                let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: targetIP, authPort: 5555, authCmd: authCmd)
                 
                 if auth.isSuccess {
-                    appendLog("✅ Port Knocking OK! Server cấp KCP Port: \(auth.kcpPort)")
+                    appendLog("✅ Auth OK! Server cấp KCP Port: \(auth.kcpPort)")
                     
                     let initSuccess = ZhiKcpEngine.initCore(
-                        ip: serverIP, 
+                        ip: targetIP, 
                         port: Int32(auth.kcpPort), 
                         symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", 
                         mtu: 1350, 
