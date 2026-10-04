@@ -17,6 +17,7 @@ targets:
       - path: ZhiAuth
         excludes:
           - ZhiFileProviderExtension.swift
+          - Info.plist
       - src
     infoPlist: ZhiAuthApp/Info.plist
     entitlements:
