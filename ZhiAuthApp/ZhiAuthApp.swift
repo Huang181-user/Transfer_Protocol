@@ -114,17 +114,18 @@ struct ZhiAuthApp: App {
                 
                 if auth.isSuccess {
                     appendLog("✅ Auth OK! Server cấp KCP Port: \(auth.kcpPort)")
+                    
+                    // 🔥 ÉP MTU XUỐNG 1200 ĐỂ CHỐNG LỖI FRAGMENT TRÊN IOS / TAILSCALE / 4G
                     let initSuccess = ZhiKcpEngine.initCore(
                         ip: targetIP, port: Int32(auth.kcpPort), 
-                        symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1350, tuning: auth.tuning
+                        symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1200, tuning: auth.tuning
                     )
                     
                     if initSuccess {
-                        appendLog("🔥 Lõi C++ KCP & Libsodium đã nổ máy!")
+                        appendLog("🔥 Lõi C++ KCP & Libsodium đã nổ máy (MTU 1200)!")
                         
-                        // 🔥 FIX LỖI TIME-OUT TẠI ĐÂY: Bắt iPhone chờ 1 giây để Worker trên Ubuntu kịp chui lên!
                         appendLog("⏳ Đang chờ Server kích hoạt Worker Socket...")
-                        try await Task.sleep(nanoseconds: 2_000_000_000)
+                        try await Task.sleep(nanoseconds: 2_000_000_000) // Đợi chác 2 giây
                         
                         appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa)...")
                         let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: "/", offset: 0, reqLen: 0, payloadData: nil)
