@@ -1,6 +1,6 @@
 import SwiftUI
 import UIKit
-import CryptoKit // Bơm thêm thư viện mã hóa của Apple
+import CryptoKit
 
 @main
 struct ZhiAuthApp: App {
@@ -74,7 +74,7 @@ struct ZhiAuthApp: App {
             return
         }
         if username.isEmpty || password.isEmpty {
-            appendLog("❌ Lỗi: Username và Password không được trống!")
+            appendLog("❌ Lỗi: Username và Password không được để trống!")
             return
         }
         
@@ -90,7 +90,7 @@ struct ZhiAuthApp: App {
                 let safeLan = lanIP.isEmpty ? "NONE" : lanIP
                 let safeTs = tsIP.isEmpty ? "NONE" : tsIP
                 
-                // 🔥 BĂM SHA-256 MẬT KHẨU TRƯỚC KHI GỬI CHO ĐỒNG BỘ VỚI HỆ SINH THÁI
+                // Băm mật khẩu ra mã SHA-256 khớp chuẩn Server C++
                 let passData = Data(password.utf8)
                 let passHash = SHA256.hash(data: passData).compactMap { String(format: "%02x", $0) }.joined()
                 
