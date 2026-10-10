@@ -22,8 +22,6 @@ static std::string getRealtimeLog() {
     return oss.str();
 }
 
-static size_t calculateAbsoluteMaxSocketBuffer() { return 16777216; }
-
 VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
                      int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd)
     : socket_(io_context_, udp::endpoint(udp::v4(), 0)), is_running_(false), 
@@ -32,10 +30,9 @@ VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::str
 {
     asio::ip::udp::resolver resolver(io_context_);
     server_endpoint_ = *resolver.resolve(udp::v4(), server_ip, std::to_string(port)).begin();
-    size_t auto_buf_sz = calculateAbsoluteMaxSocketBuffer();
     try {
-        socket_.set_option(asio::socket_base::receive_buffer_size(auto_buf_sz));
-        socket_.set_option(asio::socket_base::send_buffer_size(auto_buf_sz));
+        socket_.set_option(asio::socket_base::receive_buffer_size(16777216));
+        socket_.set_option(asio::socket_base::send_buffer_size(16777216));
     } catch(...) {}
 }
 
@@ -44,11 +41,19 @@ VfsClient::~VfsClient() { stop(); }
 bool VfsClient::start() {
     if (is_running_) return true;
     is_running_ = true;
+    
+    std::error_code ec;
+    // 🔥 FIX: "Kết nối" cứng Socket UDP để Sandbox iOS không ném vào danh sách trôi nổi
+    socket_.connect(server_endpoint_, ec);
+    if (ec) {
+        std::cout << "[" << getRealtimeLog() << "] UDP Connect Warning: " << ec.message() << std::endl;
+    }
+
     kcp_cb_ = ikcp_create(0x11223344, this);
     kcp_cb_->output = kcp_output_callback;
     
     ikcp_nodelay(kcp_cb_, nodelay_, interval_, resend_, nc_);
-    int safe_mtu = (mtu_ > 100) ? (mtu_ - 56) : 1350; 
+    int safe_mtu = (mtu_ > 100) ? (mtu_ - 56) : 1200; 
     ikcp_wndsize(kcp_cb_, snd_wnd_, rcv_wnd_); 
     kcp_cb_->stream = 0; ikcp_setmtu(kcp_cb_, safe_mtu); kcp_cb_->rx_minrto = 10;
 
@@ -70,17 +75,17 @@ void VfsClient::stop() {
 int VfsClient::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user) {
     VfsClient* client = static_cast<VfsClient*>(user);
     std::error_code ec;
-    client->socket_.send_to(asio::buffer(buf, len), client->server_endpoint_, 0, ec);
+    // Đã connect nên gọi send() trực tiếp, tránh iOS hiểu nhầm
+    client->socket_.send(asio::buffer(buf, len), 0, ec);
     return 0;
 }
 
 void VfsClient::receive_loop() {
     while (is_running_) {
         std::error_code ec;
-        asio::ip::udp::endpoint sender;
-        size_t bytes_recvd = socket_.receive_from(asio::buffer(recv_buffer_), sender, 0, ec);
+        // Tương tự, gọi receive() thẳng thay vì receive_from()
+        size_t bytes_recvd = socket_.receive(asio::buffer(recv_buffer_), 0, ec);
         
-        // 🔥 ĐÃ FIX: CHỈ BỎ QUA LỖI RỒI CHẠY TIẾP, KHÔNG BAO GIỜ ĐƯỢC BREAK VÒNG LẶP!
         if (ec || bytes_recvd == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue; 
