@@ -22,15 +22,9 @@ func getDeviceIPs() -> (lan: String, ts: String) {
                         nil, socklen_t(0), NI_NUMERICHOST)
             let ip = String(cString: hostname)
             
-            if ip.hasPrefix("127.") || ip.hasPrefix("169.254.") {
-                continue
-            }
-            
-            if name == "en0" || name == "pdp_ip0" {
-                lan = ip
-            } else if name.hasPrefix("utun") && ip.hasPrefix("100.") {
-                ts = ip
-            }
+            if ip.hasPrefix("127.") || ip.hasPrefix("169.254.") { continue }
+            if name == "en0" || name == "pdp_ip0" { lan = ip } 
+            else if name.hasPrefix("utun") && ip.hasPrefix("100.") { ts = ip }
         }
     }
     freeifaddrs(ifaddr)
@@ -85,9 +79,7 @@ struct ZhiAuthApp: App {
                 .cornerRadius(10)
                 .padding(.horizontal)
                 
-                Button(action: {
-                    testKcpCore()
-                }) {
+                Button(action: { testKcpCore() }) {
                     Text("KÍCH NỔ LÕI C++ KCP")
                         .font(.headline)
                         .foregroundColor(.white)
@@ -104,46 +96,35 @@ struct ZhiAuthApp: App {
     
     func testKcpCore() {
         let targetIP = !lanIP.isEmpty ? lanIP : tsIP
-        if targetIP.isEmpty {
-            appendLog("❌ Lỗi: Phải nhập ít nhất 1 IP Server!")
-            return
-        }
-        if username.isEmpty || password.isEmpty {
-            appendLog("❌ Lỗi: Username và Password không được trống!")
-            return
-        }
+        if targetIP.isEmpty { appendLog("❌ Lỗi: Phải nhập ít nhất 1 IP Server!"); return }
+        if username.isEmpty || password.isEmpty { appendLog("❌ Lỗi: Username và Password không được trống!"); return }
         
         isRunning = true
         appendLog("Bắt đầu Port Knocking tới \(targetIP):5555...")
         
         Task {
             do {
-                let hwid = await MainActor.run {
-                    UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS"
-                }
-                
+                let hwid = await MainActor.run { UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS" }
                 let myIPs = getDeviceIPs()
-                // Đổi thành "N/A" để Server C++ không cố mở UFW cho chữ "NONE"
                 let safeLan = myIPs.lan.isEmpty ? "N/A" : myIPs.lan
                 let safeTs = myIPs.ts.isEmpty ? "N/A" : myIPs.ts
-                
                 let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
                 
                 let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: targetIP, authPort: 5555, authCmd: authCmd)
                 
                 if auth.isSuccess {
                     appendLog("✅ Auth OK! Server cấp KCP Port: \(auth.kcpPort)")
-                    
                     let initSuccess = ZhiKcpEngine.initCore(
-                        ip: targetIP, 
-                        port: Int32(auth.kcpPort), 
-                        symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", 
-                        mtu: 1350, 
-                        tuning: auth.tuning
+                        ip: targetIP, port: Int32(auth.kcpPort), 
+                        symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1350, tuning: auth.tuning
                     )
                     
                     if initSuccess {
                         appendLog("🔥 Lõi C++ KCP & Libsodium đã nổ máy!")
+                        
+                        // 🔥 FIX LỖI TIME-OUT TẠI ĐÂY: Bắt iPhone chờ 1 giây để Worker trên Ubuntu kịp chui lên!
+                        appendLog("⏳ Đang chờ Server kích hoạt Worker Socket...")
+                        try await Task.sleep(nanoseconds: 1_000_000_000)
                         
                         appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa)...")
                         let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: "/", offset: 0, reqLen: 0, payloadData: nil)
