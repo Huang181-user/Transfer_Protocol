@@ -1,12 +1,10 @@
 import SwiftUI
 import UIKit
-import CryptoKit
 import Darwin
 
-// Hàm tự động rà quét Card mạng của iPhone
 func getDeviceIPs() -> (lan: String, ts: String) {
-    var lan = "NONE"
-    var ts = "NONE"
+    var lan = ""
+    var ts = ""
     var ifaddr: UnsafeMutablePointer<ifaddrs>?
     guard getifaddrs(&ifaddr) == 0 else { return (lan, ts) }
     
@@ -24,10 +22,14 @@ func getDeviceIPs() -> (lan: String, ts: String) {
                         nil, socklen_t(0), NI_NUMERICHOST)
             let ip = String(cString: hostname)
             
-            if name.hasPrefix("en") || name.hasPrefix("pdp_ip") {
-                lan = ip // Bắt IP Wi-Fi hoặc 4G/5G
+            if ip.hasPrefix("127.") || ip.hasPrefix("169.254.") {
+                continue
+            }
+            
+            if name == "en0" || name == "pdp_ip0" {
+                lan = ip
             } else if name.hasPrefix("utun") && ip.hasPrefix("100.") {
-                ts = ip  // Bắt IP Tailscale VPN
+                ts = ip
             }
         }
     }
@@ -120,16 +122,12 @@ struct ZhiAuthApp: App {
                     UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS"
                 }
                 
-                // 🔥 Lấy IP thực của iPhone để nộp cho Server
                 let myIPs = getDeviceIPs()
-                let safeLan = myIPs.lan
-                let safeTs = myIPs.ts
+                // Đổi thành "N/A" để Server C++ không cố mở UFW cho chữ "NONE"
+                let safeLan = myIPs.lan.isEmpty ? "N/A" : myIPs.lan
+                let safeTs = myIPs.ts.isEmpty ? "N/A" : myIPs.ts
                 
-                let passData = Data(password.utf8)
-                let passHash = SHA256.hash(data: passData).compactMap { String(format: "%02x", $0) }.joined()
-                
-                // Gửi Auth kèm IP thực của máy
-                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(passHash)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
+                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
                 
                 let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: targetIP, authPort: 5555, authCmd: authCmd)
                 
