@@ -18,9 +18,8 @@ class ZhiNetworkAuth {
                 return
             }
             
-            // 🔥 CHUYỂN SANG DÙNG QUIC VỚI ALPN "zhiauth-rpc" KHỚP 100% VỚI SERVER C++
             let options = NWProtocolQUIC.Options(alpn: ["zhiauth-rpc"])
-            let secOptions = options.securityProtocolOptions as! sec_protocol_options_t
+            let secOptions = options.securityProtocolOptions
             sec_protocol_options_set_verify_block(secOptions, { _, _, sec_protocol_verify_complete in
                 sec_protocol_verify_complete(true) 
             }, .main)
@@ -28,10 +27,13 @@ class ZhiNetworkAuth {
             let parameters = NWParameters(quic: options)
             let connection = NWConnection(host: host, port: port, using: parameters)
             
+            // 🔥 Ép toàn bộ callback chạy trên một đường ray duy nhất để tránh Data Race
+            let serialQueue = DispatchQueue(label: "com.zhiauth.quic_auth")
             var isResponded = false
             
             connection.stateUpdateHandler = { state in
-                if case .ready = state {
+                switch state {
+                case .ready:
                     guard let cmdData = authCmd.data(using: .utf8) else { return }
                     connection.send(content: cmdData, completion: .idempotent)
                     connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, _, error in
@@ -61,14 +63,21 @@ class ZhiNetworkAuth {
                             continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -401, userInfo: [NSLocalizedDescriptionKey: "Authentication Failed: Server Rejected"]))
                         }
                     }
-                } else if case .failed(let err) = state {
+                case .failed(let err):
                     if !isResponded {
                         isResponded = true
                         continuation.resume(throwing: err)
                     }
+                case .cancelled:
+                    if !isResponded {
+                        isResponded = true
+                        continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -402, userInfo: [NSLocalizedDescriptionKey: "Connection Cancelled"]))
+                    }
+                default:
+                    break
                 }
             }
-            connection.start(queue: .global())
+            connection.start(queue: serialQueue)
         }
     }
 }

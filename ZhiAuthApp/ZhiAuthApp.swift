@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import CryptoKit
 
 @main
 struct ZhiAuthApp: App {
@@ -90,11 +89,8 @@ struct ZhiAuthApp: App {
                 let safeLan = lanIP.isEmpty ? "NONE" : lanIP
                 let safeTs = tsIP.isEmpty ? "NONE" : tsIP
                 
-                // Băm mật khẩu ra mã SHA-256 khớp chuẩn Server C++
-                let passData = Data(password.utf8)
-                let passHash = SHA256.hash(data: passData).compactMap { String(format: "%02x", $0) }.joined()
-                
-                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(passHash)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
+                // Dẹp bỏ CryptoKit, bắn thẳng mật khẩu thô y như Windows
+                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
                 
                 let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: targetIP, authPort: 5555, authCmd: authCmd)
                 
