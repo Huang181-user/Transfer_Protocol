@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
+import CryptoKit // Bơm thêm thư viện mã hóa của Apple
 
 @main
 struct ZhiAuthApp: App {
-    // Lưu thông tin vào bộ nhớ máy, nhập 1 lần xài mãi mãi
     @AppStorage("savedLanIP") private var lanIP: String = "192.168.1.83"
     @AppStorage("savedTsIP") private var tsIP: String = ""
     @AppStorage("savedUser") private var username: String = "huang"
@@ -21,13 +21,12 @@ struct ZhiAuthApp: App {
                 Text(isRunning ? "🚀 Engine đang gầm rú..." : "🛑 Đang ngủ")
                     .foregroundColor(isRunning ? .green : .red)
                 
-                // Form nhập liệu
                 VStack(spacing: 10) {
-                    TextField("LAN IP Server (vd: 192.168.1.x)", text: $lanIP)
+                    TextField("LAN IP Server", text: $lanIP)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .keyboardType(.decimalPad)
                     
-                    TextField("Tailscale IP (vd: 100.x.x.x)", text: $tsIP)
+                    TextField("Tailscale IP", text: $tsIP)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .keyboardType(.decimalPad)
                     
@@ -40,7 +39,6 @@ struct ZhiAuthApp: App {
                 }
                 .padding(.horizontal)
                 
-                // Màn hình in log trực tiếp trên điện thoại
                 ScrollView {
                     Text(logText)
                         .font(.system(.caption, design: .monospaced))
@@ -70,14 +68,13 @@ struct ZhiAuthApp: App {
     }
     
     func testKcpCore() {
-        // Ràng buộc kiểm tra IP
         let targetIP = !lanIP.isEmpty ? lanIP : tsIP
         if targetIP.isEmpty {
-            appendLog("❌ Lỗi: Phải nhập ít nhất 1 IP (LAN hoặc Tailscale)!")
+            appendLog("❌ Lỗi: Phải nhập ít nhất 1 IP!")
             return
         }
         if username.isEmpty || password.isEmpty {
-            appendLog("❌ Lỗi: Username và Password không được để trống!")
+            appendLog("❌ Lỗi: Username và Password không được trống!")
             return
         }
         
@@ -93,7 +90,11 @@ struct ZhiAuthApp: App {
                 let safeLan = lanIP.isEmpty ? "NONE" : lanIP
                 let safeTs = tsIP.isEmpty ? "NONE" : tsIP
                 
-                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
+                // 🔥 BĂM SHA-256 MẬT KHẨU TRƯỚC KHI GỬI CHO ĐỒNG BỘ VỚI HỆ SINH THÁI
+                let passData = Data(password.utf8)
+                let passHash = SHA256.hash(data: passData).compactMap { String(format: "%02x", $0) }.joined()
+                
+                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(passHash)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
                 
                 let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: targetIP, authPort: 5555, authCmd: authCmd)
                 
@@ -111,7 +112,7 @@ struct ZhiAuthApp: App {
                     if initSuccess {
                         appendLog("🔥 Lõi C++ KCP & Libsodium đã nổ máy!")
                         
-                        appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa) qua KCP...")
+                        appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa)...")
                         let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: "/", offset: 0, reqLen: 0, payloadData: nil)
                         
                         appendLog("📦 KCP Phản hồi: Nhận \(statData.count) bytes thành công!")
