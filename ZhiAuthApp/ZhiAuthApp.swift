@@ -124,7 +124,7 @@ struct ZhiAuthApp: App {
                         
                         // 🔥 FIX LỖI TIME-OUT TẠI ĐÂY: Bắt iPhone chờ 1 giây để Worker trên Ubuntu kịp chui lên!
                         appendLog("⏳ Đang chờ Server kích hoạt Worker Socket...")
-                        try await Task.sleep(nanoseconds: 1_000_000_000)
+                        try await Task.sleep(nanoseconds: 2_000_000_000)
                         
                         appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa)...")
                         let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: "/", offset: 0, reqLen: 0, payloadData: nil)

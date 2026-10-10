@@ -20,5 +20,7 @@
 	<dict/>
 	<key>NSFileProviderDomainUsageDescription</key>
 	<string>App cần quyền để gắn ổ đĩa ảo ZhiAuth vào ứng dụng Tệp.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Cần quyền mạng nội bộ để kết nối KCP (UDP) tới Server.</string>
 </dict>
 </plist>
