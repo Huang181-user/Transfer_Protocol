@@ -1,5 +1,39 @@
 import SwiftUI
 import UIKit
+import CryptoKit
+import Darwin
+
+// Hàm tự động rà quét Card mạng của iPhone
+func getDeviceIPs() -> (lan: String, ts: String) {
+    var lan = "NONE"
+    var ts = "NONE"
+    var ifaddr: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&ifaddr) == 0 else { return (lan, ts) }
+    
+    var ptr = ifaddr
+    while ptr != nil {
+        defer { ptr = ptr?.pointee.ifa_next }
+        guard let interface = ptr?.pointee else { continue }
+        let addrFamily = interface.ifa_addr.pointee.sa_family
+        
+        if addrFamily == UInt8(AF_INET) {
+            let name = String(cString: interface.ifa_name)
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
+                        &hostname, socklen_t(hostname.count),
+                        nil, socklen_t(0), NI_NUMERICHOST)
+            let ip = String(cString: hostname)
+            
+            if name.hasPrefix("en") || name.hasPrefix("pdp_ip") {
+                lan = ip // Bắt IP Wi-Fi hoặc 4G/5G
+            } else if name.hasPrefix("utun") && ip.hasPrefix("100.") {
+                ts = ip  // Bắt IP Tailscale VPN
+            }
+        }
+    }
+    freeifaddrs(ifaddr)
+    return (lan, ts)
+}
 
 @main
 struct ZhiAuthApp: App {
@@ -25,7 +59,7 @@ struct ZhiAuthApp: App {
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .keyboardType(.decimalPad)
                     
-                    TextField("Tailscale IP", text: $tsIP)
+                    TextField("Tailscale IP Server", text: $tsIP)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .keyboardType(.decimalPad)
                     
@@ -69,11 +103,11 @@ struct ZhiAuthApp: App {
     func testKcpCore() {
         let targetIP = !lanIP.isEmpty ? lanIP : tsIP
         if targetIP.isEmpty {
-            appendLog("❌ Lỗi: Phải nhập ít nhất 1 IP!")
+            appendLog("❌ Lỗi: Phải nhập ít nhất 1 IP Server!")
             return
         }
         if username.isEmpty || password.isEmpty {
-            appendLog("❌ Lỗi: Username và Password không được để trống!")
+            appendLog("❌ Lỗi: Username và Password không được trống!")
             return
         }
         
@@ -86,11 +120,16 @@ struct ZhiAuthApp: App {
                     UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS"
                 }
                 
-                let safeLan = lanIP.isEmpty ? "NONE" : lanIP
-                let safeTs = tsIP.isEmpty ? "NONE" : tsIP
+                // 🔥 Lấy IP thực của iPhone để nộp cho Server
+                let myIPs = getDeviceIPs()
+                let safeLan = myIPs.lan
+                let safeTs = myIPs.ts
                 
-                // Dẹp bỏ CryptoKit, bắn thẳng mật khẩu thô y như Windows
-                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
+                let passData = Data(password.utf8)
+                let passHash = SHA256.hash(data: passData).compactMap { String(format: "%02x", $0) }.joined()
+                
+                // Gửi Auth kèm IP thực của máy
+                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(passHash)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
                 
                 let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: targetIP, authPort: 5555, authCmd: authCmd)
                 
