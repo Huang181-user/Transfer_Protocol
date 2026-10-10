@@ -31,7 +31,7 @@ class ZhiQuicTunnel {
         }
 
         // Cấu hình QUIC Native (Bỏ qua xác thực SSL tự ký)
-        let options = NWProtocolQUIC.Options(alpn: ["zhiauth-raw-quic"])
+        let options = NWProtocolQUIC.Options(alpn: ["zhiauth-rpc"])
         let secOptions = options.securityProtocolOptions as! sec_protocol_options_t
         sec_protocol_options_set_verify_block(secOptions, { _, _, sec_protocol_verify_complete in
             sec_protocol_verify_complete(true) 

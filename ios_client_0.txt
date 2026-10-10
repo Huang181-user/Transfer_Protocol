@@ -69,15 +69,30 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - ZhiAuthApp
+      - path: ZhiAuth
+        excludes:
+          - ZhiFileProviderExtension.swift
+          - Info.plist
+      - src
     infoPlist: ZhiAuthApp/Info.plist
-    # SỬA LẠI ĐOẠN NÀY
     entitlements:
       path: ZhiAuth.entitlements
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.ruanhuang.ZhiAuthApp
+      SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h
+      HEADER_SEARCH_PATHS: 
+        - $(SRCROOT)/src/bridge
+        - $(SRCROOT)/src/rpc_client
+        - $(SRCROOT)/src
+        - /opt/homebrew/include
+        - /usr/local/include
+      CLANG_ENABLE_MODULES: "YES"
+      OTHER_LDFLAGS: "-lc++"
+      GCC_PREPROCESSOR_DEFINITIONS: "ASIO_STANDALONE=1"
     dependencies:
       - target: ZhiAuthFileProvider
         embed: true
+      - package: Sodium
       
   ZhiAuthFileProvider:
     type: app-extension
@@ -87,7 +102,6 @@ targets:
       - ZhiAuth
       - src
     infoPlist: ZhiAuth/Info.plist
-    # VÀ SỬA LUÔN ĐOẠN NÀY
     entitlements:
       path: ZhiAuth.entitlements
     dependencies:
@@ -104,6 +118,7 @@ targets:
       CLANG_ENABLE_MODULES: "YES"
       OTHER_LDFLAGS: "-lc++"
       GCC_PREPROCESSOR_DEFINITIONS: "ASIO_STANDALONE=1"
+
 --- END OF FILE: project.yml ---
 
 --- START FILE PATH: ZhiAuthApp/Info.plist ---
@@ -126,50 +141,153 @@ targets:
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchScreen</key>
-        <key>NSFileProviderDomainUsageDescription</key>
-        <string>App cần quyền để gắn ổ đĩa ảo ZhiAuth vào ứng dụng Tệp.</string>
 	<dict/>
+	<key>NSFileProviderDomainUsageDescription</key>
+	<string>App cần quyền để gắn ổ đĩa ảo ZhiAuth vào ứng dụng Tệp.</string>
 </dict>
 </plist>
+
 --- END OF FILE: ZhiAuthApp/Info.plist ---
 
 --- START FILE PATH: ZhiAuthApp/ZhiAuthApp.swift ---
 import SwiftUI
-import FileProvider // Bắt buộc phải import thư viện này để gọi lệnh đăng ký
+import UIKit
 
 @main
 struct ZhiAuthApp: App {
+    // Lưu thông tin vào bộ nhớ máy, nhập 1 lần xài mãi mãi
+    @AppStorage("savedLanIP") private var lanIP: String = "192.168.1.83"
+    @AppStorage("savedTsIP") private var tsIP: String = ""
+    @AppStorage("savedUser") private var username: String = "huang"
+    @AppStorage("savedPass") private var password: String = ""
     
-    init() {
-        // Đăng ký "Ổ đĩa ảo" với hệ thống iOS ngay khi vừa mở app
-        let domain = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(rawValue: "ZhiAuthDomain"),
-            displayName: "ZhiAuth Server"
-        )
-        
-        NSFileProviderManager.add(domain) { error in
-            if let error = error {
-                print("❌ Lỗi đăng ký ổ đĩa: \(error.localizedDescription)")
-            } else {
-                print("✅ Đã chèn ổ đĩa ảo ZhiAuth vào app Tệp thành công!")
-            }
-        }
-    }
+    @State private var logText: String = "💀 Sẵn sàng chọc thủng server...\n"
+    @State private var isRunning = false
 
     var body: some Scene {
         WindowGroup {
-            VStack(spacing: 20) {
-                Text("💀 ZhiAuth v6.0")
+            VStack(spacing: 15) {
+                Text("ZhiAuth v6.0")
                     .font(.largeTitle).bold()
-                Text("KCP Dual-Tunnel is running...")
-                    .foregroundColor(.gray)
-                Text("Hãy mở ứng dụng 'Tệp' (Files) trên iPhone để xem ổ đĩa ảo!")
-                    .multilineTextAlignment(.center)
-                    .padding()
+                
+                Text(isRunning ? "🚀 Engine đang gầm rú..." : "🛑 Đang ngủ")
+                    .foregroundColor(isRunning ? .green : .red)
+                
+                // Form nhập liệu
+                VStack(spacing: 10) {
+                    TextField("LAN IP Server (vd: 192.168.1.x)", text: $lanIP)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .keyboardType(.decimalPad)
+                    
+                    TextField("Tailscale IP (vd: 100.x.x.x)", text: $tsIP)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .keyboardType(.decimalPad)
+                    
+                    TextField("Username", text: $username)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .autocapitalization(.none)
+                    
+                    SecureField("Password", text: $password)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                }
+                .padding(.horizontal)
+                
+                // Màn hình in log trực tiếp trên điện thoại
+                ScrollView {
+                    Text(logText)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+                .background(Color.black.opacity(0.85))
+                .foregroundColor(.green)
+                .cornerRadius(10)
+                .padding(.horizontal)
+                
+                Button(action: {
+                    testKcpCore()
+                }) {
+                    Text("KÍCH NỔ LÕI C++ KCP")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(isRunning ? Color.gray : Color.blue)
+                        .cornerRadius(10)
+                }
+                .disabled(isRunning)
+                .padding()
             }
         }
     }
+    
+    func testKcpCore() {
+        // Ràng buộc kiểm tra IP
+        let targetIP = !lanIP.isEmpty ? lanIP : tsIP
+        if targetIP.isEmpty {
+            appendLog("❌ Lỗi: Phải nhập ít nhất 1 IP (LAN hoặc Tailscale)!")
+            return
+        }
+        if username.isEmpty || password.isEmpty {
+            appendLog("❌ Lỗi: Username và Password không được để trống!")
+            return
+        }
+        
+        isRunning = true
+        appendLog("Bắt đầu Port Knocking tới \(targetIP):5555...")
+        
+        Task {
+            do {
+                let hwid = await MainActor.run {
+                    UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS"
+                }
+                
+                let safeLan = lanIP.isEmpty ? "NONE" : lanIP
+                let safeTs = tsIP.isEmpty ? "NONE" : tsIP
+                
+                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
+                
+                let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: targetIP, authPort: 5555, authCmd: authCmd)
+                
+                if auth.isSuccess {
+                    appendLog("✅ Auth OK! Server cấp KCP Port: \(auth.kcpPort)")
+                    
+                    let initSuccess = ZhiKcpEngine.initCore(
+                        ip: targetIP, 
+                        port: Int32(auth.kcpPort), 
+                        symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", 
+                        mtu: 1350, 
+                        tuning: auth.tuning
+                    )
+                    
+                    if initSuccess {
+                        appendLog("🔥 Lõi C++ KCP & Libsodium đã nổ máy!")
+                        
+                        appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa) qua KCP...")
+                        let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: "/", offset: 0, reqLen: 0, payloadData: nil)
+                        
+                        appendLog("📦 KCP Phản hồi: Nhận \(statData.count) bytes thành công!")
+                        appendLog("🎉 MỌI THỨ HOẠT ĐỘNG HOÀN HẢO!")
+                    } else {
+                        appendLog("❌ Khởi động KCP Engine thất bại.")
+                        isRunning = false
+                    }
+                }
+            } catch {
+                appendLog("❌ Lỗi mạng: \(error.localizedDescription)")
+                isRunning = false
+            }
+        }
+    }
+    
+    func appendLog(_ msg: String) {
+        DispatchQueue.main.async {
+            NSLog("%@", msg)
+            logText += "[\(Date().formatted(date: .omitted, time: .standard))] \(msg)\n"
+        }
+    }
 }
+
 --- END OF FILE: ZhiAuthApp/ZhiAuthApp.swift ---
 
 --- START FILE PATH: .github/workflows/build-ios.yml ---
@@ -2489,7 +2607,7 @@ class ZhiLogger {
         
         let timestamp = dateFormatter.string(from: Date())
         let fileName = (file as NSString).lastPathComponent
-        print("[\(timestamp)] [\(level.rawValue)] [\(fileName):\(line)::\(function)] -> \(message)")
+        NSLog("%@", "[\(timestamp)] [\(level.rawValue)] [\(fileName):\(line)::\(function)] -> \(message)")
     }
     
     static func debug(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
@@ -2909,63 +3027,4 @@ class ZhiKcpEngine {
     }
 }
 --- END OF FILE: ZhiAuth/ZhiKcpEngine.swift ---
-
---- START FILE PATH: ZhiAuth/ZhiNetworkAuth.swift ---
-import Foundation
-import Network
-
-struct AuthResponse {
-    var isSuccess: Bool = false
-    var sharedPath: String = ""
-    var quicPort: Int = 4433
-    var kcpPort: Int = 6666
-    var tuning: KcpTuningParams = KcpTuningParams()
-}
-
-class ZhiNetworkAuth {
-    static func executePortKnockingAuth(ip: String, authPort: UInt16, authCmd: String) async throws -> AuthResponse {
-        return try await withCheckedThrowingContinuation { continuation in
-            let host = NWEndpoint.Host(ip)
-            guard let port = NWEndpoint.Port(rawValue: authPort) else {
-                continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -400, userInfo: [NSLocalizedDescriptionKey: "Invalid Port"]))
-                return
-            }
-            
-            let connection = NWConnection(host: host, port: port, using: .udp)
-            
-            connection.stateUpdateHandler = { state in
-                if case .ready = state {
-                    guard let cmdData = authCmd.data(using: .utf8) else { return }
-                    connection.send(content: cmdData, completion: .idempotent)
-                    connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, _, error in
-                        connection.cancel()
-                        if let data = data, let respStr = String(data: data, encoding: .utf8), respStr.hasPrefix("AUTH_SUCCESS") {
-                            var resp = AuthResponse(isSuccess: true)
-                            let parts = respStr.split(separator: "|")
-                            if parts.count >= 4 {
-                                resp.sharedPath = String(parts[1])
-                                resp.quicPort = Int(parts[2]) ?? 4433
-                                resp.kcpPort = Int(parts[3]) ?? 6666
-                            }
-                            if parts.count >= 10 {
-                                resp.tuning.noDelay = Int32(parts[4]) ?? 1
-                                resp.tuning.interval = Int32(parts[5]) ?? 10
-                                resp.tuning.resend = Int32(parts[6]) ?? 2
-                                resp.tuning.nc = Int32(parts[7]) ?? 0
-                                resp.tuning.sndWnd = Int32(parts[8]) ?? 512
-                                resp.tuning.rcvWnd = Int32(parts[9]) ?? 512
-                                resp.tuning.isDynamic = true
-                            }
-                            continuation.resume(returning: resp)
-                        } else {
-                            continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -401, userInfo: [NSLocalizedDescriptionKey: "Authentication Failed"]))
-                        }
-                    }
-                }
-            }
-            connection.start(queue: .global())
-        }
-    }
-}
---- END OF FILE: ZhiAuth/ZhiNetworkAuth.swift ---
 
