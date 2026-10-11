@@ -28,8 +28,8 @@ class ZhiFileProviderExtension: NSFileProviderExtension {
     override func itemChanged(at url: URL) { }
     override func stopProvidingItem(at url: URL) { }
     
-    // Khớp chuẩn Swift 5/iOS 16:
-    override func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest) throws -> NSFileProviderEnumerator {
-        throw NSFileProviderError(.notImplemented)
+    // Trả lại đúng signature gốc, quăng NSError cơ bản để né kiểm tra Enum của Apple
+    override func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier) throws -> NSFileProviderEnumerator {
+        throw NSError(domain: "ZhiAuth.FileProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not implemented yet"])
     }
 }
