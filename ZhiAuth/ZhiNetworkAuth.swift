@@ -9,6 +9,20 @@ struct AuthResponse {
     var tuning: KcpTuningParams = KcpTuningParams()
 }
 
+// Lớp an toàn đa luồng chứa trạng thái
+final class AuthState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _isResponded = false
+    
+    func claimResponse() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if _isResponded { return false }
+        _isResponded = true
+        return true
+    }
+}
+
 class ZhiNetworkAuth {
     static func executePortKnockingAuth(ip: String, authPort: UInt16, authCmd: String) async throws -> AuthResponse {
         return try await withCheckedThrowingContinuation { continuation in
@@ -26,29 +40,26 @@ class ZhiNetworkAuth {
             
             let parameters = NWParameters(quic: options)
             let connection = NWConnection(host: host, port: port, using: parameters)
-            
             let serialQueue = DispatchQueue(label: "com.zhiauth.quic_auth")
-            var isResponded = false
             
-            connection.stateUpdateHandler = { state in
-                switch state {
+            let state = AuthState()
+            
+            connection.stateUpdateHandler = { connState in
+                switch connState {
                 case .ready:
                     guard let cmdData = authCmd.data(using: .utf8) else { return }
-                    // 🔥 FIX: Buộc gửi đúng 1 lần, chờ stack mạng xác nhận xong mới nghe ngóng
                     connection.send(content: cmdData, completion: .contentProcessed { sendError in
                         if let sendError = sendError {
                             connection.cancel()
-                            if !isResponded {
-                                isResponded = true
+                            if state.claimResponse() {
                                 continuation.resume(throwing: sendError)
                             }
                             return
                         }
                         
-                        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, _, error in
+                        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, _, _ in
                             connection.cancel()
-                            if isResponded { return }
-                            isResponded = true
+                            guard state.claimResponse() else { return }
                             
                             if let data = data, let respStr = String(data: data, encoding: .utf8), respStr.hasPrefix("AUTH_SUCCESS") {
                                 var resp = AuthResponse(isSuccess: true)
@@ -74,17 +85,12 @@ class ZhiNetworkAuth {
                         }
                     })
                 case .failed(let err):
-                    if !isResponded {
-                        isResponded = true
-                        continuation.resume(throwing: err)
-                    }
+                    if state.claimResponse() { continuation.resume(throwing: err) }
                 case .cancelled:
-                    if !isResponded {
-                        isResponded = true
+                    if state.claimResponse() {
                         continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -402, userInfo: [NSLocalizedDescriptionKey: "Connection Cancelled"]))
                     }
-                default:
-                    break
+                default: break
                 }
             }
             connection.start(queue: serialQueue)

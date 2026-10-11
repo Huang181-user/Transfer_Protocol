@@ -1,168 +1,107 @@
 import Foundation
 import Network
 
-class ZhiQuicTunnel {
+public class ZhiQuicTunnel: @unchecked Sendable {
     private var connection: NWConnection?
-    private var activeIp: String
-    private var quicPort: UInt16
-    private var isConnected: Bool = false
+    private let tunnelQueue = DispatchQueue(label: "com.zhiauth.quic_tunnel")
     private let tunnelLock = NSLock()
+    private var isConnected = false
+    private var readBuffer = Data()
     
-    private var pendingRequests: [UInt32: CheckedContinuation<Data, Error>] = [:]
-    private var globalReqId: UInt32 = 0
-    private let appClientID: UInt32 = UInt32((Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 1) * 1_000_000_000).rounded())
-
-    init(ip: String, port: Int) {
-        self.activeIp = ip
-        self.quicPort = UInt16(port)
-        ZhiLogger.info("Initializing Native QUIC Tunnel to \(ip):\(port)")
-    }
-
-    func connect() {
-        tunnelLock.lock()
-        defer { tunnelLock.unlock() }
-
-        if isConnected { return }
-
-        let host = NWEndpoint.Host(activeIp)
-        guard let port = NWEndpoint.Port(rawValue: quicPort) else {
-            ZhiLogger.error("Invalid QUIC Port: \(quicPort)")
-            return
-        }
-
-        // Cấu hình QUIC Native (Bỏ qua xác thực SSL tự ký)
+    public init() {}
+    
+    public func connect(ip: String, port: UInt16) -> Bool {
+        let host = NWEndpoint.Host(ip)
+        guard let portEndpoint = NWEndpoint.Port(rawValue: port) else { return false }
+        
         let options = NWProtocolQUIC.Options(alpn: ["zhiauth-rpc"])
-        let secOptions = options.securityProtocolOptions as! sec_protocol_options_t
+        let secOptions = options.securityProtocolOptions
         sec_protocol_options_set_verify_block(secOptions, { _, _, sec_protocol_verify_complete in
             sec_protocol_verify_complete(true) 
         }, .main)
-
+        
         let parameters = NWParameters(quic: options)
-        connection = NWConnection(host: host, port: port, using: parameters)
-
+        connection = NWConnection(host: host, port: portEndpoint, using: parameters)
+        
+        let semaphore = DispatchSemaphore(value: 0)
+        var connectSuccess = false
+        
         connection?.stateUpdateHandler = { [weak self] state in
-            guard let self = self else { return }
             switch state {
             case .ready:
-                ZhiLogger.info("✅ QUIC Tunnel ESTABLISHED!")
-                self.isConnected = true
-                self.receiveLoop() 
-            case .failed(let error):
-                ZhiLogger.error("❌ QUIC Tunnel FAILED: \(error)")
-                self.isConnected = false
-                self.reconnectSilently()
-            case .cancelled:
-                self.isConnected = false
+                self?.tunnelLock.lock()
+                self?.isConnected = true
+                self?.tunnelLock.unlock()
+                self?.startReceiveLoop()
+                connectSuccess = true
+                semaphore.signal()
+            case .failed(_), .cancelled:
+                self?.tunnelLock.lock()
+                self?.isConnected = false
+                self?.tunnelLock.unlock()
+                semaphore.signal()
             default:
                 break
             }
         }
         
-        connection?.start(queue: .global())
+        connection?.start(queue: tunnelQueue)
+        _ = semaphore.wait(timeout: .now() + 5.0)
+        return connectSuccess
     }
-
-    private func reconnectSilently() {
-        ZhiLogger.warning("QUIC Tunnel dropped. Reconnecting in 2s...")
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-            self.connect()
-        }
-    }
-
-    private func receiveLoop() {
-        connection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            guard let self = self else { return }
-            
-            if let data = data, !data.isEmpty {
-                self.handleIncomingData(data)
-            }
-            
-            if isComplete || error != nil {
-                self.isConnected = false
-                self.reconnectSilently()
-                return
-            }
-            
-            self.receiveLoop()
-        }
-    }
-
-    private func handleIncomingData(_ data: Data) {
-        if data.count < 27 { return }
-        
-        let reqIdBytes = data.subdata(in: 5..<9)
-        let reqId = reqIdBytes.withUnsafeBytes { $0.load(as: UInt32.self).littleEndian }
-        
+    
+    public func disconnect() {
         tunnelLock.lock()
-        let continuation = pendingRequests[reqId]
-        pendingRequests.removeValue(forKey: reqId)
+        isConnected = false
+        tunnelLock.unlock()
+        connection?.cancel()
+        connection = nil
+    }
+    
+    public func sendData(_ data: Data) -> Bool {
+        tunnelLock.lock()
+        let active = isConnected
         tunnelLock.unlock()
         
-        if data[4] == VfsOpcode.OP_ERROR.rawValue {
-            continuation?.resume(throwing: NSError(domain: "ZhiAuth", code: -2, userInfo: [NSLocalizedDescriptionKey: "Server QUIC Error"]))
-        } else {
-            let actualData = data.subdata(in: 27..<data.count)
-            continuation?.resume(returning: actualData)
+        guard active, let conn = connection else { return false }
+        
+        var sendSuccess = false
+        let semaphore = DispatchSemaphore(value: 0)
+        
+        conn.send(content: data, completion: .contentProcessed { error in
+            if error == nil { sendSuccess = true }
+            semaphore.signal()
+        })
+        
+        _ = semaphore.wait(timeout: .now() + 5.0)
+        return sendSuccess
+    }
+    
+    private func startReceiveLoop() {
+        connection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, _, isComplete, error in
+            guard let self = self else { return }
+            
+            if let content = content, !content.isEmpty {
+                self.tunnelLock.lock()
+                self.readBuffer.append(content)
+                self.tunnelLock.unlock()
+            }
+            
+            if error == nil && !isComplete {
+                self.startReceiveLoop()
+            } else {
+                self.tunnelLock.lock()
+                self.isConnected = false
+                self.tunnelLock.unlock()
+            }
         }
     }
-
-    func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
-        return try await withCheckedThrowingContinuation { continuation in
-            guard isConnected, let connection = connection else {
-                continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -404, userInfo: [NSLocalizedDescriptionKey: "QUIC Not Connected"]))
-                return
-            }
-
-            var buf = Data()
-            tunnelLock.lock()
-            globalReqId &+= 1
-            let currentReqId = globalReqId
-            tunnelLock.unlock()
-
-            let combinedSessionId: UInt64 = (UInt64(appClientID) << 32) | UInt64(currentReqId)
-            let dataLen: UInt32 = (opcode == .OP_READ) ? reqLen : UInt32(payloadData?.count ?? 0)
-            let pathData = path.data(using: .utf8) ?? Data()
-            let pathLen: UInt16 = UInt16(pathData.count)
-
-            withUnsafeBytes(of: UInt32(0x5A484941).littleEndian) { buf.append(contentsOf: $0) }
-            buf.append(opcode.rawValue)
-            withUnsafeBytes(of: combinedSessionId.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: offset.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: dataLen.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: pathLen.littleEndian) { buf.append(contentsOf: $0) }
-            
-            buf.append(pathData)
-            if let pData = payloadData {
-                buf.append(pData)
-            }
-
-            tunnelLock.lock()
-            pendingRequests[currentReqId] = continuation
-            tunnelLock.unlock()
-
-            connection.send(content: buf, completion: .contentProcessed({ [weak self] error in
-                if let error = error {
-                    self?.tunnelLock.lock()
-                    self?.pendingRequests.removeValue(forKey: currentReqId)
-                    self?.tunnelLock.unlock()
-                    continuation.resume(throwing: error)
-                }
-            }))
-            
-            Task {
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
-                var didTimeout = false
-                tunnelLock.lock()
-                if pendingRequests.keys.contains(currentReqId) {
-                    pendingRequests.removeValue(forKey: currentReqId)
-                    didTimeout = true
-                }
-                tunnelLock.unlock()
-                
-                if didTimeout {
-                    ZhiLogger.error("QUIC Timeout on Request ID: \(currentReqId)")
-                    continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -3, userInfo: [NSLocalizedDescriptionKey: "QUIC RPC Timeout"]))
-                }
-            }
-        }
+    
+    public func readAvailableData() -> Data {
+        tunnelLock.lock()
+        defer { tunnelLock.unlock() }
+        let data = readBuffer
+        readBuffer.removeAll(keepingCapacity: true)
+        return data
     }
 }
