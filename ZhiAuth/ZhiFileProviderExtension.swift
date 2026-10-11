@@ -28,8 +28,8 @@ class ZhiFileProviderExtension: NSFileProviderExtension {
     override func itemChanged(at url: URL) { }
     override func stopProvidingItem(at url: URL) { }
     
-    // 🔥 FIX: Bỏ tham số 'request' để khớp với hàm của Apple, đổi 'notSupported' thành 'featureUnsupported'
+    // 🔥 FIX: Xoá tham số 'request' thừa và dùng NSError thường để né vụ kiểm tra mã lỗi của Apple
     override func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier) throws -> NSFileProviderEnumerator {
-        throw NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.Code.featureUnsupported.rawValue, userInfo: nil)
+        throw NSError(domain: "ZhiAuth.FileProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not implemented yet"])
     }
 }
