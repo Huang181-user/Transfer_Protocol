@@ -28,7 +28,8 @@ class ZhiFileProviderExtension: NSFileProviderExtension {
     override func itemChanged(at url: URL) { }
     override func stopProvidingItem(at url: URL) { }
     
-    override func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest) throws -> NSFileProviderEnumerator {
-        throw NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.Code.notSupported.rawValue, userInfo: nil)
+    // 🔥 FIX: Bỏ tham số 'request' để khớp với hàm của Apple, đổi 'notSupported' thành 'featureUnsupported'
+    override func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier) throws -> NSFileProviderEnumerator {
+        throw NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.Code.featureUnsupported.rawValue, userInfo: nil)
     }
 }
