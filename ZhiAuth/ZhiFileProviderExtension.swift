@@ -40,3 +40,8 @@ class ZhiFileProviderExtension: NSFileProviderExtension {
         throw dummyError
     }
 }
+    override func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier) throws -> NSFileProviderEnumerator {
+        let dummyError = NSError(domain: "ZhiAuth.FileProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Tính năng đang bảo trì"])
+        throw dummyError
+    }
+}
