@@ -155,7 +155,7 @@ extern "C" {
         
         uint16_t path_length = path ? static_cast<uint16_t>(strlen(path)) : 0;
         
-        // 🔥 FIX: Nối chuỗi Path và Payload nằm ngay sau Header cho khớp chuẩn Server
+        // 🔥 Nối chuỗi Path và Payload nằm ngay sau Header cho khớp chuẩn Server
         std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + path_length + payload_len);
         VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
         
