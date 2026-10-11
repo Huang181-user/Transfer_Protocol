@@ -45,7 +45,8 @@ public class ZhiKcpEngine {
         return zhiauth_start_vfs_client(client)
     }
     
-    public static func shutdownCore() {
+    // Đổi tên thành stopCore cho đồng bộ
+    public static func stopCore() {
         guard let client = vfsClient else { return }
         zhiauth_stop_vfs_client(client)
         zhiauth_destroy_vfs_client(client)
