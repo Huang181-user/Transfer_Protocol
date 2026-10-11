@@ -92,7 +92,7 @@ void VfsClient::receive_loop() {
         }
 
         std::lock_guard<std::mutex> lock(kcp_mutex_);
-        ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
+        ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), static_cast<long>(bytes_recvd));
         
         int len;
         while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
@@ -155,7 +155,6 @@ extern "C" {
         
         uint16_t path_length = path ? static_cast<uint16_t>(strlen(path)) : 0;
         
-        // 🔥 Nối chuỗi Path và Payload nằm ngay sau Header cho khớp chuẩn Server
         std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + path_length + payload_len);
         VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
         
@@ -164,7 +163,7 @@ extern "C" {
         hdr->opcode = static_cast<VfsOpcode>(opcode);
         hdr->session_id = req_id;
         hdr->offset = offset;
-        hdr->data_len = (req_len > 0) ? req_len : payload_len; 
+        hdr->data_len = (req_len > 0) ? req_len : static_cast<uint32_t>(payload_len); 
         hdr->path_len = path_length;
         
         uint8_t* ptr = req_data.data() + sizeof(VfsPacketHeader);
