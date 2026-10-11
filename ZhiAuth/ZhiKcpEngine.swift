@@ -1,6 +1,5 @@
 import Foundation
 
-// 🔥 Dùng Actor để đảm bảo an toàn đa luồng tuyệt đối (Swift 6 Standard)
 actor KcpRequestManager {
     private var pendingRequests: [UInt32: CheckedContinuation<Data, Error>] = [:]
     
@@ -22,9 +21,18 @@ actor KcpRequestManager {
     }
 }
 
+public enum VfsOpcode: UInt8 {
+    case OP_STAT = 1
+    case OP_READ = 2
+    case OP_WRITE = 3
+    case OP_MKDIR = 4
+    case OP_DELETE = 5
+    case OP_LIST = 6
+}
+
 public class ZhiKcpEngine {
     private static var vfsClient: UnsafeMutableRawPointer? = nil
-    private static let requestManager = KcpRequestManager()
+    fileprivate static let requestManager = KcpRequestManager()
     private static var currentSessionId: UInt32 = 0
     
     public static func initCore(ip: String, port: Int32, symKey: String, mtu: Int32, tuning: KcpTuningParams) -> Bool {
@@ -33,12 +41,11 @@ public class ZhiKcpEngine {
             tuning.noDelay, tuning.interval, tuning.resend, tuning.nc,
             tuning.sndWnd, tuning.rcvWnd
         )
-        
         guard let client = vfsClient else { return false }
         return zhiauth_start_vfs_client(client)
     }
     
-    public static func stopCore() {
+    public static func shutdownCore() {
         guard let client = vfsClient else { return }
         zhiauth_stop_vfs_client(client)
         zhiauth_destroy_vfs_client(client)
@@ -61,7 +68,6 @@ public class ZhiKcpEngine {
             Task {
                 await requestManager.addRequest(id: reqId, continuation: continuation)
                 
-                // Chuyển Data thành mảng byte để gửi xuống C++
                 var cPayload: UnsafePointer<UInt8>? = nil
                 var cPayloadLen: UInt32 = 0
                 
@@ -78,19 +84,12 @@ public class ZhiKcpEngine {
             }
         }
     }
-    
-    // Hàm này được C++ gọi ngược lên (CGO/Swift Bridge)
-    @_cdecl("zhiauth_swift_on_response")
-    public static func onResponse(reqId: UInt32, payload: UnsafePointer<UInt8>?, len: UInt32) {
-        let data = payload != nil ? Data(bytes: payload!, count: Int(len)) : Data()
-        Task {
-            await requestManager.completeRequest(id: reqId, data: data)
-        }
-    }
 }
 
-public enum VfsOpcode: UInt8 {
-    case OP_STAT = 1
-    case OP_READ = 2
-    case OP_WRITE = 3
+@_cdecl("zhiauth_swift_on_response")
+public func zhiauth_swift_on_response(reqId: UInt32, payload: UnsafePointer<UInt8>?, len: UInt32) {
+    let data = payload != nil ? Data(bytes: payload!, count: Int(len)) : Data()
+    Task {
+        await ZhiKcpEngine.requestManager.completeRequest(id: reqId, data: data)
+    }
 }

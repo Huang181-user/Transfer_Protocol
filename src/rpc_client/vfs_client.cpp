@@ -11,6 +11,8 @@
 
 using asio::ip::udp;
 
+extern "C" void zhiauth_swift_on_response(uint32_t reqId, const uint8_t* payload, uint32_t len);
+
 static std::string getRealtimeLog() {
     auto now = std::chrono::system_clock::now();
     auto time_t_now = std::chrono::system_clock::to_time_t(now);
@@ -43,7 +45,6 @@ bool VfsClient::start() {
     is_running_ = true;
     
     std::error_code ec;
-    // 🔥 FIX: "Kết nối" cứng Socket UDP để Sandbox iOS không ném vào danh sách trôi nổi
     socket_.connect(server_endpoint_, ec);
     if (ec) {
         std::cout << "[" << getRealtimeLog() << "] UDP Connect Warning: " << ec.message() << std::endl;
@@ -75,7 +76,6 @@ void VfsClient::stop() {
 int VfsClient::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user) {
     VfsClient* client = static_cast<VfsClient*>(user);
     std::error_code ec;
-    // Đã connect nên gọi send() trực tiếp, tránh iOS hiểu nhầm
     client->socket_.send(asio::buffer(buf, len), 0, ec);
     return 0;
 }
@@ -83,7 +83,6 @@ int VfsClient::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* 
 void VfsClient::receive_loop() {
     while (is_running_) {
         std::error_code ec;
-        // Tương tự, gọi receive() thẳng thay vì receive_from()
         size_t bytes_recvd = socket_.receive(asio::buffer(recv_buffer_), 0, ec);
         
         if (ec || bytes_recvd == 0) {
@@ -103,7 +102,7 @@ void VfsClient::receive_loop() {
                 if (plaintext.size() >= sizeof(VfsPacketHeader)) {
                     VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
                     uint32_t req_id = (uint32_t)(hdr->session_id & 0xFFFFFFFF);
-                    zhiauth_cgo_on_response(req_id, plaintext.data(), plaintext.size());
+                    zhiauth_swift_on_response(req_id, plaintext.data(), plaintext.size());
                 }
             }
         }
@@ -127,5 +126,48 @@ void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
         std::lock_guard<std::mutex> lock(kcp_mutex_);
         ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), encrypted_payload.size());
         ikcp_flush(kcp_cb_);
+    }
+}
+
+extern "C" {
+    void* zhiauth_create_vfs_client(const char* ip, int port, const char* sym_key, int mtu,
+                                    int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
+        return new VfsClient(ip, port, sym_key, mtu, nodelay, interval, resend, nc, snd_wnd, rcv_wnd);
+    }
+
+    bool zhiauth_start_vfs_client(void* client) {
+        if (!client) return false;
+        return static_cast<VfsClient*>(client)->start();
+    }
+
+    void zhiauth_stop_vfs_client(void* client) {
+        if (client) static_cast<VfsClient*>(client)->stop();
+    }
+
+    void zhiauth_destroy_vfs_client(void* client) {
+        if (client) delete static_cast<VfsClient*>(client);
+    }
+
+    void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
+                              uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len) {
+        if (!client) return;
+        
+        std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + payload_len);
+        VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
+        
+        memset(hdr, 0, sizeof(VfsPacketHeader));
+        hdr->session_id = req_id;
+        hdr->opcode = opcode;
+        hdr->offset = offset;
+        hdr->length = req_len;
+        if (path) {
+            strncpy(hdr->path, path, sizeof(hdr->path) - 1);
+        }
+        
+        if (payload && payload_len > 0) {
+            memcpy(req_data.data() + sizeof(VfsPacketHeader), payload, payload_len);
+        }
+        
+        static_cast<VfsClient*>(client)->send_rpc_async(req_data);
     }
 }

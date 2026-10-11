@@ -1,15 +1,26 @@
 import Foundation
 import Network
 
-struct AuthResponse {
-    var isSuccess: Bool = false
-    var sharedPath: String = ""
-    var quicPort: Int = 4433
-    var kcpPort: Int = 6666
-    var tuning: KcpTuningParams = KcpTuningParams()
+public struct KcpTuningParams {
+    public var noDelay: Int32 = 1
+    public var interval: Int32 = 10
+    public var resend: Int32 = 2
+    public var nc: Int32 = 0
+    public var sndWnd: Int32 = 512
+    public var rcvWnd: Int32 = 512
+    public var isDynamic: Bool = false
+    public init() {}
 }
 
-// Lớp an toàn đa luồng chứa trạng thái
+public struct AuthResponse {
+    public var isSuccess: Bool = false
+    public var sharedPath: String = ""
+    public var quicPort: Int = 4433
+    public var kcpPort: Int = 6666
+    public var tuning: KcpTuningParams = KcpTuningParams()
+    public init() {}
+}
+
 final class AuthState: @unchecked Sendable {
     private let lock = NSLock()
     private var _isResponded = false
@@ -23,8 +34,8 @@ final class AuthState: @unchecked Sendable {
     }
 }
 
-class ZhiNetworkAuth {
-    static func executePortKnockingAuth(ip: String, authPort: UInt16, authCmd: String) async throws -> AuthResponse {
+public class ZhiNetworkAuth {
+    public static func executePortKnockingAuth(ip: String, authPort: UInt16, authCmd: String) async throws -> AuthResponse {
         return try await withCheckedThrowingContinuation { continuation in
             let host = NWEndpoint.Host(ip)
             guard let port = NWEndpoint.Port(rawValue: authPort) else {
@@ -62,7 +73,8 @@ class ZhiNetworkAuth {
                             guard state.claimResponse() else { return }
                             
                             if let data = data, let respStr = String(data: data, encoding: .utf8), respStr.hasPrefix("AUTH_SUCCESS") {
-                                var resp = AuthResponse(isSuccess: true)
+                                var resp = AuthResponse()
+                                resp.isSuccess = true
                                 let parts = respStr.split(separator: "|")
                                 if parts.count >= 4 {
                                     resp.sharedPath = String(parts[1])
