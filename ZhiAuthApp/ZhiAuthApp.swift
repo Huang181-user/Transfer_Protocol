@@ -51,13 +51,18 @@ struct ZhiAuthApp: App {
                     .foregroundColor(isRunning ? .green : .red)
                 
                 VStack(spacing: 10) {
+                    // 🔥 FIX: Đổi bàn phím cho gõ Dấu và Chữ thoải mái
                     TextField("LAN IP Server", text: $lanIP)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .keyboardType(.decimalPad)
+                        .keyboardType(.numbersAndPunctuation)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
                     
                     TextField("Tailscale IP Server", text: $tsIP)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .keyboardType(.decimalPad)
+                        .keyboardType(.numbersAndPunctuation)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
                     
                     TextField("Username", text: $username)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -95,12 +100,20 @@ struct ZhiAuthApp: App {
     }
     
     func testKcpCore() {
-        let targetIP = !lanIP.isEmpty ? lanIP : tsIP
-        if targetIP.isEmpty { appendLog("❌ Lỗi: Phải nhập ít nhất 1 IP Server!"); return }
-        if username.isEmpty || password.isEmpty { appendLog("❌ Lỗi: Username và Password không được trống!"); return }
+        let safeLanIP = lanIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeTsIP = tsIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if safeLanIP.isEmpty && safeTsIP.isEmpty {
+            appendLog("❌ Lỗi: Phải nhập ít nhất 1 IP Server!")
+            return
+        }
+        if username.isEmpty || password.isEmpty {
+            appendLog("❌ Lỗi: Username và Password không được trống!")
+            return
+        }
         
         isRunning = true
-        appendLog("Bắt đầu Port Knocking tới \(targetIP):5555...")
+        appendLog("Bắt đầu Port Knocking (Đua tốc độ LAN & Tailscale)...")
         
         Task {
             do {
@@ -110,35 +123,63 @@ struct ZhiAuthApp: App {
                 let safeTs = myIPs.ts.isEmpty ? "N/A" : myIPs.ts
                 let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
                 
-                let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: targetIP, authPort: 5555, authCmd: authCmd)
-                
-                if auth.isSuccess {
-                    appendLog("✅ Auth OK! Server cấp KCP Port: \(auth.kcpPort)")
-                    
-                    // 🔥 ÉP MTU XUỐNG 1200 ĐỂ CHỐNG LỖI FRAGMENT TRÊN IOS / TAILSCALE / 4G
-                    let initSuccess = ZhiKcpEngine.initCore(
-                        ip: targetIP, port: Int32(auth.kcpPort), 
-                        symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1200, tuning: auth.tuning
-                    )
-                    
-                    if initSuccess {
-                        appendLog("🔥 Lõi C++ KCP & Libsodium đã nổ máy (MTU 1200)!")
-                        
-                        appendLog("⏳ Đang chờ Server kích hoạt Worker Socket...")
-                        try await Task.sleep(nanoseconds: 2_000_000_000) // Đợi chác 2 giây
-                        
-                        appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa)...")
-                        let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: "/", offset: 0, reqLen: 0, payloadData: nil)
-                        
-                        appendLog("📦 KCP Phản hồi: Nhận \(statData.count) bytes thành công!")
-                        appendLog("🎉 MỌI THỨ HOẠT ĐỘNG HOÀN HẢO!")
-                    } else {
-                        appendLog("❌ Khởi động KCP Engine thất bại.")
-                        isRunning = false
+                // 🔥 FIX: Thuật toán ĐUA XE. Thằng nào trả kết quả về trước sẽ WIN, huỷ thằng còn lại!
+                let winner = await withTaskGroup(of: (String, AuthResponse)?.self) { group in
+                    if !safeLanIP.isEmpty {
+                        group.addTask {
+                            do {
+                                let res = try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeLanIP, authPort: 5555, authCmd: authCmd)
+                                return (safeLanIP, res)
+                            } catch { return nil }
+                        }
                     }
+                    if !safeTsIP.isEmpty {
+                        group.addTask {
+                            do {
+                                let res = try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeTsIP, authPort: 5555, authCmd: authCmd)
+                                return (safeTsIP, res)
+                            } catch { return nil }
+                        }
+                    }
+                    
+                    for await result in group {
+                        if let res = result, res.1.isSuccess {
+                            group.cancelAll() // Huỷ ngay tác vụ mạng còn lại đang bị treo
+                            return res
+                        }
+                    }
+                    return nil
+                }
+                
+                guard let (winningIP, auth) = winner else {
+                    appendLog("❌ Lỗi mạng: Cả LAN và Tailscale đều Timeout/Từ chối!")
+                    isRunning = false
+                    return
+                }
+                
+                appendLog("✅ Auth OK qua [\(winningIP)]! Server cấp KCP Port: \(auth.kcpPort)")
+                
+                let initSuccess = ZhiKcpEngine.initCore(
+                    ip: winningIP, port: Int32(auth.kcpPort), 
+                    symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1200, tuning: auth.tuning
+                )
+                
+                if initSuccess {
+                    appendLog("🔥 Lõi C++ KCP & Libsodium đã nổ máy (MTU 1200)!")
+                    appendLog("⏳ Đang chờ Server kích hoạt Worker Socket...")
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    
+                    appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa)...")
+                    let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: "/", offset: 0, reqLen: 0, payloadData: nil)
+                    
+                    appendLog("📦 KCP Phản hồi: Nhận \(statData.count) bytes thành công!")
+                    appendLog("🎉 MỌI THỨ HOẠT ĐỘNG HOÀN HẢO!")
+                } else {
+                    appendLog("❌ Khởi động KCP Engine thất bại.")
+                    isRunning = false
                 }
             } catch {
-                appendLog("❌ Lỗi mạng: \(error.localizedDescription)")
+                appendLog("❌ Lỗi hệ thống: \(error.localizedDescription)")
                 isRunning = false
             }
         }
