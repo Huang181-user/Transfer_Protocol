@@ -2,9 +2,9 @@ import FileProvider
 
 class ZhiFileProviderExtension: NSFileProviderExtension {
     
-    // Tạo 1 lỗi báo "Chưa hỗ trợ" để quăng vào các hàm bắt buộc, chiều lòng compiler
+    // Gom chung một lỗi để ném vào những hàm chưa code tới
     var dummyError: NSError {
-        return NSError(domain: "com.zhiauth.fileprovider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not implemented yet"])
+        return NSError(domain: "com.zhiauth.fileprovider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Chưa hỗ trợ"])
     }
 
     override init() {
@@ -12,7 +12,6 @@ class ZhiFileProviderExtension: NSFileProviderExtension {
     }
     
     override func item(for identifier: NSFileProviderItemIdentifier) throws -> NSFileProviderItem {
-        // Đã gỡ bỏ đoạn ép kiểu (as!) sai nguyên lý. Quăng thẳng lỗi để qua ải compile.
         throw dummyError
     }
     
@@ -37,11 +36,6 @@ class ZhiFileProviderExtension: NSFileProviderExtension {
     override func stopProvidingItem(at url: URL) { }
     
     override func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier) throws -> NSFileProviderEnumerator {
-        throw dummyError
-    }
-}
-    override func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier) throws -> NSFileProviderEnumerator {
-        let dummyError = NSError(domain: "ZhiAuth.FileProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Tính năng đang bảo trì"])
         throw dummyError
     }
 }
