@@ -8,6 +8,7 @@
 #include <sstream>
 #include <algorithm>
 #include <fstream>
+#include <cstring>
 
 using asio::ip::udp;
 
@@ -101,8 +102,8 @@ void VfsClient::receive_loop() {
             if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
                 if (plaintext.size() >= sizeof(VfsPacketHeader)) {
                     VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
-                    uint32_t req_id = (uint32_t)(hdr->session_id & 0xFFFFFFFF);
-                    zhiauth_swift_on_response(req_id, plaintext.data(), plaintext.size());
+                    uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
+                    zhiauth_swift_on_response(req_id, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
                 }
             }
         }
@@ -112,7 +113,7 @@ void VfsClient::receive_loop() {
 void VfsClient::kcp_update_loop() {
     while (is_running_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        uint32_t current_clock = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        uint32_t current_clock = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
         std::lock_guard<std::mutex> lock(kcp_mutex_);
         if (kcp_cb_) ikcp_update(kcp_cb_, current_clock);
     }
@@ -124,7 +125,7 @@ void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
     if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) return;
     {
         std::lock_guard<std::mutex> lock(kcp_mutex_);
-        ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), encrypted_payload.size());
+        ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), static_cast<int>(encrypted_payload.size()));
         ikcp_flush(kcp_cb_);
     }
 }
@@ -152,20 +153,27 @@ extern "C" {
                               uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len) {
         if (!client) return;
         
-        std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + payload_len);
+        uint16_t path_length = path ? static_cast<uint16_t>(strlen(path)) : 0;
+        
+        // 🔥 FIX: Nối chuỗi Path và Payload nằm ngay sau Header cho khớp chuẩn Server
+        std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + path_length + payload_len);
         VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
         
         memset(hdr, 0, sizeof(VfsPacketHeader));
+        hdr->magic = 0x5A484941; // "ZHIA"
+        hdr->opcode = static_cast<VfsOpcode>(opcode);
         hdr->session_id = req_id;
-        hdr->opcode = opcode;
         hdr->offset = offset;
-        hdr->length = req_len;
-        if (path) {
-            strncpy(hdr->path, path, sizeof(hdr->path) - 1);
-        }
+        hdr->data_len = (req_len > 0) ? req_len : payload_len; 
+        hdr->path_len = path_length;
         
+        uint8_t* ptr = req_data.data() + sizeof(VfsPacketHeader);
+        if (path_length > 0) {
+            memcpy(ptr, path, path_length);
+            ptr += path_length;
+        }
         if (payload && payload_len > 0) {
-            memcpy(req_data.data() + sizeof(VfsPacketHeader), payload, payload_len);
+            memcpy(ptr, payload, payload_len);
         }
         
         static_cast<VfsClient*>(client)->send_rpc_async(req_data);

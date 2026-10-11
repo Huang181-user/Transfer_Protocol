@@ -21,13 +21,18 @@ actor KcpRequestManager {
     }
 }
 
+// 🔥 FIX: Copy y nguyên Enum từ file vfs_packet.h của Server qua
 public enum VfsOpcode: UInt8 {
-    case OP_STAT = 1
-    case OP_READ = 2
-    case OP_WRITE = 3
-    case OP_MKDIR = 4
-    case OP_DELETE = 5
-    case OP_LIST = 6
+    case OP_PING     = 0x00
+    case OP_STAT     = 0x01
+    case OP_LIST     = 0x02
+    case OP_READ     = 0x03
+    case OP_WRITE    = 0x04
+    case OP_MKDIR    = 0x05
+    case OP_DELETE   = 0x06
+    case OP_RENAME   = 0x07
+    case OP_TRUNCATE = 0x08
+    case OP_ERROR    = 0xFF
 }
 
 public class ZhiKcpEngine {
@@ -45,7 +50,6 @@ public class ZhiKcpEngine {
         return zhiauth_start_vfs_client(client)
     }
     
-    // Đổi tên thành stopCore cho đồng bộ
     public static func stopCore() {
         guard let client = vfsClient else { return }
         zhiauth_stop_vfs_client(client)
@@ -81,7 +85,7 @@ public class ZhiKcpEngine {
                     }
                 }
                 
-                zhiauth_vfs_send_rpc(client, reqId, UInt8(opcode.rawValue), path, offset, reqLen, cPayload, cPayloadLen)
+                zhiauth_vfs_send_rpc(client, reqId, opcode.rawValue, path, offset, reqLen, cPayload, cPayloadLen)
             }
         }
     }
