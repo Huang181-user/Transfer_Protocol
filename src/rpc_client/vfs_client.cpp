@@ -2,6 +2,7 @@
 #include "rpc_client/vfs_client.h"
 #include "rpc_client/crypto_box.h"
 #include "rpc_client/vfs_packet.h"
+#include <iostream>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
@@ -9,6 +10,7 @@
 
 using asio::ip::udp;
 
+// Khai báo hàm Swift để gọi ngược từ C++
 extern "C" void zhiauth_swift_on_response(uint32_t reqId, const uint8_t* payload, uint32_t len);
 extern "C" void zhiauth_swift_log(const char* msg);
 
@@ -62,8 +64,6 @@ bool VfsClient::start() {
     int safe_mtu = (mtu_ > 100) ? (mtu_ - 56) : 1200; 
     ikcp_wndsize(kcp_cb_, snd_wnd_, rcv_wnd_); 
     kcp_cb_->stream = 0; ikcp_setmtu(kcp_cb_, safe_mtu); kcp_cb_->rx_minrto = 10;
-
-    logToSwift("[" + getRealtimeLog() + "] KCP Engine Operational | Safe MTU: " + std::to_string(safe_mtu));
 
     io_thread_ = std::thread(&VfsClient::receive_loop, this);
     timer_thread_ = std::thread(&VfsClient::kcp_update_loop, this);
