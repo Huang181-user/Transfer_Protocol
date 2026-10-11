@@ -39,7 +39,7 @@ public class ZhiNetworkAuth {
         return try await withCheckedThrowingContinuation { continuation in
             let host = NWEndpoint.Host(ip)
             guard let port = NWEndpoint.Port(rawValue: authPort) else {
-                continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -400, userInfo: [NSLocalizedDescriptionKey: "Invalid Port"]))
+                continuation.resume(throwing: NSError(domain: "ZhiAuth.Network", code: -400, userInfo: [NSLocalizedDescriptionKey: "Cổng mạng không hợp lệ"]))
                 return
             }
             
@@ -55,6 +55,15 @@ public class ZhiNetworkAuth {
             
             let state = AuthState()
             
+            // HẸN GIỜ NỔ: Sau đúng 3 giây nếu chưa kết nối xong thì cắt cầu dao báo lỗi thẳng lên màn hình!
+            serialQueue.asyncAfter(deadline: .now() + 3.0) {
+                if state.claimResponse() {
+                    connection.cancel()
+                    let err = NSError(domain: "ZhiAuth.Network", code: -408, userInfo: [NSLocalizedDescriptionKey: "Timeout 3s: Không kết nối được tới \(ip)"])
+                    continuation.resume(throwing: err)
+                }
+            }
+            
             connection.stateUpdateHandler = { connState in
                 switch connState {
                 case .ready:
@@ -62,9 +71,7 @@ public class ZhiNetworkAuth {
                     connection.send(content: cmdData, completion: .contentProcessed { sendError in
                         if let sendError = sendError {
                             connection.cancel()
-                            if state.claimResponse() {
-                                continuation.resume(throwing: sendError)
-                            }
+                            if state.claimResponse() { continuation.resume(throwing: sendError) }
                             return
                         }
                         
@@ -92,7 +99,7 @@ public class ZhiNetworkAuth {
                                 }
                                 continuation.resume(returning: resp)
                             } else {
-                                continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -401, userInfo: [NSLocalizedDescriptionKey: "Authentication Failed"]))
+                                continuation.resume(throwing: NSError(domain: "ZhiAuth.Network", code: -401, userInfo: [NSLocalizedDescriptionKey: "Server từ chối xác thực"]))
                             }
                         }
                     })
@@ -100,7 +107,13 @@ public class ZhiNetworkAuth {
                     if state.claimResponse() { continuation.resume(throwing: err) }
                 case .cancelled:
                     if state.claimResponse() {
-                        continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -402, userInfo: [NSLocalizedDescriptionKey: "Connection Cancelled"]))
+                        continuation.resume(throwing: NSError(domain: "ZhiAuth.Network", code: -402, userInfo: [NSLocalizedDescriptionKey: "Đã huỷ kết nối"]))
+                    }
+                case .waiting(let err):
+                    // Bắt chặt case ngắt mạng hoặc sai IP
+                    connection.cancel()
+                    if state.claimResponse() {
+                        continuation.resume(throwing: err)
                     }
                 default: break
                 }
