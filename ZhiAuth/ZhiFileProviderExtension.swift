@@ -1,12 +1,19 @@
 import FileProvider
 
 class ZhiFileProviderExtension: NSFileProviderExtension {
+    
+    // Tạo 1 lỗi báo "Chưa hỗ trợ" để quăng vào các hàm bắt buộc, chiều lòng compiler
+    var dummyError: NSError {
+        return NSError(domain: "com.zhiauth.fileprovider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not implemented yet"])
+    }
+
     override init() {
         super.init()
     }
     
     override func item(for identifier: NSFileProviderItemIdentifier) throws -> NSFileProviderItem {
-        return NSFileProviderItemIdentifier.rootContainer as! NSFileProviderItem
+        // Đã gỡ bỏ đoạn ép kiểu (as!) sai nguyên lý. Quăng thẳng lỗi để qua ải compile.
+        throw dummyError
     }
     
     override func urlForItem(withPersistentIdentifier identifier: NSFileProviderItemIdentifier) -> URL? {
@@ -18,24 +25,18 @@ class ZhiFileProviderExtension: NSFileProviderExtension {
     }
     
     override func providePlaceholder(at url: URL, completionHandler: @escaping (Error?) -> Void) {
-        completionHandler(nil)
+        completionHandler(dummyError)
     }
     
     override func startProvidingItem(at url: URL, completionHandler: @escaping (Error?) -> Void) {
-        completionHandler(nil)
+        completionHandler(dummyError)
     }
     
     override func itemChanged(at url: URL) { }
+    
     override func stopProvidingItem(at url: URL) { }
     
-    // Ghi đè phương thức CHUẨN XÁC, không có NSFileProviderRequest
-    // Sử dụng thẳng NSError tự định nghĩa để né lỗi Enum
     override func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier) throws -> NSFileProviderEnumerator {
-        let customError = NSError(
-            domain: "com.zhiauth.fileprovider",
-            code: 100,
-            userInfo: [NSLocalizedDescriptionKey: "Tính năng duyệt file đang được phát triển."]
-        )
-        throw customError
+        throw dummyError
     }
 }
