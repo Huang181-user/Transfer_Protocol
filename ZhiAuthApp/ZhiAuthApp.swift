@@ -38,6 +38,7 @@ struct ZhiAuthApp: App {
     @AppStorage("savedUser") private var username: String = "huang"
     @AppStorage("savedPass") private var password: String = ""
     
+    // Tạm thời fix cứng text ở đây, sau này ný đổi sang dùng thư viện I18n nha
     @State private var logText: String = "💀 Sẵn sàng chọc thủng server...\n"
     @State private var isRunning = false
 
@@ -51,7 +52,6 @@ struct ZhiAuthApp: App {
                     .foregroundColor(isRunning ? .green : .red)
                 
                 VStack(spacing: 10) {
-                    // 🔥 FIX: Đổi bàn phím cho gõ Dấu và Chữ thoải mái
                     TextField("LAN IP Server", text: $lanIP)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .keyboardType(.numbersAndPunctuation)
@@ -123,14 +123,17 @@ struct ZhiAuthApp: App {
                 let safeTs = myIPs.ts.isEmpty ? "N/A" : myIPs.ts
                 let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
                 
-                // 🔥 FIX: Thuật toán ĐUA XE. Thằng nào trả kết quả về trước sẽ WIN, huỷ thằng còn lại!
-                let winner = await withTaskGroup(of: (String, AuthResponse)?.self) { group in
+                // 🔥 FIX: Thay đổi kiểu trả về của withTaskGroup
+                let winner: (String, AuthResponse)? = await withTaskGroup(of: Optional<(String, AuthResponse)>.self) { group in
                     if !safeLanIP.isEmpty {
                         group.addTask {
                             do {
                                 let res = try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeLanIP, authPort: 5555, authCmd: authCmd)
                                 return (safeLanIP, res)
-                            } catch { return nil }
+                            } catch {
+                                ZhiLogger.error("LAN Kocking failed: \(error.localizedDescription)")
+                                return nil 
+                            }
                         }
                     }
                     if !safeTsIP.isEmpty {
@@ -138,13 +141,16 @@ struct ZhiAuthApp: App {
                             do {
                                 let res = try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeTsIP, authPort: 5555, authCmd: authCmd)
                                 return (safeTsIP, res)
-                            } catch { return nil }
+                            } catch { 
+                                ZhiLogger.error("TS Kocking failed: \(error.localizedDescription)")
+                                return nil 
+                            }
                         }
                     }
                     
                     for await result in group {
                         if let res = result, res.1.isSuccess {
-                            group.cancelAll() // Huỷ ngay tác vụ mạng còn lại đang bị treo
+                            group.cancelAll()
                             return res
                         }
                     }
@@ -180,6 +186,7 @@ struct ZhiAuthApp: App {
                 }
             } catch {
                 appendLog("❌ Lỗi hệ thống: \(error.localizedDescription)")
+                ZhiLogger.error("System error: \(error.localizedDescription)")
                 isRunning = false
             }
         }
