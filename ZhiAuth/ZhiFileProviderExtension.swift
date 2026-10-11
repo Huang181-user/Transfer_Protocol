@@ -2,9 +2,8 @@ import FileProvider
 
 class ZhiFileProviderExtension: NSFileProviderExtension {
     
-    // Gom chung một lỗi để ném vào những hàm chưa code tới
     var dummyError: NSError {
-        return NSError(domain: "com.zhiauth.fileprovider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Chưa hỗ trợ"])
+        return NSError(domain: "ZhiAuth.FileProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Chưa hỗ trợ"])
     }
 
     override init() {
