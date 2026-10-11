@@ -2,17 +2,19 @@
 #include "rpc_client/vfs_client.h"
 #include "rpc_client/crypto_box.h"
 #include "rpc_client/vfs_packet.h"
-#include <iostream>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
-#include <algorithm>
-#include <fstream>
 #include <cstring>
 
 using asio::ip::udp;
 
 extern "C" void zhiauth_swift_on_response(uint32_t reqId, const uint8_t* payload, uint32_t len);
+extern "C" void zhiauth_swift_log(const char* msg);
+
+static void logToSwift(const std::string& msg) {
+    zhiauth_swift_log(msg.c_str());
+}
 
 static std::string getRealtimeLog() {
     auto now = std::chrono::system_clock::now();
@@ -48,7 +50,9 @@ bool VfsClient::start() {
     std::error_code ec;
     socket_.connect(server_endpoint_, ec);
     if (ec) {
-        std::cout << "[" << getRealtimeLog() << "] UDP Connect Warning: " << ec.message() << std::endl;
+        logToSwift("[" + getRealtimeLog() + "] LỖI SOCKET: " + ec.message());
+    } else {
+        logToSwift("[" + getRealtimeLog() + "] UDP Socket đã trói vào IP: " + server_endpoint_.address().to_string() + " Port: " + std::to_string(server_endpoint_.port()));
     }
 
     kcp_cb_ = ikcp_create(0x11223344, this);
@@ -59,7 +63,7 @@ bool VfsClient::start() {
     ikcp_wndsize(kcp_cb_, snd_wnd_, rcv_wnd_); 
     kcp_cb_->stream = 0; ikcp_setmtu(kcp_cb_, safe_mtu); kcp_cb_->rx_minrto = 10;
 
-    std::cout << "[" << getRealtimeLog() << "] KCP Engine Operational | Safe MTU: " << safe_mtu << std::endl;
+    logToSwift("[" + getRealtimeLog() + "] KCP Engine Operational | Safe MTU: " + std::to_string(safe_mtu));
 
     io_thread_ = std::thread(&VfsClient::receive_loop, this);
     timer_thread_ = std::thread(&VfsClient::kcp_update_loop, this);
@@ -77,7 +81,12 @@ void VfsClient::stop() {
 int VfsClient::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user) {
     VfsClient* client = static_cast<VfsClient*>(user);
     std::error_code ec;
-    client->socket_.send(asio::buffer(buf, len), 0, ec);
+    size_t sent = client->socket_.send(asio::buffer(buf, len), 0, ec);
+    if (ec) {
+        logToSwift("[" + getRealtimeLog() + "] UDP SEND ERROR: " + ec.message());
+    } else {
+        logToSwift("[" + getRealtimeLog() + "] UDP -> Bắn " + std::to_string(sent) + " bytes lên Server");
+    }
     return 0;
 }
 
@@ -86,24 +95,30 @@ void VfsClient::receive_loop() {
         std::error_code ec;
         size_t bytes_recvd = socket_.receive(asio::buffer(recv_buffer_), 0, ec);
         
-        if (ec || bytes_recvd == 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (ec) {
+            if (ec != asio::error::would_block && ec != asio::error::try_again && ec != asio::error::eof) {
+                logToSwift("[" + getRealtimeLog() + "] UDP RECV ERROR: " + ec.message());
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
             continue; 
         }
-
-        std::lock_guard<std::mutex> lock(kcp_mutex_);
-        ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), static_cast<long>(bytes_recvd));
         
-        int len;
-        while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
-            std::vector<uint8_t> encrypted_payload(len);
-            ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
-            std::vector<uint8_t> plaintext;
-            if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
-                if (plaintext.size() >= sizeof(VfsPacketHeader)) {
-                    VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
-                    uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
-                    zhiauth_swift_on_response(req_id, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
+        if (bytes_recvd > 0) {
+            logToSwift("[" + getRealtimeLog() + "] UDP <- Nhận " + std::to_string(bytes_recvd) + " bytes");
+            std::lock_guard<std::mutex> lock(kcp_mutex_);
+            ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), static_cast<long>(bytes_recvd));
+            
+            int len;
+            while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
+                std::vector<uint8_t> encrypted_payload(len);
+                ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
+                std::vector<uint8_t> plaintext;
+                if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
+                    if (plaintext.size() >= sizeof(VfsPacketHeader)) {
+                        VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
+                        uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
+                        zhiauth_swift_on_response(req_id, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
+                    }
                 }
             }
         }
@@ -122,11 +137,15 @@ void VfsClient::kcp_update_loop() {
 void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
     if (request_payload.size() < sizeof(VfsPacketHeader)) return;
     std::vector<uint8_t> encrypted_payload;
-    if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) return;
+    if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) {
+        logToSwift("[" + getRealtimeLog() + "] Lỗi mã hoá Libsodium!");
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(kcp_mutex_);
         ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), static_cast<int>(encrypted_payload.size()));
         ikcp_flush(kcp_cb_);
+        logToSwift("[" + getRealtimeLog() + "] Đã đẩy gói KCP vào luồng gửi.");
     }
 }
 
@@ -159,7 +178,7 @@ extern "C" {
         VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
         
         memset(hdr, 0, sizeof(VfsPacketHeader));
-        hdr->magic = 0x5A484941; // "ZHIA"
+        hdr->magic = 0x5A484941;
         hdr->opcode = static_cast<VfsOpcode>(opcode);
         hdr->session_id = req_id;
         hdr->offset = offset;

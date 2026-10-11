@@ -1,5 +1,13 @@
 import Foundation
 
+@_cdecl("zhiauth_swift_log")
+public func zhiauth_swift_log(msg: UnsafePointer<CChar>) {
+    let str = String(cString: msg)
+    DispatchQueue.main.async {
+        NotificationCenter.default.post(name: NSNotification.Name("ZhiAuthLog"), object: str)
+    }
+}
+
 actor KcpRequestManager {
     private var pendingRequests: [UInt32: CheckedContinuation<Data, Error>] = [:]
     
@@ -21,7 +29,6 @@ actor KcpRequestManager {
     }
 }
 
-// 🔥 FIX: Copy y nguyên Enum từ file vfs_packet.h của Server qua
 public enum VfsOpcode: UInt8 {
     case OP_PING     = 0x00
     case OP_STAT     = 0x01
@@ -57,36 +64,46 @@ public class ZhiKcpEngine {
         vfsClient = nil
         
         Task {
-            await requestManager.failAll(error: NSError(domain: "ZhiAuth", code: -500, userInfo: [NSLocalizedDescriptionKey: "KCP Engine Stopped"]))
+            await requestManager.failAll(error: NSError(domain: "ZhiAuth.KCP", code: -500, userInfo: [NSLocalizedDescriptionKey: "KCP Engine Stopped"]))
         }
     }
     
     public static func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
         guard let client = vfsClient else {
-            throw NSError(domain: "ZhiAuth", code: -501, userInfo: [NSLocalizedDescriptionKey: "KCP Engine Not Running"])
+            throw NSError(domain: "ZhiAuth.KCP", code: -501, userInfo: [NSLocalizedDescriptionKey: "KCP Engine Chưa Chạy"])
         }
         
         currentSessionId &+= 1
         let reqId = currentSessionId
         
-        return try await withCheckedThrowingContinuation { continuation in
-            Task {
-                await requestManager.addRequest(id: reqId, continuation: continuation)
-                
-                var cPayload: UnsafePointer<UInt8>? = nil
-                var cPayloadLen: UInt32 = 0
-                
-                if let data = payloadData, !data.isEmpty {
-                    data.withUnsafeBytes { ptr in
-                        if let baseAddress = ptr.baseAddress {
-                            cPayload = baseAddress.assumingMemoryBound(to: UInt8.self)
-                            cPayloadLen = UInt32(data.count)
+        return try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask {
+                return try await withCheckedThrowingContinuation { continuation in
+                    Task {
+                        await requestManager.addRequest(id: reqId, continuation: continuation)
+                        var cPayload: UnsafePointer<UInt8>? = nil
+                        var cPayloadLen: UInt32 = 0
+                        if let data = payloadData, !data.isEmpty {
+                            data.withUnsafeBytes { ptr in
+                                if let baseAddress = ptr.baseAddress {
+                                    cPayload = baseAddress.assumingMemoryBound(to: UInt8.self)
+                                    cPayloadLen = UInt32(data.count)
+                                }
+                            }
                         }
+                        zhiauth_vfs_send_rpc(client, reqId, opcode.rawValue, path, offset, reqLen, cPayload, cPayloadLen)
                     }
                 }
-                
-                zhiauth_vfs_send_rpc(client, reqId, opcode.rawValue, path, offset, reqLen, cPayload, cPayloadLen)
             }
+            
+            group.addTask {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                throw NSError(domain: "ZhiAuth.KCP", code: -408, userInfo: [NSLocalizedDescriptionKey: "KCP Timeout: Quá 5 giây không thấy Server phản hồi!"])
+            }
+            
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
         }
     }
 }
