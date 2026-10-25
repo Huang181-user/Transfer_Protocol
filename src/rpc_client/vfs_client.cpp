@@ -10,7 +10,6 @@
 
 using asio::ip::udp;
 
-// Khai báo hàm Swift để gọi ngược từ C++
 extern "C" void zhiauth_swift_on_response(uint32_t reqId, const uint8_t* payload, uint32_t len);
 extern "C" void zhiauth_swift_log(const char* msg);
 
@@ -25,7 +24,7 @@ static std::string getRealtimeLog() {
     auto micros = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() % 1000000;
     std::tm bt{}; localtime_r(&time_t_now, &bt);
     std::ostringstream oss;
-    oss << std::put_time(&bt, "%Y-%m-%d %H:%M:%S") << "." << std::setfill('0') << std::setw(6) << micros;
+    oss << std::put_time(&bt, "%H:%M:%S") << "." << std::setfill('0') << std::setw(6) << micros;
     return oss.str();
 }
 
@@ -52,9 +51,9 @@ bool VfsClient::start() {
     std::error_code ec;
     socket_.connect(server_endpoint_, ec);
     if (ec) {
-        logToSwift("[" + getRealtimeLog() + "] LỖI SOCKET: " + ec.message());
+        logToSwift("[" + getRealtimeLog() + "] ❌ [SYS-ERR] LỖI BIND SOCKET UDP: " + ec.message());
     } else {
-        logToSwift("[" + getRealtimeLog() + "] UDP Socket đã trói vào IP: " + server_endpoint_.address().to_string() + " Port: " + std::to_string(server_endpoint_.port()));
+        logToSwift("[" + getRealtimeLog() + "] 🟢 [SYS-NET] Mở Socket UDP trói IP: " + server_endpoint_.address().to_string() + ":" + std::to_string(server_endpoint_.port()));
     }
 
     kcp_cb_ = ikcp_create(0x11223344, this);
@@ -83,9 +82,9 @@ int VfsClient::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* 
     std::error_code ec;
     size_t sent = client->socket_.send(asio::buffer(buf, len), 0, ec);
     if (ec) {
-        logToSwift("[" + getRealtimeLog() + "] UDP SEND ERROR: " + ec.message());
+        logToSwift("[" + getRealtimeLog() + "] ❌ [TX-ERR] Gửi UDP THẤT BẠI: " + ec.message());
     } else {
-        logToSwift("[" + getRealtimeLog() + "] UDP -> Bắn " + std::to_string(sent) + " bytes lên Server");
+        logToSwift("[" + getRealtimeLog() + "] 📤 [TX-UDP] Bắn gói KCP ra mạng: " + std::to_string(sent) + " Bytes");
     }
     return 0;
 }
@@ -97,14 +96,14 @@ void VfsClient::receive_loop() {
         
         if (ec) {
             if (ec != asio::error::would_block && ec != asio::error::try_again && ec != asio::error::eof) {
-                logToSwift("[" + getRealtimeLog() + "] UDP RECV ERROR: " + ec.message());
+                logToSwift("[" + getRealtimeLog() + "] ❌ [RX-ERR] Kẹt Socket UDP: " + ec.message());
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
             continue; 
         }
         
         if (bytes_recvd > 0) {
-            logToSwift("[" + getRealtimeLog() + "] UDP <- Nhận " + std::to_string(bytes_recvd) + " bytes");
+            logToSwift("[" + getRealtimeLog() + "] 📥 [RX-UDP] Hứng được gói UDP: " + std::to_string(bytes_recvd) + " Bytes");
             std::lock_guard<std::mutex> lock(kcp_mutex_);
             ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), static_cast<long>(bytes_recvd));
             
@@ -113,12 +112,23 @@ void VfsClient::receive_loop() {
                 std::vector<uint8_t> encrypted_payload(len);
                 ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
                 std::vector<uint8_t> plaintext;
+                
                 if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
                     if (plaintext.size() >= sizeof(VfsPacketHeader)) {
                         VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
                         uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
+                        
+                        std::ostringstream oss;
+                        oss << "[" << getRealtimeLog() << "] 🔓 [RX-KCP] GIẢI MÃ OK | Opcode: 0x" << std::hex << (int)hdr->opcode << std::dec 
+                            << " | ReqID: " << req_id << " | DataLen: " << hdr->data_len << " | SizeThô: " << plaintext.size() << "B";
+                        logToSwift(oss.str());
+                        
                         zhiauth_swift_on_response(req_id, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
+                    } else {
+                        logToSwift("[" + getRealtimeLog() + "] ⚠️ [RX-ERR] Lỗi cấu trúc: Gói tin sau giải mã bị cụt ngọn!");
                     }
+                } else {
+                    logToSwift("[" + getRealtimeLog() + "] 💀 [RX-ERR] Libsodium giải mã THẤT BẠI (Sai Key hoặc Bị hắt hủi giữa đường)!");
                 }
             }
         }
@@ -136,16 +146,24 @@ void VfsClient::kcp_update_loop() {
 
 void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
     if (request_payload.size() < sizeof(VfsPacketHeader)) return;
+    VfsPacketHeader* hdr = (VfsPacketHeader*)request_payload.data();
+    uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
+    
+    std::ostringstream oss;
+    oss << "[" << getRealtimeLog() << "] 📦 [TX-KCP] GÓI LỆNH RPC | Opcode: 0x" << std::hex << (int)hdr->opcode << std::dec 
+        << " | ReqID: " << req_id << " | DataLen: " << hdr->data_len << " | Chờ mã hoá: " << request_payload.size() << "B";
+    logToSwift(oss.str());
+
     std::vector<uint8_t> encrypted_payload;
     if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) {
-        logToSwift("[" + getRealtimeLog() + "] Lỗi mã hoá Libsodium!");
+        logToSwift("[" + getRealtimeLog() + "] ❌ [TX-ERR] Ép giáp Libsodium thất bại!");
         return;
     }
     {
         std::lock_guard<std::mutex> lock(kcp_mutex_);
         ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), static_cast<int>(encrypted_payload.size()));
         ikcp_flush(kcp_cb_);
-        logToSwift("[" + getRealtimeLog() + "] Đã đẩy gói KCP vào luồng gửi.");
+        logToSwift("[" + getRealtimeLog() + "] 🛡️ [TX-KCP] Bơm " + std::to_string(encrypted_payload.size()) + "B vô nòng KCP");
     }
 }
 
@@ -171,9 +189,7 @@ extern "C" {
     void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
                               uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len) {
         if (!client) return;
-        
         uint16_t path_length = path ? static_cast<uint16_t>(strlen(path)) : 0;
-        
         std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + path_length + payload_len);
         VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
         
@@ -186,13 +202,8 @@ extern "C" {
         hdr->path_len = path_length;
         
         uint8_t* ptr = req_data.data() + sizeof(VfsPacketHeader);
-        if (path_length > 0) {
-            memcpy(ptr, path, path_length);
-            ptr += path_length;
-        }
-        if (payload && payload_len > 0) {
-            memcpy(ptr, payload, payload_len);
-        }
+        if (path_length > 0) { memcpy(ptr, path, path_length); ptr += path_length; }
+        if (payload && payload_len > 0) { memcpy(ptr, payload, payload_len); }
         
         static_cast<VfsClient*>(client)->send_rpc_async(req_data);
     }

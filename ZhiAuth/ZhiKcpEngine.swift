@@ -62,15 +62,12 @@ public class ZhiKcpEngine {
         zhiauth_stop_vfs_client(client)
         zhiauth_destroy_vfs_client(client)
         vfsClient = nil
-        
-        Task {
-            await requestManager.failAll(error: NSError(domain: "ZhiAuth.KCP", code: -500, userInfo: [NSLocalizedDescriptionKey: "KCP Engine Stopped"]))
-        }
+        Task { await requestManager.failAll(error: NSError(domain: "ZhiAuth.KCP", code: -500, userInfo: [NSLocalizedDescriptionKey: "KCP Engine Stopped"])) }
     }
     
     public static func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
         guard let client = vfsClient else {
-            throw NSError(domain: "ZhiAuth.KCP", code: -501, userInfo: [NSLocalizedDescriptionKey: "KCP Engine Chưa Chạy"])
+            throw NSError(domain: "ZhiAuth.KCP", code: -501, userInfo: [NSLocalizedDescriptionKey: "Lõi KCP đã hỏng/Chưa khởi động"])
         }
         
         currentSessionId &+= 1
@@ -97,8 +94,10 @@ public class ZhiKcpEngine {
             }
             
             group.addTask {
-                try await Task.sleep(nanoseconds: 5_000_000_000)
-                throw NSError(domain: "ZhiAuth.KCP", code: -408, userInfo: [NSLocalizedDescriptionKey: "KCP Timeout: Quá 5 giây không thấy Server phản hồi!"])
+                try await Task.sleep(nanoseconds: 5_000_000_000) // Timeout 5s
+                let errMsg = "❌ [TIMEOUT] Máy chủ ngậm luôn gói tin (Hoặc iOS bóp UDP ngầm)! ReqID: \(reqId)"
+                zhiauth_swift_log(msg: errMsg)
+                throw NSError(domain: "ZhiAuth.KCP", code: -408, userInfo: [NSLocalizedDescriptionKey: errMsg])
             }
             
             let result = try await group.next()!
@@ -111,7 +110,5 @@ public class ZhiKcpEngine {
 @_cdecl("zhiauth_swift_on_response")
 public func zhiauth_swift_on_response(reqId: UInt32, payload: UnsafePointer<UInt8>?, len: UInt32) {
     let data = payload != nil ? Data(bytes: payload!, count: Int(len)) : Data()
-    Task {
-        await ZhiKcpEngine.requestManager.completeRequest(id: reqId, data: data)
-    }
+    Task { await ZhiKcpEngine.requestManager.completeRequest(id: reqId, data: data) }
 }
