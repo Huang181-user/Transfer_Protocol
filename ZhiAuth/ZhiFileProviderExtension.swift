@@ -1,40 +1,57 @@
 import FileProvider
+import UniformTypeIdentifiers
+
+class ZhiFileItem: NSObject, NSFileProviderItem {
+    var itemIdentifier: NSFileProviderItemIdentifier
+    var parentItemIdentifier: NSFileProviderItemIdentifier
+    var filename: String
+    var contentType: UTType
+    var typeIdentifier: String { contentType.identifier }
+    
+    init(identifier: NSFileProviderItemIdentifier, parent: NSFileProviderItemIdentifier, filename: String, contentType: UTType) {
+        self.itemIdentifier = identifier
+        self.parentItemIdentifier = parent
+        self.filename = filename
+        self.contentType = contentType
+    }
+}
+
+class ZhiFileEnumerator: NSObject, NSFileProviderEnumerator {
+    func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
+        observer.didEnumerate([])
+        observer.finishEnumerating(upTo: nil)
+    }
+    func invalidate() {}
+}
 
 class ZhiFileProviderExtension: NSFileProviderExtension {
     
-    var dummyError: NSError {
-        return NSError(domain: "ZhiAuth.FileProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Chưa hỗ trợ"])
-    }
-
-    override init() {
-        super.init()
-    }
-    
     override func item(for identifier: NSFileProviderItemIdentifier) throws -> NSFileProviderItem {
-        throw dummyError
+        // Bắt buộc trả về một thư mục giả lập hợp lệ cho Root Container
+        if identifier == .rootContainer {
+            return ZhiFileItem(identifier: .rootContainer, parent: .rootContainer, filename: "ZhiAuth Cloud", contentType: .folder)
+        }
+        throw NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.noSuchItem.rawValue, userInfo: nil)
     }
     
     override func urlForItem(withPersistentIdentifier identifier: NSFileProviderItemIdentifier) -> URL? {
-        return nil
+        guard let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ruanhuang.ZhiAuth") else { return nil }
+        return group.appendingPathComponent(identifier.rawValue)
     }
     
     override func persistentIdentifierForItem(at url: URL) -> NSFileProviderItemIdentifier? {
-        return nil
+        return NSFileProviderItemIdentifier(url.lastPathComponent)
     }
     
-    override func providePlaceholder(at url: URL, completionHandler: @escaping (Error?) -> Void) {
-        completionHandler(dummyError)
-    }
+    override func providePlaceholder(at url: URL, completionHandler: @escaping (Error?) -> Void) { completionHandler(nil) }
     
-    override func startProvidingItem(at url: URL, completionHandler: @escaping (Error?) -> Void) {
-        completionHandler(dummyError)
-    }
+    override func startProvidingItem(at url: URL, completionHandler: @escaping (Error?) -> Void) { completionHandler(nil) }
     
     override func itemChanged(at url: URL) { }
     
     override func stopProvidingItem(at url: URL) { }
     
     override func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier) throws -> NSFileProviderEnumerator {
-        throw dummyError
+        return ZhiFileEnumerator()
     }
 }
