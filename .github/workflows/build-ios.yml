@@ -16,9 +16,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Cài đặt XcodeGen & ASIO
+      - name: Cài đặt XcodeGen, ASIO & LDID
         run: |
-          brew install xcodegen asio
+          brew install xcodegen asio ldid
           xcodegen generate
 
       - name: Ép dùng Xcode 16.2.0
@@ -40,15 +40,21 @@ jobs:
             SYMROOT=$(PWD)/build \
             -verbose
 
-      - name: Đóng gói thành file .ipa
+      - name: Bơm quyền App Group bằng ldid & Đóng gói IPA
         run: |
-          echo "==== ĐANG ĐÓNG GÓI THÀNH IPA CHUẨN APPLE ===="
+          echo "==== ĐANG CHUẨN BỊ PAYLOAD ===="
           mkdir -p Payload
           cp -R build/Release-iphoneos/ZhiAuthApp.app Payload/
+          
+          echo "==== ÉP QUYỀN APP GROUP VÀO NHÂN BINARY BẰNG LDID ===="
+          ldid -SZhiAuth.entitlements Payload/ZhiAuthApp.app/ZhiAuthApp
+          ldid -SZhiAuth.entitlements Payload/ZhiAuthApp.app/PlugIns/ZhiAuthFileProvider.appex/ZhiAuthFileProvider
+          
+          echo "==== ĐÓNG GÓI THÀNH IPA CHUẨN ===="
           ditto -c -k --sequesterRsrc --keepParent Payload ZhiAuthApp.ipa
           echo "✅ Đóng gói hoàn tất!"
 
-      - name: Xuất file IPA
+      - name: Xuất file IPA cho Ný tải
         uses: actions/upload-artifact@v4
         with:
           name: ZhiAuthApp-iOS
