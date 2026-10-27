@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import Darwin
 import Network
+import FileProvider
 
 func getDeviceIPs() -> (lan: String, ts: String) {
     var lan = ""; var ts = ""
@@ -71,7 +72,6 @@ struct ZhiAuthApp: App {
     }
     
     func testKcpCore() {
-        // 🔥 Gọi NWConnection bắn gói UDP Fake ra LAN để lừa iOS văng hộp thoại "Local Network Permission"
         triggerLocalNetworkPrompt()
         
         let safeLanIP = lanIP.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -113,9 +113,19 @@ struct ZhiAuthApp: App {
                     appendLog("🔥 Lõi C++ KCP & Libsodium đã nổ máy!")
                     try await Task.sleep(nanoseconds: 2_000_000_000)
                     
+                    // 1. Gửi lệnh lấy thông tin thư mục gốc
                     appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa)...")
                     let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: "/", offset: 0, reqLen: 0, payloadData: nil)
-                    appendLog("🎉 MỌI THỨ HOẠT ĐỘNG HOÀN HẢO! Nhận \(statData.count) Bytes.")
+                    appendLog("🎉 Nhận OP_STAT OK (\(statData.count) Bytes)")
+
+                    // 2. Gửi lệnh bốc danh sách File (OP_LIST)
+                    appendLog("Gửi lệnh OP_LIST (Lấy danh sách file)...")
+                    let listData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_LIST, path: "/", offset: 0, reqLen: 0, payloadData: nil)
+                    parseAndLogOpList(data: listData)
+
+                    // 3. Đăng ký FileProvider để hiển thị ổ đĩa trên app Tệp của iOS
+                    registerFileProvider()
+
                     isRunning = false
                 } else {
                     appendLog("❌ Khởi động KCP Engine thất bại.")
@@ -128,10 +138,52 @@ struct ZhiAuthApp: App {
         }
     }
     
+    func parseAndLogOpList(data: Data) {
+        let headerSize = 27
+        if data.count <= headerSize {
+            appendLog("📂 Thư mục rỗng hoặc lỗi đọc.")
+            return
+        }
+        appendLog("📂 --- DANH SÁCH THƯ MỤC GỐC ---")
+        var cur = headerSize
+        var count = 0
+        
+        while cur + 39 <= data.count {
+            // Giải nén byte an toàn chống Crash trên ARM64
+            let nameLen = UInt16(data[cur]) | (UInt16(data[cur+1]) << 8)
+            let isDir = data[cur+2]
+            var size: UInt64 = 0
+            withUnsafeMutableBytes(of: &size) { sizePtr in
+                _ = data.copyBytes(to: sizePtr, from: cur+3..<cur+11)
+            }
+            cur += 39
+            
+            if cur + Int(nameLen) > data.count { break }
+            let nameData = data[cur..<cur+Int(nameLen)]
+            if let name = String(data: nameData, encoding: .utf8) {
+                let type = isDir == 1 ? "📁" : "📄"
+                appendLog("  \(type) \(name) (\(size) Bytes)")
+                count += 1
+            }
+            cur += Int(nameLen)
+        }
+        appendLog("✅ Tìm thấy \(count) files/folders trên Server.")
+    }
+
+    func registerFileProvider() {
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier("com.ruanhuang.ZhiAuth.Cloud"), displayName: "ZhiAuth Cloud")
+        NSFileProviderManager.add(domain) { error in
+            if let err = error {
+                appendLog("❌ Lỗi mount FileProvider: \(err.localizedDescription)")
+            } else {
+                appendLog("✅ Ổ đĩa ảo ZhiAuth đã được cắm vào app Tệp (Files)!")
+            }
+        }
+    }
+
     func appendLog(_ msg: String) {
         DispatchQueue.main.async {
             logText += "[\(Date().formatted(date: .omitted, time: .standard))] \(msg)\n"
-            // Tự xóa bớt log cũ nếu dài quá để khỏi tràn RAM giao diện
             if logText.count > 3000 { logText = String(logText.suffix(2500)) }
         }
     }
