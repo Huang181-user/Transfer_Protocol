@@ -3,7 +3,6 @@ import UIKit
 import Darwin
 import Network
 import FileProvider
-import Security // Thêm thư viện cấp thấp để soi Entitlements
 
 func getDeviceIPs() -> (lan: String, ts: String) {
     var lan = ""; var ts = ""
@@ -123,26 +122,7 @@ struct ZhiAuthApp: App {
         }
     }
     
-    // 🔥 HÀM SOI ENTITLEMENTS THỰC TẾ DƯỚI ĐÁY HỆ ĐIỀU HÀNH
-    func checkRuntimeEntitlements() {
-        appendLog("🔍 [SYS-CHECK] Đang soi não App kiểm tra quyền App Group...")
-        let task = SecTaskCreateFromSelf(nil)
-        if let task = task {
-            let key = "com.apple.security.application-groups" as CFString
-            if let value = SecTaskCopyValueForEntitlement(task, key, nil) {
-                appendLog("✅ [SYS-ENTITLEMENTS] Quyền App Group đang có: \(value)")
-            } else {
-                appendLog("❌ [SYS-ENTITLEMENTS] TRẮNG BỐC! Ldid trên Github chạy lỗi, App KHÔNG HỀ CÓ QUYỀN APP GROUP!")
-            }
-        } else {
-            appendLog("⚠️ [SYS-CHECK] Lỗi không thể gọi SecTaskCreateFromSelf.")
-        }
-    }
-
     func registerFileProvider() {
-        // Soi quyền trước khi mount
-        checkRuntimeEntitlements()
-        
         let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ruanhuang.ZhiAuth")
         if groupURL == nil {
             appendLog("⚠️ [APP-GROUP WARN] FileManager báo nil, nhưng vẫn ÉP CHẠY lệnh Mount để moi mã lỗi của iOS!")
