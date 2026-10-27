@@ -79,6 +79,7 @@ struct ZhiAuthApp: App {
         if safeLanIP.isEmpty && safeTsIP.isEmpty { appendLog("❌ Lỗi: Phải nhập IP Server!"); return }
         
         isRunning = true
+        clearExtensionLog()
         appendLog("Bắt đầu Port Knocking (Đua tốc độ LAN & Tailscale)...")
         
         Task {
@@ -90,18 +91,8 @@ struct ZhiAuthApp: App {
                 let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
                 
                 let winner: (String, AuthResponse)? = await withTaskGroup(of: Optional<(String, AuthResponse)>.self) { group in
-                    if !safeLanIP.isEmpty {
-                        group.addTask {
-                            do { let res = try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeLanIP, authPort: 5555, authCmd: authCmd); return (safeLanIP, res) } 
-                            catch { return nil }
-                        }
-                    }
-                    if !safeTsIP.isEmpty {
-                        group.addTask {
-                            do { let res = try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeTsIP, authPort: 5555, authCmd: authCmd); return (safeTsIP, res) } 
-                            catch { return nil }
-                        }
-                    }
+                    if !safeLanIP.isEmpty { group.addTask { do { return (safeLanIP, try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeLanIP, authPort: 5555, authCmd: authCmd)) } catch { return nil } } }
+                    if !safeTsIP.isEmpty { group.addTask { do { return (safeTsIP, try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeTsIP, authPort: 5555, authCmd: authCmd)) } catch { return nil } } }
                     for await result in group { if let res = result, res.1.isSuccess { group.cancelAll(); return res } }
                     return nil
                 }
@@ -113,16 +104,9 @@ struct ZhiAuthApp: App {
                     appendLog("🔥 Lõi C++ KCP & Libsodium đã nổ máy!")
                     try await Task.sleep(nanoseconds: 2_000_000_000)
                     
-                    // Lấy chính xác đường dẫn phân công từ Database thay vì chọc mù vào Root "/"
                     let targetPath = auth.sharedPath.isEmpty ? "/tmp" : auth.sharedPath
-                    
-                    appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa: \(targetPath))...")
                     let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: targetPath, offset: 0, reqLen: 0, payloadData: nil)
                     appendLog("🎉 Nhận OP_STAT OK (\(statData.count) Bytes)")
-
-                    appendLog("Gửi lệnh OP_LIST (Lấy danh sách file trong: \(targetPath))...")
-                    let listData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_LIST, path: targetPath, offset: 0, reqLen: 0, payloadData: nil)
-                    parseAndLogOpList(data: listData)
 
                     registerFileProvider()
 
@@ -138,52 +122,50 @@ struct ZhiAuthApp: App {
         }
     }
     
-    func parseAndLogOpList(data: Data) {
-        let headerSize = 27
-        if data.count <= headerSize {
-            appendLog("📂 Thư mục rỗng hoặc lỗi đọc.")
+    func registerFileProvider() {
+        guard let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ruanhuang.ZhiAuth") else {
+            appendLog("❌ [APP-GROUP ERR] Không thể truy cập App Group! Hệ điều hành chặn hoặc sai Entitlements.")
             return
         }
-        appendLog("📂 --- DANH SÁCH THƯ MỤC CÁ NHÂN ---")
-        var cur = headerSize
-        var count = 0
+        appendLog("✅ [APP-GROUP OK] Truy cập container thành công: \(groupURL.path)")
         
-        while cur + 39 <= data.count {
-            let nameLen = UInt16(data[cur]) | (UInt16(data[cur+1]) << 8)
-            let isDir = data[cur+2]
-            var size: UInt64 = 0
-            withUnsafeMutableBytes(of: &size) { sizePtr in
-                _ = data.copyBytes(to: sizePtr, from: cur+3..<cur+11)
-            }
-            cur += 39
-            
-            if cur + Int(nameLen) > data.count { break }
-            let nameData = data[cur..<cur+Int(nameLen)]
-            if let name = String(data: nameData, encoding: .utf8) {
-                let type = isDir == 1 ? "📁" : "📄"
-                appendLog("  \(type) \(name) (\(size) Bytes)")
-                count += 1
-            }
-            cur += Int(nameLen)
-        }
-        appendLog("✅ Tìm thấy \(count) files/folders hợp lệ.")
-    }
-
-    func registerFileProvider() {
         let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier("com.ruanhuang.ZhiAuth.Cloud"), displayName: "ZhiAuth Cloud")
+        appendLog("⏳ Đang gọi NSFileProviderManager.add(domain)...")
+        
         NSFileProviderManager.add(domain) { error in
-            if let err = error {
-                appendLog("❌ Lỗi mount FileProvider: \(err.localizedDescription)")
+            if let err = error as NSError? {
+                appendLog("❌ [MOUNT-ERR]: \(err.localizedDescription)")
             } else {
-                appendLog("✅ Ổ đĩa ảo ZhiAuth đã được cắm vào app Tệp (Files)!")
+                appendLog("✅ Gọi lệnh cắm ổ đĩa ảo thành công!")
             }
+            
+            // Chờ 2 giây cho Extension nôn log ra rồi đọc
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                self.readExtensionLog()
+            }
+        }
+    }
+    
+    func clearExtensionLog() {
+        guard let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ruanhuang.ZhiAuth") else { return }
+        let logURL = groupURL.appendingPathComponent("ext_debug.log")
+        try? FileManager.default.removeItem(at: logURL)
+    }
+    
+    func readExtensionLog() {
+        guard let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ruanhuang.ZhiAuth") else { return }
+        let logURL = groupURL.appendingPathComponent("ext_debug.log")
+        if let extLogs = try? String(contentsOf: logURL, encoding: .utf8) {
+            appendLog("\n----- 🕵️ BÁO CÁO TỪ EXTENSION -----\n\(extLogs)")
+        } else {
+            appendLog("\n⚠️ [EXT-DEAD] Không có bất kỳ dòng log nào từ Extension! Tiến trình bị iOS giết trước khi hàm init() kịp chạy. (Có thể do lỗi thư viện C++ hoặc sai kiến trúc khi build).")
         }
     }
 
     func appendLog(_ msg: String) {
         DispatchQueue.main.async {
             logText += "[\(Date().formatted(date: .omitted, time: .standard))] \(msg)\n"
-            if logText.count > 3000 { logText = String(logText.suffix(2500)) }
+            if logText.count > 5000 { logText = String(logText.suffix(4000)) }
         }
     }
 }
