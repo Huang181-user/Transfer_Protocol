@@ -19,7 +19,7 @@ jobs:
       - name: Cài đặt XcodeGen & ASIO
         run: |
           brew install xcodegen asio
-          xcodegen generate # Ép dịch lại project.yml thành file .xcodeproj mới nhất!
+          xcodegen generate
 
       - name: Ép dùng Xcode 16.2.0
         uses: maxim-lobanov/setup-xcode@v1
@@ -44,13 +44,11 @@ jobs:
         run: |
           echo "==== ĐANG ĐÓNG GÓI THÀNH IPA CHUẨN APPLE ===="
           mkdir -p Payload
-          # Copy toàn bộ app (đã nhúng C++) vào Payload
           cp -R build/Release-iphoneos/ZhiAuthApp.app Payload/
-          # Dùng lệnh ditto của Apple để nén chuẩn xác, lọc sạch rác hệ điều hành
           ditto -c -k --sequesterRsrc --keepParent Payload ZhiAuthApp.ipa
           echo "✅ Đóng gói hoàn tất!"
 
-      - name: Xuất file IPA cho Ný tải
+      - name: Xuất file IPA
         uses: actions/upload-artifact@v4
         with:
           name: ZhiAuthApp-iOS
