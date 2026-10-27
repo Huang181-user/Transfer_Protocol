@@ -3,6 +3,7 @@ import UIKit
 import Darwin
 import Network
 import FileProvider
+import Security // Thêm thư viện cấp thấp để soi Entitlements
 
 func getDeviceIPs() -> (lan: String, ts: String) {
     var lan = ""; var ts = ""
@@ -122,24 +123,55 @@ struct ZhiAuthApp: App {
         }
     }
     
-    func registerFileProvider() {
-        guard let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ruanhuang.ZhiAuth") else {
-            appendLog("❌ [APP-GROUP ERR] Không thể truy cập App Group! Hệ điều hành chặn hoặc sai Entitlements.")
-            return
+    // 🔥 HÀM SOI ENTITLEMENTS THỰC TẾ DƯỚI ĐÁY HỆ ĐIỀU HÀNH
+    func checkRuntimeEntitlements() {
+        appendLog("🔍 [SYS-CHECK] Đang soi não App kiểm tra quyền App Group...")
+        let task = SecTaskCreateFromSelf(nil)
+        if let task = task {
+            let key = "com.apple.security.application-groups" as CFString
+            if let value = SecTaskCopyValueForEntitlement(task, key, nil) {
+                appendLog("✅ [SYS-ENTITLEMENTS] Quyền App Group đang có: \(value)")
+            } else {
+                appendLog("❌ [SYS-ENTITLEMENTS] TRẮNG BỐC! Ldid trên Github chạy lỗi, App KHÔNG HỀ CÓ QUYỀN APP GROUP!")
+            }
+        } else {
+            appendLog("⚠️ [SYS-CHECK] Lỗi không thể gọi SecTaskCreateFromSelf.")
         }
-        appendLog("✅ [APP-GROUP OK] Truy cập container thành công: \(groupURL.path)")
+    }
+
+    func registerFileProvider() {
+        // Soi quyền trước khi mount
+        checkRuntimeEntitlements()
+        
+        let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ruanhuang.ZhiAuth")
+        if groupURL == nil {
+            appendLog("⚠️ [APP-GROUP WARN] FileManager báo nil, nhưng vẫn ÉP CHẠY lệnh Mount để moi mã lỗi của iOS!")
+        } else {
+            appendLog("✅ [APP-GROUP OK] Truy cập container thành công: \(groupURL!.path)")
+        }
         
         let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier("com.ruanhuang.ZhiAuth.Cloud"), displayName: "ZhiAuth Cloud")
-        appendLog("⏳ Đang gọi NSFileProviderManager.add(domain)...")
+        appendLog("⏳ Đang gõ cửa NSFileProviderManager.add(domain)...")
         
         NSFileProviderManager.add(domain) { error in
             if let err = error as NSError? {
-                appendLog("❌ [MOUNT-ERR]: \(err.localizedDescription)")
+                appendLog("❌ [MOUNT-ERR-DOMAIN]: \(err.domain)")
+                appendLog("❌ [MOUNT-ERR-CODE]: \(err.code)")
+                appendLog("❌ [MOUNT-ERR-MSG]: \(err.localizedDescription)")
+                if let underlying = err.userInfo[NSUnderlyingErrorKey] as? NSError {
+                    appendLog("❌ [UNDERLYING-DOMAIN]: \(underlying.domain)")
+                    appendLog("❌ [UNDERLYING-CODE]: \(underlying.code)")
+                    appendLog("❌ [UNDERLYING-MSG]: \(underlying.localizedDescription)")
+                }
+                for (key, value) in err.userInfo {
+                    if key != NSUnderlyingErrorKey {
+                        appendLog("⚠️ [INFO] \(key): \(value)")
+                    }
+                }
             } else {
-                appendLog("✅ Gọi lệnh cắm ổ đĩa ảo thành công!")
+                appendLog("✅ Ổ đĩa ảo ZhiAuth đã được cắm vào app Tệp (Files)!")
             }
             
-            // Chờ 2 giây cho Extension nôn log ra rồi đọc
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 self.readExtensionLog()
             }
@@ -158,7 +190,7 @@ struct ZhiAuthApp: App {
         if let extLogs = try? String(contentsOf: logURL, encoding: .utf8) {
             appendLog("\n----- 🕵️ BÁO CÁO TỪ EXTENSION -----\n\(extLogs)")
         } else {
-            appendLog("\n⚠️ [EXT-DEAD] Không có bất kỳ dòng log nào từ Extension! Tiến trình bị iOS giết trước khi hàm init() kịp chạy. (Có thể do lỗi thư viện C++ hoặc sai kiến trúc khi build).")
+            appendLog("\n⚠️ [EXT-DEAD] Extension im lìm không sủi tăm. Không có log vật lý.")
         }
     }
 
