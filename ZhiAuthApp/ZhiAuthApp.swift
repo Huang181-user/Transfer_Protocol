@@ -113,17 +113,17 @@ struct ZhiAuthApp: App {
                     appendLog("🔥 Lõi C++ KCP & Libsodium đã nổ máy!")
                     try await Task.sleep(nanoseconds: 2_000_000_000)
                     
-                    // 1. Gửi lệnh lấy thông tin thư mục gốc
-                    appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa)...")
-                    let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: "/", offset: 0, reqLen: 0, payloadData: nil)
+                    // Lấy chính xác đường dẫn phân công từ Database thay vì chọc mù vào Root "/"
+                    let targetPath = auth.sharedPath.isEmpty ? "/tmp" : auth.sharedPath
+                    
+                    appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa: \(targetPath))...")
+                    let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: targetPath, offset: 0, reqLen: 0, payloadData: nil)
                     appendLog("🎉 Nhận OP_STAT OK (\(statData.count) Bytes)")
 
-                    // 2. Gửi lệnh bốc danh sách File (OP_LIST)
-                    appendLog("Gửi lệnh OP_LIST (Lấy danh sách file)...")
-                    let listData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_LIST, path: "/", offset: 0, reqLen: 0, payloadData: nil)
+                    appendLog("Gửi lệnh OP_LIST (Lấy danh sách file trong: \(targetPath))...")
+                    let listData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_LIST, path: targetPath, offset: 0, reqLen: 0, payloadData: nil)
                     parseAndLogOpList(data: listData)
 
-                    // 3. Đăng ký FileProvider để hiển thị ổ đĩa trên app Tệp của iOS
                     registerFileProvider()
 
                     isRunning = false
@@ -144,12 +144,11 @@ struct ZhiAuthApp: App {
             appendLog("📂 Thư mục rỗng hoặc lỗi đọc.")
             return
         }
-        appendLog("📂 --- DANH SÁCH THƯ MỤC GỐC ---")
+        appendLog("📂 --- DANH SÁCH THƯ MỤC CÁ NHÂN ---")
         var cur = headerSize
         var count = 0
         
         while cur + 39 <= data.count {
-            // Giải nén byte an toàn chống Crash trên ARM64
             let nameLen = UInt16(data[cur]) | (UInt16(data[cur+1]) << 8)
             let isDir = data[cur+2]
             var size: UInt64 = 0
@@ -167,7 +166,7 @@ struct ZhiAuthApp: App {
             }
             cur += Int(nameLen)
         }
-        appendLog("✅ Tìm thấy \(count) files/folders trên Server.")
+        appendLog("✅ Tìm thấy \(count) files/folders hợp lệ.")
     }
 
     func registerFileProvider() {
