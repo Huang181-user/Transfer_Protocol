@@ -18,11 +18,11 @@
 	<dict>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.fileprovider-nonui</string>
+		<!-- 🔥 FIX TỬ HUYỆT: Gọi tên class trực tiếp, bỏ $(PRODUCT_MODULE_NAME) -->
 		<key>NSExtensionPrincipalClass</key>
-		<string>$(PRODUCT_MODULE_NAME).ZhiFileProviderExtension</string>
-
-                <key>NSExtensionFileProviderDocumentGroup</key>
-                <string>group.com.ruanhuang.ZhiAuth</string>
+		<string>ZhiFileProviderExtension</string>
+		<key>NSExtensionFileProviderDocumentGroup</key>
+		<string>group.com.ruanhuang.ZhiAuth</string>
 	</dict>
 </dict>
 </plist>
