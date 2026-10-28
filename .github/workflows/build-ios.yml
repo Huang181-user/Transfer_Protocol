@@ -16,9 +16,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Cài đặt XcodeGen, ASIO & LDID
+      - name: Cài đặt XcodeGen & ASIO
         run: |
-          brew install xcodegen asio ldid
+          brew install xcodegen asio
           xcodegen generate
 
       - name: Ép dùng Xcode 16.2.0
@@ -40,31 +40,11 @@ jobs:
             SYMROOT=$(PWD)/build \
             -verbose
 
-      - name: Bơm quyền App Group bằng ldid & Đóng gói IPA
+      - name: Đóng gói thành file .ipa chuẩn
         run: |
-          echo "==== ĐANG CHUẨN BỊ PAYLOAD ===="
+          echo "==== ĐANG ĐÓNG GÓI THÀNH IPA CHUẨN APPLE ===="
           mkdir -p Payload
           cp -R build/Release-iphoneos/ZhiAuthApp.app Payload/
-          
-          echo "==== TẠO FILE ENTITLEMENTS GỐC TRÊN MÁY ẢO ===="
-          cat << 'ENT' > fake.entitlements
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>com.apple.security.application-groups</key>
-              <array>
-                  <string>group.com.ruanhuang.ZhiAuth</string>
-              </array>
-          </dict>
-          </plist>
-          ENT
-          
-          echo "==== ÉP QUYỀN APP GROUP VÀO NHÂN BINARY BẰNG LDID ===="
-          ldid -Sfake.entitlements Payload/ZhiAuthApp.app/PlugIns/ZhiAuthFileProvider.appex/ZhiAuthFileProvider
-          ldid -Sfake.entitlements Payload/ZhiAuthApp.app/ZhiAuthApp
-          
-          echo "==== ĐÓNG GÓI THÀNH IPA CHUẨN ===="
           ditto -c -k --sequesterRsrc --keepParent Payload ZhiAuthApp.ipa
           echo "✅ Đóng gói hoàn tất!"
 
