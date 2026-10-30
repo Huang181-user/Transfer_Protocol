@@ -59,7 +59,6 @@ class DocumentPresenter: NSObject, UIDocumentInteractionControllerDelegate {
             self.documentController = UIDocumentInteractionController(url: url)
             self.documentController?.delegate = self
             
-            // Ép hệ thống mở Native QuickLook (đọc ảnh, video, pdf, v.v.)
             let canPreview = self.documentController?.presentPreview(animated: true) ?? false
             
             // Nếu iOS KHÔNG hỗ trợ định dạng này -> Tự động rớt xuống mở popup Share mặc định
@@ -173,7 +172,6 @@ struct LoginView: View {
 struct FileExplorerView: View {
     @EnvironmentObject var state: AppState
     
-    // States cho các Popup tính năng mới
     @State private var showNewFolderAlert = false
     @State private var newFolderName = ""
     
@@ -187,13 +185,23 @@ struct FileExplorerView: View {
     @State private var showInfoAlert = false
     @State private var infoMessage = ""
 
+    // 🔥 HÀM MẶT NẠ ẨN ĐƯỜNG DẪN MÁY CHỦ
+    func displayPath(for rawPath: String) -> String {
+        if rawPath.hasPrefix(state.sharedRoot) {
+            let relative = String(rawPath.dropFirst(state.sharedRoot.count))
+            return relative.isEmpty ? "/" : relative
+        }
+        return rawPath
+    }
+
     var body: some View {
         NavigationView {
             VStack {
                 HStack {
                     Text("Tốc độ: \(state.transferSpeed)").font(.caption).foregroundColor(.gray)
                     Spacer()
-                    Text(state.currentPath).font(.caption).lineLimit(1).truncationMode(.middle)
+                    // Thanh bar giờ chỉ hiện đường dẫn ảo (VD: /hinhanh/IMG_01.jpg)
+                    Text(displayPath(for: state.currentPath)).font(.caption).lineLimit(1).truncationMode(.middle)
                 }.padding(.horizontal)
                 
                 List(state.fileList, id: \.id) { item in
@@ -311,7 +319,6 @@ struct FileExplorerView: View {
         state.log("Đang đổi tên thành: \(cleanName)...")
         Task {
             do {
-                // 🔥 FIX LỖI RENANME/CUT: Ép cứng NULL-TERMINATOR (0) vào đuôi để C++ đọc an toàn
                 var newPathData = newPath.data(using: .utf8)!
                 newPathData.append(0)
                 
@@ -330,7 +337,6 @@ struct FileExplorerView: View {
             state.log("Đang di chuyển (Cut) file...")
             Task {
                 do {
-                    // 🔥 FIX LỖI RENANME/CUT: Ép cứng NULL-TERMINATOR (0) vào đuôi
                     var newPathData = destPath.data(using: .utf8)!
                     newPathData.append(0)
                     
@@ -349,16 +355,15 @@ struct FileExplorerView: View {
             Task {
                 do {
                     var offset: UInt64 = 0
-                    let chunkSize: UInt32 = 65536 // 64KB per chunk
+                    let chunkSize: UInt32 = 65536
                     
-                    // Gửi lệnh tạo file rỗng trước
                     _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_WRITE, path: destPath, offset: 0, reqLen: 0, payloadData: Data())
                     
                     while offset < item.size {
                         let remain = UInt32(min(UInt64(chunkSize), item.size - offset))
                         let readData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_READ, path: item.path, offset: offset, reqLen: remain, payloadData: nil)
                         
-                        if readData.count > 27 { // Header VFS dài 27 byte
+                        if readData.count > 27 {
                             let chunk = readData.subdata(in: 27..<readData.count)
                             _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_WRITE, path: destPath, offset: offset, reqLen: UInt32(chunk.count), payloadData: chunk)
                             offset += UInt64(chunk.count)
@@ -380,12 +385,13 @@ struct FileExplorerView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "dd/MM/yyyy HH:mm:ss"
         
+        // 🔥 Đã che mờ path server, dùng hàm displayPath để chỉ hiện đường dẫn ảo
         infoMessage = """
         Tên: \(item.name)
         Loại: \(item.isDirectory ? "Thư mục" : "Tập tin")
         Dung lượng: \(item.isDirectory ? "Không đếm" : item.sizeString)
         Ngày sửa: \(formatter.string(from: date))
-        Đường dẫn: \(item.path)
+        Đường dẫn: \(displayPath(for: item.path))
         """
         showInfoAlert = true
     }
@@ -428,7 +434,6 @@ struct FileExplorerView: View {
         state.log("⏳ Đang tải file \(item.name) qua KCP...")
         Task {
             do {
-                // Tải file xuống thư mục tạm với ĐÚNG TÊN VÀ ĐUÔI GỐC để QuickLook nhận dạng được
                 let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(item.name)
                 if FileManager.default.fileExists(atPath: tempURL.path) { try FileManager.default.removeItem(at: tempURL) }
                 FileManager.default.createFile(atPath: tempURL.path, contents: nil)
@@ -436,7 +441,7 @@ struct FileExplorerView: View {
                 defer { try? fileHandle.close() }
                 
                 var offset: UInt64 = 0
-                let chunkSize: UInt32 = 65536 // Chunk 64KB
+                let chunkSize: UInt32 = 65536
                 
                 while offset < item.size {
                     let remain = UInt32(min(UInt64(chunkSize), item.size - offset))
@@ -453,7 +458,6 @@ struct FileExplorerView: View {
                 await MainActor.run {
                     state.isLoading = false
                     state.log("✅ Tải xong! Bật xem trước QuickLook...")
-                    // 🔥 SỬ DỤNG TRÌNH XEM TRƯỚC HỆ THỐNG UIDocumentInteractionController
                     DocumentPresenter.shared.presentPreview(for: tempURL)
                 }
             } catch {
