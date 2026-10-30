@@ -189,8 +189,19 @@ extern "C" {
     void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
                               uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len) {
         if (!client) return;
-        uint16_t path_length = path ? static_cast<uint16_t>(strlen(path)) : 0;
-        std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + path_length + payload_len);
+        
+        // 🔥 FIX TỬ HUYỆT BỘ NHỚ: Nhét cứng ký tự kết thúc chuỗi '\0' vào Path và Payload (nếu là lệnh RENAME/MKDIR)
+        bool is_string_payload = (opcode == 0x07 || opcode == 0x05); // OP_RENAME hoặc OP_MKDIR
+        
+        uint16_t raw_path_len = path ? static_cast<uint16_t>(strlen(path)) : 0;
+        uint16_t safe_path_len = raw_path_len > 0 ? raw_path_len + 1 : 0; // +1 cho \0
+        
+        uint32_t safe_payload_len = payload_len;
+        if (is_string_payload && payload_len > 0) {
+            safe_payload_len += 1; // +1 cho \0
+        }
+
+        std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + safe_path_len + safe_payload_len, 0); // Điền 0 toàn bộ mảng
         VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
         
         memset(hdr, 0, sizeof(VfsPacketHeader));
@@ -198,12 +209,22 @@ extern "C" {
         hdr->opcode = static_cast<VfsOpcode>(opcode);
         hdr->session_id = req_id;
         hdr->offset = offset;
-        hdr->data_len = (req_len > 0) ? req_len : static_cast<uint32_t>(payload_len); 
-        hdr->path_len = path_length;
+        hdr->data_len = (req_len > 0) ? req_len : safe_payload_len; 
+        hdr->path_len = safe_path_len;
         
         uint8_t* ptr = req_data.data() + sizeof(VfsPacketHeader);
-        if (path_length > 0) { memcpy(ptr, path, path_length); ptr += path_length; }
-        if (payload && payload_len > 0) { memcpy(ptr, payload, payload_len); }
+        if (raw_path_len > 0) { 
+            memcpy(ptr, path, raw_path_len); 
+            ptr[raw_path_len] = '\0'; // Chốt chặn an toàn 1
+            ptr += safe_path_len; 
+        }
+        
+        if (payload && payload_len > 0) { 
+            memcpy(ptr, payload, payload_len); 
+            if (is_string_payload) {
+                ptr[payload_len] = '\0'; // Chốt chặn an toàn 2
+            }
+        }
         
         static_cast<VfsClient*>(client)->send_rpc_async(req_data);
     }
