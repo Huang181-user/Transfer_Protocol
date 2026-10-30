@@ -169,6 +169,20 @@ struct LoginView: View {
     }
 }
 
+// 🔥 STYLE BẤM CÓ BÓNG MỜ VÀ ĐỘ NHÚN CHO CÁC DÒNG FILE
+struct FileItemButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(configuration.isPressed ? Color.gray.opacity(0.15) : Color.clear)
+            .cornerRadius(10)
+            .shadow(color: configuration.isPressed ? Color.black.opacity(0.2) : Color.clear, radius: 3, x: 0, y: 2)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
 struct FileExplorerView: View {
     @EnvironmentObject var state: AppState
     
@@ -185,7 +199,6 @@ struct FileExplorerView: View {
     @State private var showInfoAlert = false
     @State private var infoMessage = ""
 
-    // 🔥 HÀM MẶT NẠ ẨN ĐƯỜNG DẪN MÁY CHỦ
     func displayPath(for rawPath: String) -> String {
         if rawPath.hasPrefix(state.sharedRoot) {
             let relative = String(rawPath.dropFirst(state.sharedRoot.count))
@@ -200,27 +213,34 @@ struct FileExplorerView: View {
                 HStack {
                     Text("Tốc độ: \(state.transferSpeed)").font(.caption).foregroundColor(.gray)
                     Spacer()
-                    // Thanh bar giờ chỉ hiện đường dẫn ảo (VD: /hinhanh/IMG_01.jpg)
                     Text(displayPath(for: state.currentPath)).font(.caption).lineLimit(1).truncationMode(.middle)
                 }.padding(.horizontal)
                 
                 List(state.fileList, id: \.id) { item in
-                    HStack {
-                        Image(systemName: item.isDirectory ? "folder.fill" : "doc.text.fill").foregroundColor(item.isDirectory ? .blue : .gray)
-                        VStack(alignment: .leading) {
-                            Text(item.name).font(.body)
-                            Text(item.sizeString).font(.caption).foregroundColor(.secondary)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
+                    Button(action: {
                         if item.isDirectory {
                             let newPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(item.name)" : "\(state.currentPath)/\(item.name)"
                             loadDirectory(path: newPath)
                         } else {
                             downloadAndShareFile(item: item)
                         }
+                    }) {
+                        HStack(spacing: 15) {
+                            Image(systemName: item.isDirectory ? "folder.fill" : "doc.text.fill")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 26, height: 26)
+                                .foregroundColor(item.isDirectory ? .blue : .gray)
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.name).font(.body).foregroundColor(.primary)
+                                Text(item.sizeString).font(.caption).foregroundColor(.secondary)
+                            }
+                            Spacer() // 🔥 CĂNG BỀ NGANG FULL DÒNG CHO DỄ BẤM
+                        }
+                        .contentShape(Rectangle()) // Nhận cảm ứng trên toàn bộ diện tích
                     }
+                    .buttonStyle(FileItemButtonStyle()) // 🔥 ÁP DỤNG HIỆU ỨNG NHÚN VÀ SHADOW KHI BẤM
                     .contextMenu {
                         Button(action: { showFileInfo(item) }) { Label("Thông tin", systemImage: "info.circle") }
                         Button(action: { state.clipboardItem = item; state.isCutOperation = false; state.log("Đã copy '\(item.name)' vào bộ nhớ tạm") }) { Label("Copy", systemImage: "doc.on.doc") }
@@ -228,7 +248,10 @@ struct FileExplorerView: View {
                         Button(action: { itemToRename = item; newName = item.name; showRenameAlert = true }) { Label("Đổi tên", systemImage: "pencil") }
                         Button(role: .destructive, action: { itemToDelete = item; showDeleteAlert = true }) { Label("Xóa", systemImage: "trash") }
                     }
+                    .listRowSeparator(.hidden) // Giấu gạch dưới để hiển thị block nhìn pro hơn
+                    .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                 }
+                .listStyle(.plain)
                 .refreshable { await refreshList() }
                 .overlay(Group {
                     if state.isLoading {
@@ -385,7 +408,6 @@ struct FileExplorerView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "dd/MM/yyyy HH:mm:ss"
         
-        // 🔥 Đã che mờ path server, dùng hàm displayPath để chỉ hiện đường dẫn ảo
         infoMessage = """
         Tên: \(item.name)
         Loại: \(item.isDirectory ? "Thư mục" : "Tập tin")
