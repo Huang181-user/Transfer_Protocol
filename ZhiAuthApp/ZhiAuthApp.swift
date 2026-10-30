@@ -49,6 +49,42 @@ class AppState: ObservableObject {
     }
 }
 
+// MARK: - Trình xử lý Xem trước file bằng Native QuickLook của iOS
+class DocumentPresenter: NSObject, UIDocumentInteractionControllerDelegate {
+    static let shared = DocumentPresenter()
+    var documentController: UIDocumentInteractionController?
+
+    func presentPreview(for url: URL) {
+        DispatchQueue.main.async {
+            self.documentController = UIDocumentInteractionController(url: url)
+            self.documentController?.delegate = self
+            
+            // Ép hệ thống mở Native QuickLook (đọc ảnh, video, pdf, v.v.)
+            let canPreview = self.documentController?.presentPreview(animated: true) ?? false
+            
+            // Nếu iOS KHÔNG hỗ trợ định dạng này -> Tự động rớt xuống mở popup Share mặc định
+            if !canPreview {
+                guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                      let window = scene.windows.first,
+                      let rootVC = window.rootViewController else { return }
+                
+                if UIDevice.current.userInterfaceIdiom == .pad {
+                    self.documentController?.presentOptionsMenu(from: CGRect(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.midY, width: 0, height: 0), in: rootVC.view, animated: true)
+                } else {
+                    self.documentController?.presentOptionsMenu(from: rootVC.view.bounds, in: rootVC.view, animated: true)
+                }
+            }
+        }
+    }
+    
+    func documentInteractionControllerViewControllerForPreview(_ controller: UIDocumentInteractionController) -> UIViewController {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first,
+              let rootVC = window.rootViewController else { return UIViewController() }
+        return rootVC
+    }
+}
+
 @main
 struct ZhiAuthApp: App {
     @StateObject private var appState = AppState()
@@ -269,14 +305,16 @@ struct FileExplorerView: View {
         let cleanName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleanName.isEmpty || cleanName == item.name { return }
         
-        // Cắt bỏ tên cũ trong chuỗi đường dẫn, thay bằng tên mới
         let url = URL(fileURLWithPath: item.path)
         let newPath = url.deletingLastPathComponent().appendingPathComponent(cleanName).path
         
         state.log("Đang đổi tên thành: \(cleanName)...")
         Task {
             do {
-                guard let newPathData = newPath.data(using: .utf8) else { return }
+                // 🔥 FIX LỖI RENANME/CUT: Ép cứng NULL-TERMINATOR (0) vào đuôi để C++ đọc an toàn
+                var newPathData = newPath.data(using: .utf8)!
+                newPathData.append(0)
+                
                 _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_RENAME, path: item.path, offset: 0, reqLen: UInt32(newPathData.count), payloadData: newPathData)
                 await refreshList()
                 if state.clipboardItem?.id == item.id { await MainActor.run { state.clipboardItem = nil } }
@@ -292,7 +330,10 @@ struct FileExplorerView: View {
             state.log("Đang di chuyển (Cut) file...")
             Task {
                 do {
-                    guard let newPathData = destPath.data(using: .utf8) else { return }
+                    // 🔥 FIX LỖI RENANME/CUT: Ép cứng NULL-TERMINATOR (0) vào đuôi
+                    var newPathData = destPath.data(using: .utf8)!
+                    newPathData.append(0)
+                    
                     _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_RENAME, path: item.path, offset: 0, reqLen: UInt32(newPathData.count), payloadData: newPathData)
                     await MainActor.run { state.clipboardItem = nil; state.isCutOperation = false }
                     await refreshList()
@@ -384,9 +425,10 @@ struct FileExplorerView: View {
     
     func downloadAndShareFile(item: ZhiFileItem) {
         state.isLoading = true
-        state.log("⏳ Đang tải file \(item.name) để Share...")
+        state.log("⏳ Đang tải file \(item.name) qua KCP...")
         Task {
             do {
+                // Tải file xuống thư mục tạm với ĐÚNG TÊN VÀ ĐUÔI GỐC để QuickLook nhận dạng được
                 let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(item.name)
                 if FileManager.default.fileExists(atPath: tempURL.path) { try FileManager.default.removeItem(at: tempURL) }
                 FileManager.default.createFile(atPath: tempURL.path, contents: nil)
@@ -410,27 +452,14 @@ struct FileExplorerView: View {
                 
                 await MainActor.run {
                     state.isLoading = false
-                    state.log("✅ Tải xong! Đang gọi Popup Share...")
-                    shareFile(url: tempURL)
+                    state.log("✅ Tải xong! Bật xem trước QuickLook...")
+                    // 🔥 SỬ DỤNG TRÌNH XEM TRƯỚC HỆ THỐNG UIDocumentInteractionController
+                    DocumentPresenter.shared.presentPreview(for: tempURL)
                 }
             } catch {
                 await MainActor.run { state.isLoading = false; state.log("❌ Lỗi tải file: \(error.localizedDescription)") }
             }
         }
-    }
-    
-    func shareFile(url: URL) {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let window = scene.windows.first,
-              let rootVC = window.rootViewController else { return }
-        
-        let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            activityVC.popoverPresentationController?.sourceView = window
-            activityVC.popoverPresentationController?.sourceRect = CGRect(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.midY, width: 0, height: 0)
-            activityVC.popoverPresentationController?.permittedArrowDirections = []
-        }
-        rootVC.present(activityVC, animated: true, completion: nil)
     }
     
     func refreshList() async { loadDirectory(path: state.currentPath) }
