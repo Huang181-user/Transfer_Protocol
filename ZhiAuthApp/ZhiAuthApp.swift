@@ -91,6 +91,8 @@ struct LoginView: View {
             ScrollView {
                 Text(state.logs).font(.system(size: 10, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).padding()
             }.background(Color.black.opacity(0.8)).foregroundColor(.green).cornerRadius(10).padding()
+        }.onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ZhiAuthLog"))) { note in
+            if let msg = note.object as? String { state.log("C++ | " + msg) }
         }
     }
     
@@ -124,7 +126,6 @@ struct LoginView: View {
                     state.sharedRoot = auth.sharedPath.isEmpty ? "/tmp" : auth.sharedPath
                     state.baseIP = winningIP
                     
-                    // Thử check rễ
                     _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: state.sharedRoot, offset: 0, reqLen: 0, payloadData: nil)
                     
                     await MainActor.run {
@@ -146,7 +147,6 @@ struct LoginView: View {
 
 struct FileExplorerView: View {
     @EnvironmentObject var state: AppState
-    @State private var isRefreshing = false
     
     var body: some View {
         NavigationView {
@@ -172,13 +172,17 @@ struct FileExplorerView: View {
                             let newPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(item.name)" : "\(state.currentPath)/\(item.name)"
                             loadDirectory(path: newPath)
                         } else {
-                            // TODO: Mở file
+                            downloadAndShareFile(item: item)
                         }
                     }
                 }
                 .refreshable { await refreshList() }
                 .overlay(Group {
-                    if state.fileList.isEmpty && !state.isLoading { Text("Thư mục rỗng").foregroundColor(.gray) }
+                    if state.isLoading {
+                        ProgressView("Đang tải...").padding().background(Color(UIColor.systemBackground).opacity(0.8)).cornerRadius(10)
+                    } else if state.fileList.isEmpty {
+                        Text("Thư mục rỗng").foregroundColor(.gray)
+                    }
                 })
             }
             .navigationTitle("ZhiAuth Explorer")
@@ -186,9 +190,7 @@ struct FileExplorerView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     if state.currentPath != state.sharedRoot {
-                        Button(action: goUp) {
-                            HStack { Image(systemName: "chevron.backward"); Text("Quay lại") }
-                        }
+                        Button(action: goUp) { HStack { Image(systemName: "chevron.backward"); Text("Quay lại") } }
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -218,7 +220,13 @@ struct FileExplorerView: View {
                 let data = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_LIST, path: path, offset: 0, reqLen: 0, payloadData: nil)
                 let parsedList = parseList(data: data, basePath: path)
                 await MainActor.run {
-                    state.fileList = parsedList.sorted { $0.isDirectory && !$1.isDirectory }
+                    // SẮP XẾP A -> Z: Thư mục đứng trước file, sau đó xếp theo bảng chữ cái
+                    state.fileList = parsedList.sorted {
+                        if $0.isDirectory == $1.isDirectory {
+                            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+                        }
+                        return $0.isDirectory
+                    }
                     state.isLoading = false
                 }
             } catch {
@@ -227,13 +235,70 @@ struct FileExplorerView: View {
         }
     }
     
+    func downloadAndShareFile(item: ZhiFileItem) {
+        state.isLoading = true
+        state.log("⏳ Đang tải file \(item.name)...")
+        Task {
+            do {
+                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(item.name)
+                if FileManager.default.fileExists(atPath: tempURL.path) {
+                    try FileManager.default.removeItem(at: tempURL)
+                }
+                FileManager.default.createFile(atPath: tempURL.path, contents: nil)
+                let fileHandle = try FileHandle(forWritingTo: tempURL)
+                defer { try? fileHandle.close() }
+                
+                var offset: UInt64 = 0
+                let chunkSize: UInt32 = 65536 // Tải theo khối 64KB để mượt RAM
+                
+                while offset < item.size {
+                    let remain = UInt32(min(UInt64(chunkSize), item.size - offset))
+                    let data = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_READ, path: item.path, offset: offset, reqLen: remain, payloadData: nil)
+                    
+                    if data.count > 27 { // Header VFS luôn là 27 bytes
+                        let fileData = data.subdata(in: 27..<data.count)
+                        try fileHandle.seekToEnd()
+                        try fileHandle.write(contentsOf: fileData)
+                        offset += UInt64(fileData.count)
+                    } else {
+                        throw NSError(domain: "ZhiAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Dữ liệu rỗng từ server"])
+                    }
+                }
+                
+                await MainActor.run {
+                    state.isLoading = false
+                    state.log("✅ Tải xong! Đang gọi Popup Share...")
+                    shareFile(url: tempURL)
+                }
+            } catch {
+                await MainActor.run {
+                    state.isLoading = false
+                    state.log("❌ Lỗi tải file: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    func shareFile(url: URL) {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first,
+              let rootVC = window.rootViewController else { return }
+        
+        let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            activityVC.popoverPresentationController?.sourceView = window
+            activityVC.popoverPresentationController?.sourceRect = CGRect(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.midY, width: 0, height: 0)
+            activityVC.popoverPresentationController?.permittedArrowDirections = []
+        }
+        rootVC.present(activityVC, animated: true, completion: nil)
+    }
+    
     func refreshList() async {
         loadDirectory(path: state.currentPath)
     }
     
     func logout() {
         ZhiKcpEngine.stopCore()
-        // Đóng cổng UFW ảo nếu cần
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(state.baseIP), port: 5555)
         let conn = NWConnection(to: endpoint, using: .udp)
         conn.start(queue: .global())
