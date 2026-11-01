@@ -229,15 +229,19 @@ struct FileExplorerView: View {
         return rawPath
     }
     
-    // Tách riêng logic log cho Copy/Cut ra ngoài Button action để tránh lỗi type-check timeout
-    private func logCopyAction(itemName: String) {
+    // Tách riêng logic xử lý Copy/Cut để fix lỗi trình biên dịch timeout
+    func handleCopyAction(item: ZhiFileItem) {
+        state.clipboardItem = item
+        state.isCutOperation = false
         let tunnelName = (state.activeTunnel == .kcp) ? "KCP" : "QUIC"
-        state.log("Đã copy '\(itemName)' vào bộ nhớ tạm (\(tunnelName))")
+        state.log("Đã copy '\(item.name)' vào bộ nhớ tạm (\(tunnelName))")
     }
     
-    private func logCutAction(itemName: String) {
+    func handleCutAction(item: ZhiFileItem) {
+        state.clipboardItem = item
+        state.isCutOperation = true
         let tunnelName = (state.activeTunnel == .kcp) ? "KCP" : "QUIC"
-        state.log("Đã cắt '\(itemName)' vào bộ nhớ tạm (\(tunnelName))")
+        state.log("Đã cắt '\(item.name)' vào bộ nhớ tạm (\(tunnelName))")
     }
 
     var body: some View {
@@ -292,16 +296,8 @@ struct FileExplorerView: View {
                     .contextMenu {
                         if state.currentPath != "/" {
                             Button(action: { showFileInfo(item) }) { Label("Thông tin", systemImage: "info.circle") }
-                            Button(action: { 
-                                state.clipboardItem = item
-                                state.isCutOperation = false
-                                logCopyAction(itemName: item.name)
-                            }) { Label("Copy", systemImage: "doc.on.doc") }
-                            Button(action: { 
-                                state.clipboardItem = item
-                                state.isCutOperation = true
-                                logCutAction(itemName: item.name)
-                            }) { Label("Cut", systemImage: "scissors") }
+                            Button(action: { handleCopyAction(item: item) }) { Label("Copy", systemImage: "doc.on.doc") }
+                            Button(action: { handleCutAction(item: item) }) { Label("Cut", systemImage: "scissors") }
                             Button(action: { itemToRename = item; newName = item.name; showRenameAlert = true }) { Label("Đổi tên", systemImage: "pencil") }
                             Button(role: .destructive, action: { itemToDelete = item; showDeleteAlert = true }) { Label("Xóa", systemImage: "trash") }
                         }
