@@ -27,9 +27,9 @@ func getDeviceIPs() -> (lan: String, ts: String) {
 
 struct LoginView: View {
     @EnvironmentObject var state: AppState
-    @AppStorage("savedLanIP") private var lanIP: String = "192.168.1.83"
+    @AppStorage("savedLanIP") private var lanIP: String = ""
     @AppStorage("savedTsIP") private var tsIP: String = ""
-    @AppStorage("savedUser") private var username: String = "huang"
+    @AppStorage("savedUser") private var username: String = ""
     @AppStorage("savedPass") private var password: String = ""
     
     var body: some View {
