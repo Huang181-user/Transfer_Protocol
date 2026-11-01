@@ -18,6 +18,7 @@ targets:
         excludes:
           - Info.plist
       - src
+      - ZhiConfig.json
     infoPlist: ZhiAuthApp/Info.plist
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.ruanhuang.ZhiAuthApp

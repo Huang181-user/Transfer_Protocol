@@ -105,13 +105,13 @@ struct LoginView: View {
                 let winner: (String, AuthResponse)? = await withTaskGroup(of: Optional<(String, AuthResponse)>.self) { group in
                     if !safeLanIP.isEmpty {
                         group.addTask {
-                            do { return (safeLanIP, try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeLanIP, authPort: 5555, authCmd: authCmd)) }
+                            do { return (safeLanIP, try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeLanIP, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd)) }
                             catch { return nil }
                         }
                     }
                     if !safeTsIP.isEmpty {
                         group.addTask {
-                            do { return (safeTsIP, try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeTsIP, authPort: 5555, authCmd: authCmd)) }
+                            do { return (safeTsIP, try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeTsIP, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd)) }
                             catch { return nil }
                         }
                     }
@@ -135,8 +135,8 @@ struct LoginView: View {
                 let kcpOk = ZhiKcpEngine.initCore(
                     ip: winningIP,
                     port: Int32(auth.kcpPort),
-                    symKey: "ZhiAuth_Secret_KCP_Key_2026_1234",
-                    mtu: 1200,
+                    symKey: AppConfig.shared.kcpSymmetricKey,
+                    mtu: AppConfig.shared.defaultMtu,
                     tuning: auth.tuning
                 )
                 state.quicTunnel.configure(ip: winningIP, port: UInt16(auth.quicPort))
