@@ -67,7 +67,7 @@ public class ZhiQuicTunnel: @unchecked Sendable {
         // Tiền tố FS_CMD| khớp với MsQuicServer::DataStreamCallback trên Server
         packet.append(contentsOf: "FS_CMD|".utf8)
         
-        var magic: UInt32 = 0x5A484941.littleEndian
+        var magic: UInt32 = UInt32(0x5A484941).littleEndian
         var op: UInt8 = opcode.rawValue
         var sessionId: UInt64 = UInt64(reqId).littleEndian
         var off: UInt64 = offset.littleEndian
