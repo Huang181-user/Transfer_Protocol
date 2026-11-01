@@ -164,7 +164,6 @@ struct LoginView: View {
                 guard let (winningIP, auth) = winner else { state.log("❌ Lỗi mạng: Knocking Timeout!"); state.isLoading = false; return }
                 state.log("✅ Auth OK qua [\(winningIP)]! KCP: \(auth.kcpPort) | QUIC: \(auth.quicPort)")
                 
-                // Khởi động cả 2 Engines song song nhưng ngầm
                 let kcpOk = ZhiKcpEngine.initCore(ip: winningIP, port: Int32(auth.kcpPort), symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1200, tuning: auth.tuning)
                 let quicOk = state.quicTunnel.connect(ip: winningIP, port: UInt16(auth.quicPort))
                 
@@ -229,6 +228,17 @@ struct FileExplorerView: View {
         }
         return rawPath
     }
+    
+    // Tách riêng logic log cho Copy/Cut ra ngoài Button action để tránh lỗi type-check timeout
+    private func logCopyAction(itemName: String) {
+        let tunnelName = (state.activeTunnel == .kcp) ? "KCP" : "QUIC"
+        state.log("Đã copy '\(itemName)' vào bộ nhớ tạm (\(tunnelName))")
+    }
+    
+    private func logCutAction(itemName: String) {
+        let tunnelName = (state.activeTunnel == .kcp) ? "KCP" : "QUIC"
+        state.log("Đã cắt '\(itemName)' vào bộ nhớ tạm (\(tunnelName))")
+    }
 
     var body: some View {
         NavigationView {
@@ -242,7 +252,7 @@ struct FileExplorerView: View {
                 
                 List(state.fileList, id: \.id) { item in
                     Button(action: {
-                        if state.currentPath == "/" { // Đang ở Menu chọn Tunnel
+                        if state.currentPath == "/" {
                             if item.name == "ZhiAuth_KCP" {
                                 state.activeTunnel = .kcp
                                 loadDirectory(path: state.sharedRoot)
@@ -282,8 +292,16 @@ struct FileExplorerView: View {
                     .contextMenu {
                         if state.currentPath != "/" {
                             Button(action: { showFileInfo(item) }) { Label("Thông tin", systemImage: "info.circle") }
-                            Button(action: { state.clipboardItem = item; state.isCutOperation = false; state.log("Đã copy '\(item.name)' vào bộ nhớ tạm (\(state.activeTunnel == .kcp ? "KCP" : "QUIC"))") }) { Label("Copy", systemImage: "doc.on.doc") }
-                            Button(action: { state.clipboardItem = item; state.isCutOperation = true; state.log("Đã cắt '\(item.name)' vào bộ nhớ tạm (\(state.activeTunnel == .kcp ? "KCP" : "QUIC"))") }) { Label("Cut", systemImage: "scissors") }
+                            Button(action: { 
+                                state.clipboardItem = item
+                                state.isCutOperation = false
+                                logCopyAction(itemName: item.name)
+                            }) { Label("Copy", systemImage: "doc.on.doc") }
+                            Button(action: { 
+                                state.clipboardItem = item
+                                state.isCutOperation = true
+                                logCutAction(itemName: item.name)
+                            }) { Label("Cut", systemImage: "scissors") }
                             Button(action: { itemToRename = item; newName = item.name; showRenameAlert = true }) { Label("Đổi tên", systemImage: "pencil") }
                             Button(role: .destructive, action: { itemToDelete = item; showDeleteAlert = true }) { Label("Xóa", systemImage: "trash") }
                         }
@@ -346,14 +364,11 @@ struct FileExplorerView: View {
     
     // MARK: - CÁC HÀM THAO TÁC FILE ĐỊNH TUYẾN THEO TUNNEL
     
-    // Hàm bọc logic gọi RPC tùy theo luồng KCP hoặc QUIC
     func dispatchRpc(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
         if state.activeTunnel == .quic {
-            // TODO: Triển khai gọi hàm qua QUIC Tunnel ở đây
             state.log("⚠️ Chức năng gọi RPC qua QUIC đang được xây dựng (Dummy data).")
             throw NSError(domain: "ZhiAuth", code: -99, userInfo: [NSLocalizedDescriptionKey: "Luồng QUIC chưa hoàn thiện phần Ruột RPC."])
         } else {
-            // Chạy luồng KCP thuần
             return try await ZhiKcpEngine.sendRpcVfs(opcode: opcode, path: path, offset: offset, reqLen: reqLen, payloadData: payloadData)
         }
     }
@@ -419,7 +434,7 @@ struct FileExplorerView: View {
                 } catch { state.log("❌ Lỗi Cut: \(error.localizedDescription)") }
             }
         } else {
-            if item.isDirectory { state.log("❌ Server chưa hỗ trợ Copy cả Thư mục."); return }
+            if item.isDirectory { state.log("❌ Server chưa hỗ trợ Copy cả Thư mục (Bạn có thể Cut hoặc Copy từng file lẻ)."); return }
             state.log("⏳ Đang Copy (Download & Upload) qua luồng \(state.activeTunnel)...")
             state.isLoading = true
             Task {
@@ -451,13 +466,15 @@ struct FileExplorerView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "dd/MM/yyyy HH:mm:ss"
         
+        let tunnelName = (state.activeTunnel == .kcp) ? "KCP (UDP Fast)" : "QUIC (TCP/UDP Fallback)"
+        
         infoMessage = """
         Tên: \(item.name)
         Loại: \(item.isDirectory ? "Thư mục" : "Tập tin")
         Dung lượng: \(item.isDirectory ? "Không đếm" : item.sizeString)
         Ngày sửa: \(formatter.string(from: date))
         Đường dẫn ảo: \(displayPath(for: item.path))
-        Luồng: \(state.activeTunnel == .kcp ? "KCP (UDP Fast)" : "QUIC (TCP/UDP Fallback)")
+        Luồng: \(tunnelName)
         """
         showInfoAlert = true
     }
@@ -484,7 +501,6 @@ struct FileExplorerView: View {
         state.currentPath = path
         Task {
             if path == "/" {
-                // Render Menu chọn Tunnel
                 await MainActor.run {
                     state.fileList = [
                         ZhiFileItem(name: "ZhiAuth_KCP", isDirectory: true, size: 0, modifiedTime: 0, path: state.sharedRoot),
