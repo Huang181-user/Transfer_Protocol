@@ -21,6 +21,10 @@ actor KcpRequestManager {
         }
     }
     
+    func removeRequest(id: UInt32) {
+        pendingRequests.removeValue(forKey: id)
+    }
+    
     func failAll(error: Error) {
         for (_, continuation) in pendingRequests {
             continuation.resume(throwing: error)
@@ -48,6 +52,7 @@ public class ZhiKcpEngine {
     private static var currentSessionId: UInt32 = 0
     
     public static func initCore(ip: String, port: Int32, symKey: String, mtu: Int32, tuning: KcpTuningParams) -> Bool {
+        stopCore()
         vfsClient = zhiauth_create_vfs_client(
             ip, port, symKey, mtu,
             tuning.noDelay, tuning.interval, tuning.resend, tuning.nc,
@@ -62,12 +67,14 @@ public class ZhiKcpEngine {
         zhiauth_stop_vfs_client(client)
         zhiauth_destroy_vfs_client(client)
         vfsClient = nil
-        Task { await requestManager.failAll(error: NSError(domain: "ZhiAuth.KCP", code: -500, userInfo: [NSLocalizedDescriptionKey: "KCP Engine Stopped"])) }
+        Task {
+            await requestManager.failAll(error: NSError(domain: "ZhiAuth.KCP", code: -500, userInfo: [NSLocalizedDescriptionKey: "KCP Engine Stopped"]))
+        }
     }
     
     public static func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
         guard let client = vfsClient else {
-            throw NSError(domain: "ZhiAuth.KCP", code: -501, userInfo: [NSLocalizedDescriptionKey: "Lõi KCP đã hỏng/Chưa khởi động"])
+            throw NSError(domain: "ZhiAuth.KCP", code: -501, userInfo: [NSLocalizedDescriptionKey: "Lõi KCP chưa khởi động"])
         }
         
         currentSessionId &+= 1
@@ -78,30 +85,34 @@ public class ZhiKcpEngine {
                 return try await withCheckedThrowingContinuation { continuation in
                     Task {
                         await requestManager.addRequest(id: reqId, continuation: continuation)
-                        var cPayload: UnsafePointer<UInt8>? = nil
-                        var cPayloadLen: UInt32 = 0
-                        if let data = payloadData, !data.isEmpty {
-                            data.withUnsafeBytes { ptr in
-                                if let baseAddress = ptr.baseAddress {
-                                    cPayload = baseAddress.assumingMemoryBound(to: UInt8.self)
-                                    cPayloadLen = UInt32(data.count)
+                        path.withCString { cPath in
+                            if let data = payloadData, !data.isEmpty {
+                                data.withUnsafeBytes { rawPtr in
+                                    let basePtr = rawPtr.bindMemory(to: UInt8.self).baseAddress
+                                    zhiauth_vfs_send_rpc(client, reqId, opcode.rawValue, cPath, offset, reqLen, basePtr, UInt32(data.count))
                                 }
+                            } else {
+                                zhiauth_vfs_send_rpc(client, reqId, opcode.rawValue, cPath, offset, reqLen, nil, 0)
                             }
                         }
-                        zhiauth_vfs_send_rpc(client, reqId, opcode.rawValue, path, offset, reqLen, cPayload, cPayloadLen)
                     }
                 }
             }
             
             group.addTask {
-                try await Task.sleep(nanoseconds: 5_000_000_000) // Timeout 5s
-                let errMsg = "❌ [TIMEOUT] Máy chủ ngậm luôn gói tin (Hoặc iOS bóp UDP ngầm)! ReqID: \(reqId)"
-                zhiauth_swift_log(msg: errMsg)
+                try await Task.sleep(nanoseconds: 6_000_000_000)
+                await requestManager.removeRequest(id: reqId)
+                let errMsg = "[TIMEOUT] KCP quá hạn 6s (ReqID: \(reqId))"
+                NotificationCenter.default.post(name: NSNotification.Name("ZhiAuthLog"), object: "❌ " + errMsg)
                 throw NSError(domain: "ZhiAuth.KCP", code: -408, userInfo: [NSLocalizedDescriptionKey: errMsg])
             }
             
             let result = try await group.next()!
             group.cancelAll()
+            
+            if result.count >= 5 && result[4] == VfsOpcode.OP_ERROR.rawValue {
+                throw NSError(domain: "ZhiAuth.KCP", code: -502, userInfo: [NSLocalizedDescriptionKey: "Server trả về OP_ERROR (0xFF) cho lệnh \(opcode)"])
+            }
             return result
         }
     }

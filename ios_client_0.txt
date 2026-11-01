@@ -5,6 +5,8 @@
 ├── compress_code.py
 ├── connect_xcode_usbmux.sh
 ├── project.yml
+├── server_0.txt
+├── server_1.txt
 ├── src
 │   ├── bridge
 │   │   ├── client_bridge.cpp
@@ -22,15 +24,14 @@
 │   ├── Bridge
 │   │   └── ZhiAuth-Bridging-Header.h
 │   ├── Info.plist
-│   ├── ZhiFileProviderExtension.swift
 │   ├── ZhiKcpEngine.swift
 │   ├── ZhiLogger.swift
 │   ├── ZhiNetworkAuth.swift
 │   └── ZhiQuicTunnel.swift
 ├── ZhiAuthApp
+│   ├── FileModel.swift
 │   ├── Info.plist
 │   └── ZhiAuthApp.swift
-├── ZhiAuth.entitlements
 └── ZhiAuth.xcodeproj
     ├── project.pbxproj
     ├── project.xcworkspace
@@ -49,7 +50,7 @@
             └── xcschemes
                 └── xcschememanagement.plist
 
-19 directories, 28 files
+19 directories, 29 files
 
 
 --- START FILE PATH: project.yml ---
@@ -71,12 +72,9 @@ targets:
       - ZhiAuthApp
       - path: ZhiAuth
         excludes:
-          - ZhiFileProviderExtension.swift
           - Info.plist
       - src
     infoPlist: ZhiAuthApp/Info.plist
-    entitlements:
-      path: ZhiAuth.entitlements
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.ruanhuang.ZhiAuthApp
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h
@@ -90,367 +88,333 @@ targets:
       OTHER_LDFLAGS: "-lc++"
       GCC_PREPROCESSOR_DEFINITIONS: "ASIO_STANDALONE=1"
     dependencies:
-      - target: ZhiAuthFileProvider
-        embed: true
       - package: Sodium
-      
-  ZhiAuthFileProvider:
-    type: app-extension
-    platform: iOS
-    deploymentTarget: "16.0"
-    sources:
-      - ZhiAuth
-      - src
-    infoPlist: ZhiAuth/Info.plist
-    entitlements:
-      path: ZhiAuth.entitlements
-    dependencies:
-      - package: Sodium
-    settings:
-      PRODUCT_BUNDLE_IDENTIFIER: com.ruanhuang.ZhiAuthApp.ZhiAuthFileProvider
-      SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h
-      HEADER_SEARCH_PATHS: 
-        - $(SRCROOT)/src/bridge
-        - $(SRCROOT)/src/rpc_client
-        - $(SRCROOT)/src
-        - /opt/homebrew/include
-        - /usr/local/include
-      CLANG_ENABLE_MODULES: "YES"
-      OTHER_LDFLAGS: "-lc++"
-      GCC_PREPROCESSOR_DEFINITIONS: "ASIO_STANDALONE=1"
 
 --- END OF FILE: project.yml ---
 
---- START FILE PATH: ZhiAuthApp/Info.plist ---
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
-	<key>UILaunchScreen</key>
-	<dict/>
-	<key>NSFileProviderDomainUsageDescription</key>
-	<string>App cần quyền để gắn ổ đĩa ảo ZhiAuth vào ứng dụng Tệp.</string>
-</dict>
-</plist>
+--- START FILE PATH: server_0.txt ---
+==================================================
+📂 PROJECT TREE STRUCTURE OUTPUT (SERVER)
+==================================================
+.
+├── build.sh
+├── CMakeLists.txt
+├── compress_code.py
+├── config
+│   ├── config.json
+│   ├── zhiserver.tailc979c1.ts.net.crt
+│   └── zhiserver.tailc979c1.ts.net.key
+├── database
+│   ├── zhiauth.db
+│   ├── zhiauth.db-shm
+│   └── zhiauth.db-wal
+├── github_sync.sh
+├── include
+│   ├── bridge
+│   │   └── auth_bridge.h
+│   ├── common
+│   │   ├── logger.h
+│   │   └── sqlite_handler.h
+│   ├── rpc_quic
+│   │   └── msquic_server.h
+│   ├── rpc_vfs
+│   │   ├── crypto_box.h
+│   │   ├── ikcp.h
+│   │   ├── vfs_io_worker.h
+│   │   ├── vfs_packet.h
+│   │   └── vfs_server.h
+│   └── system
+│       ├── sys_control.h
+│       └── ufw_manager.h
+├── quic_server.log
+├── README.md
+├── src
+│   ├── bridge
+│   │   └── auth_bridge.cpp
+│   ├── common
+│   │   ├── logger_blueprint.txt
+│   │   ├── logger.cpp
+│   │   ├── sqlite_handler_blueprint.txt
+│   │   └── sqlite_handler.cpp
+│   ├── rpc_quic
+│   │   └── msquic_server.cpp
+│   ├── rpc_vfs
+│   │   ├── crypto_box.cpp
+│   │   ├── ikcp.c
+│   │   ├── kcp_worker_main.cpp
+│   │   ├── vfs_io_worker.cpp
+│   │   └── vfs_server.cpp
+│   ├── server_main.cpp
+│   └── system
+│       ├── sys_control.cpp
+│       ├── ufw_manager_blueprint.txt
+│       └── ufw_manager.cpp
+├── zhiauth_blueprint.txt
+├── zhiauth_server_debug.log
+└── zhiauth_technical_structure.txt
 
---- END OF FILE: ZhiAuthApp/Info.plist ---
+15 directories, 41 files
 
---- START FILE PATH: ZhiAuthApp/ZhiAuthApp.swift ---
-import SwiftUI
-import UIKit
 
-@main
-struct ZhiAuthApp: App {
-    // Lưu thông tin vào bộ nhớ máy, nhập 1 lần xài mãi mãi
-    @AppStorage("savedLanIP") private var lanIP: String = "192.168.1.83"
-    @AppStorage("savedTsIP") private var tsIP: String = ""
-    @AppStorage("savedUser") private var username: String = "huang"
-    @AppStorage("savedPass") private var password: String = ""
-    
-    @State private var logText: String = "💀 Sẵn sàng chọc thủng server...\n"
-    @State private var isRunning = false
+--- START FILE PATH: CMakeLists.txt ---
+cmake_minimum_required(VERSION 3.16)
+project(zhiauth_server VERSION 6.0.0 LANGUAGES CXX C)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-    var body: some Scene {
-        WindowGroup {
-            VStack(spacing: 15) {
-                Text("ZhiAuth v6.0")
-                    .font(.largeTitle).bold()
-                
-                Text(isRunning ? "🚀 Engine đang gầm rú..." : "🛑 Đang ngủ")
-                    .foregroundColor(isRunning ? .green : .red)
-                
-                // Form nhập liệu
-                VStack(spacing: 10) {
-                    TextField("LAN IP Server (vd: 192.168.1.x)", text: $lanIP)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .keyboardType(.decimalPad)
-                    
-                    TextField("Tailscale IP (vd: 100.x.x.x)", text: $tsIP)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .keyboardType(.decimalPad)
-                    
-                    TextField("Username", text: $username)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .autocapitalization(.none)
-                    
-                    SecureField("Password", text: $password)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                }
-                .padding(.horizontal)
-                
-                // Màn hình in log trực tiếp trên điện thoại
-                ScrollView {
-                    Text(logText)
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                }
-                .background(Color.black.opacity(0.85))
-                .foregroundColor(.green)
-                .cornerRadius(10)
-                .padding(.horizontal)
-                
-                Button(action: {
-                    testKcpCore()
-                }) {
-                    Text("KÍCH NỔ LÕI C++ KCP")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(isRunning ? Color.gray : Color.blue)
-                        .cornerRadius(10)
-                }
-                .disabled(isRunning)
-                .padding()
-            }
-        }
-    }
-    
-    func testKcpCore() {
-        // Ràng buộc kiểm tra IP
-        let targetIP = !lanIP.isEmpty ? lanIP : tsIP
-        if targetIP.isEmpty {
-            appendLog("❌ Lỗi: Phải nhập ít nhất 1 IP (LAN hoặc Tailscale)!")
-            return
-        }
-        if username.isEmpty || password.isEmpty {
-            appendLog("❌ Lỗi: Username và Password không được để trống!")
-            return
-        }
-        
-        isRunning = true
-        appendLog("Bắt đầu Port Knocking tới \(targetIP):5555...")
-        
-        Task {
-            do {
-                let hwid = await MainActor.run {
-                    UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS"
-                }
-                
-                let safeLan = lanIP.isEmpty ? "NONE" : lanIP
-                let safeTs = tsIP.isEmpty ? "NONE" : tsIP
-                
-                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(safeLan)|TS:\(safeTs)|HWID:\(hwid)"
-                
-                let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: targetIP, authPort: 5555, authCmd: authCmd)
-                
-                if auth.isSuccess {
-                    appendLog("✅ Auth OK! Server cấp KCP Port: \(auth.kcpPort)")
-                    
-                    let initSuccess = ZhiKcpEngine.initCore(
-                        ip: targetIP, 
-                        port: Int32(auth.kcpPort), 
-                        symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", 
-                        mtu: 1350, 
-                        tuning: auth.tuning
-                    )
-                    
-                    if initSuccess {
-                        appendLog("🔥 Lõi C++ KCP & Libsodium đã nổ máy!")
-                        
-                        appendLog("Gửi lệnh OP_STAT (Check rễ ổ đĩa) qua KCP...")
-                        let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: "/", offset: 0, reqLen: 0, payloadData: nil)
-                        
-                        appendLog("📦 KCP Phản hồi: Nhận \(statData.count) bytes thành công!")
-                        appendLog("🎉 MỌI THỨ HOẠT ĐỘNG HOÀN HẢO!")
-                    } else {
-                        appendLog("❌ Khởi động KCP Engine thất bại.")
-                        isRunning = false
-                    }
-                }
-            } catch {
-                appendLog("❌ Lỗi mạng: \(error.localizedDescription)")
-                isRunning = false
-            }
-        }
-    }
-    
-    func appendLog(_ msg: String) {
-        DispatchQueue.main.async {
-            NSLog("%@", msg)
-            logText += "[\(Date().formatted(date: .omitted, time: .standard))] \(msg)\n"
-        }
-    }
+include_directories(include src /usr/local/include)
+link_directories(/usr/local/lib)
+
+file(GLOB_RECURSE SERVER_SOURCES "src/*.cpp" "src/*.c")
+list(REMOVE_ITEM SERVER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/rpc_vfs/kcp_worker_main.cpp")
+list(REMOVE_ITEM SERVER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/rpc_vfs/vfs_io_worker.cpp")
+
+add_executable(zhiauth_gateway ${SERVER_SOURCES})
+target_link_libraries(zhiauth_gateway sqlite3 sodium msquic pthread)
+
+add_executable(zhiauth_kcp_worker src/rpc_vfs/kcp_worker_main.cpp src/rpc_vfs/vfs_io_worker.cpp src/common/logger.cpp)
+target_link_libraries(zhiauth_kcp_worker stdc++ pthread)
+
+--- END OF FILE: CMakeLists.txt ---
+
+--- START FILE PATH: zhiauth_blueprint.txt ---
+================================================================================
+          BẢN THIẾT KẾ KIẾN TRÚC HỆ THỐNG XÁC THỰC ĐỘNG (ZHIAUTH) v6.0
+================================================================================
+Ngày lập dự án: Lần cuối cập nhật năm 2026
+Mục tiêu: Xây dựng hệ thống Daemon lai (Hybrid) phối hợp C++ và Go qua CGO. 
+          Xác thực ẩn mình (Port Knocking), đóng/mở cổng UFW động.
+          Kiến trúc truyền tải kép: KCP UDP (Trục chính/C++ Core) + QUIC VFS (Dự phòng).
+          Loại bỏ hoàn toàn NFS, bảo mật cấp quân đội bằng Libsodium, tối ưu RAM, mã nguồn mở.
+
+--- THƯ MỤC CẤU TRÚC PHÂN CHIA (HYBRID SOURCE TREE VIA CMAKE) ---
+Hệ thống được quản lý bằng CMake biên dịch lõi C++ thành thư viện tĩnh đa nền tảng, chia nhỏ tối đa để dễ debug và bảo trì:
+zhiauth/
+├── .gitignore               <- Chặn *.db, config.env, thư mục build/
+├── CMakeLists.txt           <- Tích hợp thư viện Asio, KCP, Libsodium
+├── README.md                <- Hướng dẫn deploy cho cộng đồng GitHub
+├── config/
+│   └── config.json.example  <- File mẫu cấu hình trống cho cộng đồng
+├── database/
+│   └── (Thư mục chứa file zhiauth.db thực tế khi chạy, không up lên Git)
+├── go_gateway/              <- Phân khu Tiền tuyến written bằng Golang (QUIC Engine)
+│   ├── main.go              <- Khởi động CGO, gọi hàm C++ và nổ máy mạng
+│   ├── quic_listener.go     <- Dựng bốt gác UDP (Port 5555 Auth & Port 4433 Data fallback)
+│   ├── protocol_handler.go  <- Phân bóc gói tin thô không lạm dụng Regex
+│   └── fs_executor.go       <- Thực thi QUIC VFS (Khóa trần RAM 64KB chống OOM)
+└── src/                     <- Phân khu Hậu phương written bằng C++ (OS Controller)
+    ├── bridge/              
+    │   └── auth_bridge.h/.cpp <- Cầu nối CGO, dâng dữ liệu từ Go về RAM C++
+    ├── common/              <- Thư mục chứa các module công cụ dùng chung
+    │   ├── logger.h/.cpp    <- Hệ thống Log siêu chi tiết (Verbose Logging)
+    │   └── sqlite_handler.h/.cpp <- Giao tiếp SQLite bảo mật (Parameterized)
+    ├── system/              <- Module điều khiển hệ thống riêng biệt
+    │   ├── sys_control.h/.cpp<- Quản lý logic session, bàn giao quyền lực
+    │   └── ufw_manager.h/.cpp<- Hàng đợi Worker Thread đóng/mở port UFW đích danh
+    └── rpc_vfs/             <- [MODULE THAY THẾ NFS] TRỤC TRUYỀN TẢI CUSTOM UDP C++
+        ├── vfs_server.cpp   <- Bắn/Nhận UDP bằng Asio, thuật toán KCP chống rớt gói
+        ├── vfs_packet.h     <- Định nghĩa gói tin C++ Struct (Header, Offset, Length)
+        └── crypto_box.cpp   <- Libsodium (ChaCha20-Poly1305) bọc mã hóa mọi luồng dữ liệu
+
+--------------------------------------------------------------------------------
+1. QUY HOẠCH PHÂN QUYỀN TRÊN SERVER (SERVER PRIVILEGES)
+--------------------------------------------------------------------------------
+* User vận hành Daemon: Tận dụng user `ubuntu_admin` có sẵn trên OS.
+* Cắt giảm quyền hạt nhân: LOẠI BỎ hoàn toàn việc gọi lệnh exportfs hay can thiệp Kernel.
+* Cơ chế chạm vào nhân (Kernel via Sudoers):
+  - Cấu hình file /etc/sudoers để cho phép user `ubuntu_admin` mượn quyền root
+    thực thi CHỈ ĐÚNG DUY NHẤT 1 lệnh hệ thống mà không cần mật khẩu:
+    1. `/usr/sbin/ufw` (Đóng/mở port tường lửa).
+
+--------------------------------------------------------------------------------
+2. CƠ SỞ DỮ LIỆU & BẢO MẬT THÔNG TIN (DATABASE & ENCRYPTION)
+--------------------------------------------------------------------------------
+* Hệ thống lưu trữ: Sử dụng cơ sở dữ liệu SQLite (`zhiauth.db`), lưu trong máy.
+* Cơ chế chống Sql Injection: Bắt buộc dùng Parameterized Queries (Câu lệnh có 
+  tham số), không cộng chuỗi string thô. Khởi động chế độ WAL (Write-Ahead Logging)
+  để tránh nghẽn/khóa file DB khi nhiều thiết bị truy vấn cùng lúc.
+* Mã hóa dữ liệu truyền tải & Tĩnh: 
+  - Mọi thông tin nhạy cảm (Mật khẩu, Token) băm SHA-256 kết hợp muối tĩnh.
+  - Toàn bộ dòng chảy dữ liệu file qua mạng (LAN & WAN) đều bị ép qua cỗ máy mã hóa ChaCha20-Poly1305 (Libsodium). Không có dữ liệu thô nào bay ngoài không khí.
+  - Hạn chế lạm dụng thư viện Regex trong C/C++ và Go để giữ hiệu năng cao nhất.
+
+--------------------------------------------------------------------------------
+3. CHIẾN LƯỢC QUẢN LÝ SESSION & TỐI GIẢN NGÔN NGỮ (SESSION MANAGEMENT)
+--------------------------------------------------------------------------------
+* Luồng giao quyền lực: Xác thực thành công, C++ Server tự động gọi lệnh `seteuid()` để mượn thân xác của User thực tế (ví dụ UID 1001 của huang) rồi đọc trực tiếp tệp tin vật lý bằng `std::ifstream`, bỏ qua hoàn toàn Kernel Mount.
+* Quản lý cổng mạng: Chỉ mở đúng port 4433 (QUIC) và 6666 (KCP) cho đúng User/IP đó, phân biệt rạch ròi giữa IP Local và IP Tailscale của Client.
+* Tối giản ngôn ngữ (English Only): Hệ thống LOẠI BỎ hoàn toàn cơ chế đa ngôn ngữ (en, vi, cn) nhằm vắt kiệt hiệu năng. Giao tiếp qua mạng và Log 100% dùng tiếng Anh chuyên ngành cứng (hardcoded text).
+* Khi Session kết thúc: Server đóng UFW, giải phóng RAM, hủy session và gửi chuỗi tĩnh ("signed out" / "timed out").
+
+--------------------------------------------------------------------------------
+4. LUỒNG XỬ LÝ PHÍA CLIENT & TÍCH HỢP HỆ ĐIỀU HÀNH
+--------------------------------------------------------------------------------
+* Form đăng nhập: Hiện form bắt nhập tài khoản.
+* Thuật toán trinh sát MTU (Heuristic Radar): Dò từ 1000 - 1500 bytes (Trăm -> Chục -> Đơn vị) tìm đỉnh MTU mạng 4G/VNPT thực tế.
+* Kịch bản Dual-Tunnel Song Hành: Sau khi đăng nhập, Client kích nổ 2 luồng: KCP UDP (Luồng C++ truyền tải chính siêu tốc) và QUIC VFS (Luồng ngầm dự phòng). Lỗi KCP thì nhả file qua QUIC không gián đoạn.
+* Client gửi lên: Gửi kèm IP Local và IP Tailscale. Không có Tailscale IP -> "LAN-only restriction: WAN access denied".
+* Cơ chế "Ghi nhớ tôi": Cấp Session Token dài hạn phía Client.
+* Cơ chế SDK C++ Đa Nền Tảng (Phân chia rạch ròi hàm cho OS):
+  - Windows: SDK gọi WinFSP tạo Network Drive.
+  - Linux: SDK gọi Go-FUSE mount thư mục ảo.
+  - Android: JNI gọi API DocumentsProvider (Storage Access Framework).
+  - iOS/macOS: C++ nhúng FileProvider Extension vào app Tệp.
+
+--------------------------------------------------------------------------------
+5. BỘ 6 TẤM KHIÊN BẢO MẬT & PHƯƠNG ÁN FIX ĐIỂM YẾU CHÍ MẠNG
+--------------------------------------------------------------------------------
+[TẤM KHIÊN 1] CHỐNG GIẢ MẠO IP ĐỂ BAN ADMIN (CƠ CHẾ PORT KNOCKING)
+- Bỏ cơ chế REJECT/BAN. Cấu hình UFW sang DROP (Blackhole).
+- Port 5555 UDP (Auth) luôn đón khách. Port Data (4433, 6666) đóng cứng, chỉ hé mở qua Knocking sau khi đăng nhập authentication từ port 5555 thành công.
+
+[TẤM KHIÊN 2] CHỐNG TREO CỨNG FILE EXPLORER
+- Giao thức "Cảnh báo tử thần": Trước khi đóng cổng 3s, Server báo Client tự động ngắt kết nối an toàn (`umount`). Phản hồi xong mới sập UFW.
+- Nếu phần mềm đang truy xuất mà rớt timeout: Tiến trình ngầm tự động đăng nhập lại bằng Token để khôi phục kết nối không gián đoạn.
+
+[TẤM KHIÊN 3] LUỒNG MẠNG THÔNG MINH (ROAMING) & XÁC THỰC
+- Quét mạng: Ưu tiên IP Local > IP Tailscale. (Trên Mobile: Chạy Foreground Service & Ignore Battery Optimizations chống Doze Mode).
+- Failover (LAN sang 4G) và Failback (4G về LAN) tự động.
+- Chống trùng IP Café: Client gửi Nonce ngẫu nhiên, Server băm cùng `Server_UUID`.
+- Tất cả các gói tin khi bay ngoài không khí đều phải được mã hóa 
+- Sau khi đăng nhập xong server sẽ mở port tương ứng với ip đó trên ufw và sẽ phản hồi số port về cho client để client biết gửi dữ liệu qua port nào, tránh tình trạng lỡ có sự việc gì đó buộc phải đổi port server xong phải thay đổi port từng client sẽ rất rườm rà
+
+[TẤM KHIÊN 4] CHỐNG ĐÁNH CẮP THẺ BÀI (TOKEN THEFT)
+- Đóng dấu vân tay phần cứng (Hardware Fingerprint Binding):
+  + Win/Linux: MAC + UUID Mainboard.
+  + Android: SSAID + TEE KeyStore.
+  + iOS/macOS: IDFV trong Keychain. Token sai phần cứng bị từ chối ngay.
+
+[TẤM KHIÊN 5] TRỊ XUNG ĐỘT TIẾN TRÌNH LỆNH & XUNG ĐỘT FILE
+- Mở Port UFW: Dùng Task Queue (`std::queue`) và `std::mutex`, Worker Thread gắp lệnh UFW tuần tự.
+- Giao tiếp Lock File: Hệ thống C++ tự quản lý lock RAM. Ai vào trước thao tác file, kẻ đến sau lập tức ăn mã lỗi "FILE_LOCKED". (Giao tiếp LAN/WAN đồng bộ qua Unix Domain Socket).
+
+[TẤM KHIÊN 6] ĐA LUỒNG TRUYỀN FILE CHỐNG DDOS ATTACK
+- Lõi KCP tích hợp thuật toán Sliding Window: Tự động điều chỉnh kích thước gói. Phát hiện request rác (DDoS), Server C++ tự bóp luồng Session đó để cứu hạ tầng.
+
+[TẤM KHIÊN QUAN TRỌNG NHẤT] HẠN CHẾ ROOT TUYỆT ĐỐI
+- Mọi tiến trình chạy ở Userspace, không dùng quyền Root ngoại trừ tài khoản `huang`.
+- User "ubuntu_admin" chỉ có 2 quyền là quyền mở tường lửa và quyền chạy lệnh bàn giao toàn quyền sinh sát toàn bộ tiến trình lại cho user đăng nhập tương ứng với user hệ thống trùng tên user đăng nhập đó, và user ubuntu_admin sẽ rút lui về trực cổng 5555 nhường toàn bộ quyền sinh sát sesion đó cho user đó sẽ toàn quyền quyết định session đó, và ngoài 2 quyền đó, user ubuntu_admin ko được phép có thêm bất kỳ quyền nào khác
+
+--------------------------------------------------------------------------------
+6. CHIẾN LƯỢC VERBOSE LOGGING (IN LOG SẠCH SÀNH SANH ĐỂ DEBUG)
+--------------------------------------------------------------------------------
+* Quy định in Log: Trạng thái dài nhất, chi tiết nhất. 100% tiếng Anh chuyên ngành.
+* Định dạng chuẩn: [YYYY-MM-DD HH:MM:SS.ms] [TAG_LEVEL] [FILE_NAME::FUNCTION_NAME] -> Chi tiết.
+* Ghi chép Real-time: Nhận gói KCP/QUIC, Roaming, UFW, Auth, Checksum Libsodium. Mọi hoạt động đều phải nã ra log.
+================================================================================
+--- END OF FILE: zhiauth_blueprint.txt ---
+
+--- START FILE PATH: zhiauth_technical_structure.txt ---
+================================================================================
+            MÔ TẢ CẤU TRÚC KỸ THUẬT & QUY HOẠCH DỰ ÁN ZHIAUTH v6.0
+================================================================================
+Vị trí triển khai hệ thống: ~/zhiauth (Chạy trên phân vùng SSD hệ điều hành gốc)
+Đối tượng tương tác lưu trữ: /export/HDD_merge -> Đích truy cập trực tiếp bằng File Stream C++
+
+--------------------------------------------------------------------------------
+I. SƠ ĐỒ THƯ MỤC DỰ KIẾN ĐÃ KIẾN TẠO LAI (PROJECT HYBRID FILE TREE)
+--------------------------------------------------------------------------------
+~/zhiauth/
+├── zhiauth_technical_structure.txt <- File mô tả kỹ thuật (Chính là file này)
+├── .gitignore                      <- Chặn file nhạy cảm (*.db, config.json)
+├── CMakeLists.txt                 <- Cấu hình build lõi C++ thành Static Library
+├── config/
+│   ├── config.json.example         <- File mẫu cấu hình rỗng để đẩy lên GitHub
+│   ├── zhiserver.tailc979c1.ts.net.crt <- TLS Certificate (Cho dự phòng QUIC)
+│   └── zhiserver.tailc979c1.ts.net.key <- TLS Private Key
+├── database/
+│   └── (Nơi chứa file SQLite zhiauth.db chạy thực tế, bị chặn bởi .gitignore)
+├── go_gateway/                     <- THÁP MẠNG QUIC GIAO TIẾP VỚI INTERNET (DỰ PHÒNG)
+│   ├── go.mod                      <- Quản lý dependency (quic-go v0.60.0)
+│   ├── main.go                     <- Kích hoạt CGO, nổ máy hệ thống
+│   ├── quic_listener.go            <- Mở song song bốt gác UDP (Port 5555 và 4433)
+│   ├── protocol_handler.go         <- Phân phối gói tin, định tuyến AUTH vs DATA
+│   └── fs_executor.go              <- Thao tác VFS POSIX (Giáp chống OOM Capped 64KB)
+└── src/                            <- LÕI ĐIỀU KHIỂN & TRỤC RPC CHÍNH BẰNG C++
+    ├── bridge/
+    │   ├── auth_bridge.h           <- Khai báo hàm Interop cho Go
+    │   └── auth_bridge.cpp         <- Xử lý xác thực DB, điều phối UFW và Truyền tải
+    ├── common/                     <- CÁC MODULE CÔNG CỤ DÙNG CHUNG
+    │   ├── logger.h / .cpp         <- Định nghĩa Log đa luồng [FILE::FUNCTION]
+    │   └── sqlite_handler.h / .cpp <- Thực thi Parameterized Queries chống SQL Injection
+    ├── system/                     <- MODULE ĐIỀU KHIỂN HỆ THỐNG OS
+    │   ├── sys_control.h / .cpp    <- Xử lý luồng hạ quyền lực từ ubuntu_admin về user
+    │   └── ufw_manager.h / .cpp    <- Gọi lệnh ufw qua Task Queue tuyến tính Worker Thread
+    └── rpc_vfs/                    <- [THAY THẾ NFS] KIẾN TRÚC CUSTOM UDP C++
+        ├── vfs_server.h / .cpp     <- Lõi mạng Asio UDP Socket & Quản lý KCP
+        ├── vfs_packet.h            <- Định dạng Byte Struct (Header, Offset, Size, Checksum)
+        ├── vfs_io_worker.h / .cpp  <- Xử lý fstream I/O tốc độ bàn thờ
+        └── crypto_box.h / .cpp     <- Libsodium tích hợp bọc mã ChaCha20-Poly1305
+
+--------------------------------------------------------------------------------
+II. LIÊN KẾT HỆ THỐNG VÀ THÔNG SỐ TRẠNG THÁI THỰC TẾ
+--------------------------------------------------------------------------------
+1. Phân vùng chia sẻ mục tiêu:
+   - Thư mục dữ liệu gộp MergerFS: `/mnt/HDD_merge`
+   - Thư mục Bind gốc phục vụ hệ thống cũ `/export/HDD_merge` nay chuyển thành root path cho C++ Streamer.
+   - C++ Server trực tiếp nắm giữ sinh sát file vật lý. Không còn bóng dáng của NFS Kernel.
+
+2. Định danh tài khoản quản trị tối cao:
+   - User Admin hệ thống: `huang` (UID: 1001, GID: 1001).
+   - Khi C++ Server đọc/ghi file thay mặt Client, hàm `seteuid(UID_TƯƠNG_ỨNG)` sẽ ép tiến trình Worker hoạt động dưới danh phận đúng user đó. Riêng `huang` được trao toàn quyền Root-level Directory Access. Tránh lỗi Permission Denied một cách chủ động.
+
+3. Ma trận Bảo vệ Mạng & Định tuyến:
+   - IP Local (LAN): Dải mạng trong nhà `192.168.1.0/24`.
+   - IP Tailscale (WAN): Dải mạng ảo `100.0.0.0/8`.
+   - Chạy cùng lúc cả 2 trục bao gồm trục (KCP UDP): Lấy ví dụ cổng 6666 -> Tốc độ cực đại và trục (QUIC): Lấy ví dụ cổng 4433 UDP
+   - Port Knocking Matrix: Port 5555 UDP [AUTH] luôn mở. Port KCP/QUIC đóng kín, hé qua UFW đích danh IP. Và sau khi đăng nhập xong server sẽ mở port tương ứng với ip đó trên ufw và sẽ phản hồi số port về cho client để client bik gửi tin qua port nào, tránh tình trạng lỡ có sự việc gì đó buộc phải đổi port server xong phải thay đổi port từng client sẽ rất rườm rà
+
+--------------------------------------------------------------------------------
+III. CHIẾN LƯỢC QUẢN LÝ BUILD BẰNG CMAKE & CGO STRATEGY
+--------------------------------------------------------------------------------
+* File `CMakeLists.txt` tổng tại thư mục gốc sẽ chịu trách nhiệm:
+  1. Chỉ định tiêu chuẩn mã nguồn C++20.
+  2. Tìm kiếm và liên kết thư viện: SQLite3, Threads, Asio, KCP, Libsodium.
+  3. Gom toàn bộ file `.cpp` (`logger`, `sqlite`, `sys_control`, `ufw`, `rpc_vfs`...) thành thư viện tĩnh `libzhiauth_core.a`.
+* Tháp Go Gateway sử dụng `#cgo LDFLAGS: -L../build -lzhiauth_core -lsodium` để hút lõi C++ thành một file Binary duy nhất (`zhiauth_gateway`).
+
+--------------------------------------------------------------------------------
+IV. QUY ĐỊNH GHI LOG HOẠT ĐỘNG (LOGGING SPECIFICATION)
+--------------------------------------------------------------------------------
+* Mọi file `.cpp` muốn ghi log bắt buộc phải include `"common/logger.h"`.
+* Log được in ra với mức độ chi tiết cao nhất (Verbose Mode), không bỏ sót bất kỳ sự kiện nào.
+* Định dạng log bắt buộc phải tuân thủ cấu trúc (100% English):
+  [YYYY-MM-DD HH:MM:SS.ms] [LEVEL] [FILE::FUNCTION] -> Chi tiết thông điệp kỹ thuật dài.
+* Các cột mốc bắt buộc phải ghi nhận log chi tiết:
+  - Khi bốt gác nhận dữ liệu thô trên các Port mạng.
+  - Khi CGO Interop bốc bộ nhớ từ Go dâng sang C++ xác thực DB.
+  - Khi luồng Task Queue Worker gắp lệnh điều khiển UFW.
+  - Khi SQLite thực thi câu lệnh tham số.
+  - Khi thuật toán KCP xử lý rớt gói và Libsodium xác nhận chữ ký mã hóa của Packet.
+Bản quy hoạch cấu trúc kỹ thuật đã được khóa cứng an toàn. Tuyệt đối không tự ý 
+thay đổi cấu trúc file này khi chưa có sự đồng thuận từ kiến trúc sư trưởng.
+================================================================================
+
+--- END OF FILE: zhiauth_technical_structure.txt ---
+
+--- START FILE PATH: include/bridge/auth_bridge.h ---
+#ifndef AUTH_BRIDGE_H
+#define AUTH_BRIDGE_H
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+int zhiauth_core_init(const char* db_path, const char* master_key, int auth_port, int kcp_port, int quic_port, const char* cert_path, const char* key_path, int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
+const char* zhiauth_authenticate_and_trigger(const char* username, const char* password, const char* client_lan, const char* client_ts, const char* client_hwid);
+void zhiauth_revoke_access(const char* client_ip, const char* shared_path);
+uint64_t zhiauth_check_kcp_active(const char* client_ip);
+void zhiauth_core_shutdown();
+
+#ifdef __cplusplus
 }
+#endif
+#endif
 
---- END OF FILE: ZhiAuthApp/ZhiAuthApp.swift ---
+--- END OF FILE: include/bridge/auth_bridge.h ---
 
---- START FILE PATH: .github/workflows/build-ios.yml ---
-name: Build ZhiAuth iOS App
-
-on:
-  push:
-    branches: [ "Client_iOS" ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    name: Build unsigned IPA
-    runs-on: macos-14
-
-    steps:
-      - name: Lấy source code về
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Cài đặt XcodeGen & ASIO
-        run: |
-          brew install xcodegen asio
-          xcodegen generate # Ép dịch lại project.yml thành file .xcodeproj mới nhất!
-
-      - name: Ép dùng Xcode 16.2.0
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: '16.2.0'
-
-      - name: Biên dịch Xcode Project
-        run: |
-          set -o pipefail
-          xcodebuild clean build \
-            -project ZhiAuth.xcodeproj \
-            -scheme ZhiAuthApp \
-            -sdk iphoneos \
-            -configuration Release \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            SYMROOT=$(PWD)/build \
-            -verbose
-
-      - name: Đóng gói thành file .ipa
-        run: |
-          echo "==== ĐANG ĐÓNG GÓI THÀNH IPA CHUẨN APPLE ===="
-          mkdir -p Payload
-          # Copy toàn bộ app (đã nhúng C++) vào Payload
-          cp -R build/Release-iphoneos/ZhiAuthApp.app Payload/
-          # Dùng lệnh ditto của Apple để nén chuẩn xác, lọc sạch rác hệ điều hành
-          ditto -c -k --sequesterRsrc --keepParent Payload ZhiAuthApp.ipa
-          echo "✅ Đóng gói hoàn tất!"
-
-      - name: Xuất file IPA cho Ný tải
-        uses: actions/upload-artifact@v4
-        with:
-          name: ZhiAuthApp-iOS
-          path: ZhiAuthApp.ipa
-          retention-days: 7
---- END OF FILE: .github/workflows/build-ios.yml ---
-
---- START FILE PATH: src/rpc_client/crypto_box.h ---
-#ifndef ZHIAUTH_CRYPTO_BOX_H
-#define ZHIAUTH_CRYPTO_BOX_H
-
-#include <vector>
-#include <string>
-#include <cstdint>
-
-class CryptoBox {
-public:
-    static bool initialize();
-    static bool encrypt_payload(const std::vector<uint8_t>& plaintext, const std::string& symmetric_key, std::vector<uint8_t>& ciphertext);
-    static bool decrypt_payload(const std::vector<uint8_t>& ciphertext, const std::string& symmetric_key, std::vector<uint8_t>& plaintext);
-};
-#endif // ZHIAUTH_CRYPTO_BOX_H
-
---- END OF FILE: src/rpc_client/crypto_box.h ---
-
---- START FILE PATH: src/rpc_client/vfs_packet.h ---
-#ifndef ZHIAUTH_VFS_PACKET_H
-#define ZHIAUTH_VFS_PACKET_H
-
-#include <cstdint>
-
-#pragma pack(push, 1)
-
-enum class VfsOpcode : uint8_t {
-    OP_PING     = 0x00,
-    OP_STAT     = 0x01,
-    OP_LIST     = 0x02,
-    OP_READ     = 0x03,
-    OP_WRITE    = 0x04,
-    OP_MKDIR    = 0x05,
-    OP_DELETE   = 0x06,
-    OP_RENAME   = 0x07,
-    OP_TRUNCATE = 0x08, 
-    OP_ERROR    = 0xFF
-};
-
-// TRẢ LẠI NGUYÊN BẢN CHO V6.0
-struct VfsPacketHeader {
-    uint32_t magic;      // 0x5A484941 ("ZHIA")
-    VfsOpcode opcode;
-    uint64_t session_id; // Sẽ giấu cả client_id và req_id vào đây!
-    uint64_t offset;     
-    uint32_t data_len;
-    uint16_t path_len;
-};
-
-#pragma pack(pop)
-
-#endif // ZHIAUTH_VFS_PACKET_H
---- END OF FILE: src/rpc_client/vfs_packet.h ---
-
---- START FILE PATH: src/rpc_client/crypto_box.cpp ---
-#include "rpc_client/crypto_box.h"
-#include <sodium.h>
-#include <iostream>
-
-bool CryptoBox::initialize() {
-    if (sodium_init() < 0) return false;
-    return true;
-}
-
-bool CryptoBox::encrypt_payload(const std::vector<uint8_t>& plaintext, const std::string& symmetric_key, std::vector<uint8_t>& ciphertext) {
-    if (symmetric_key.size() != crypto_aead_chacha20poly1305_ietf_KEYBYTES) return false;
-    ciphertext.resize(crypto_aead_chacha20poly1305_ietf_NPUBBYTES + plaintext.size() + crypto_aead_chacha20poly1305_ietf_ABYTES);
-    unsigned char* nonce = ciphertext.data();
-    randombytes_buf(nonce, crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
-    unsigned long long ciphertext_len;
-    int result = crypto_aead_chacha20poly1305_ietf_encrypt(
-        ciphertext.data() + crypto_aead_chacha20poly1305_ietf_NPUBBYTES, &ciphertext_len,
-        plaintext.data(), plaintext.size(), nullptr, 0, nullptr, nonce,
-        reinterpret_cast<const unsigned char*>(symmetric_key.data())
-    );
-    if (result != 0) return false;
-    ciphertext.resize(crypto_aead_chacha20poly1305_ietf_NPUBBYTES + ciphertext_len);
-    return true;
-}
-
-bool CryptoBox::decrypt_payload(const std::vector<uint8_t>& ciphertext, const std::string& symmetric_key, std::vector<uint8_t>& plaintext) {
-    if (symmetric_key.size() != crypto_aead_chacha20poly1305_ietf_KEYBYTES) return false;
-    if (ciphertext.size() < crypto_aead_chacha20poly1305_ietf_NPUBBYTES + crypto_aead_chacha20poly1305_ietf_ABYTES) return false;
-    const unsigned char* nonce = ciphertext.data();
-    const unsigned char* actual_cipher = ciphertext.data() + crypto_aead_chacha20poly1305_ietf_NPUBBYTES;
-    unsigned long long actual_cipher_len = ciphertext.size() - crypto_aead_chacha20poly1305_ietf_NPUBBYTES;
-    plaintext.resize(actual_cipher_len - crypto_aead_chacha20poly1305_ietf_ABYTES);
-    unsigned long long plaintext_len;
-    int result = crypto_aead_chacha20poly1305_ietf_decrypt(
-        plaintext.data(), &plaintext_len, nullptr, actual_cipher, actual_cipher_len,
-        nullptr, 0, nonce, reinterpret_cast<const unsigned char*>(symmetric_key.data())
-    );
-    if (result != 0) return false;
-    plaintext.resize(plaintext_len);
-    return true;
-}
-
---- END OF FILE: src/rpc_client/crypto_box.cpp ---
-
---- START FILE PATH: src/rpc_client/ikcp.h ---
+--- START FILE PATH: include/rpc_vfs/ikcp.h ---
 //=====================================================================
 //
 // KCP - A Better ARQ Protocol Implementation
@@ -904,2127 +868,1111 @@ IUINT32 ikcp_getconv(const void *ptr);
 
 
 
---- END OF FILE: src/rpc_client/ikcp.h ---
-
---- START FILE PATH: src/rpc_client/ikcp.c ---
-//=====================================================================
-//
-// KCP - A Better ARQ Protocol Implementation
-// skywind3000 (at) gmail.com, 2010-2011
-//  
-// Features:
-// + Average RTT reduce 30% - 40% vs traditional ARQ like tcp.
-// + Maximum RTT reduce three times vs tcp.
-// + Lightweight, distributed as a single source file.
-//
-//=====================================================================
-#include "ikcp.h"
-
-#include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdarg.h>
-#include <stdio.h>
-
-#define IKCP_FASTACK_CONSERVE
-
-//=====================================================================
-// KCP BASIC
-//=====================================================================
-const IUINT32 IKCP_RTO_NDL = 30;		// no delay min rto
-const IUINT32 IKCP_RTO_MIN = 100;		// normal min rto
-const IUINT32 IKCP_RTO_DEF = 200;
-const IUINT32 IKCP_RTO_MAX = 60000;
-const IUINT32 IKCP_CMD_PUSH = 81;		// cmd: push data
-const IUINT32 IKCP_CMD_ACK  = 82;		// cmd: ack
-const IUINT32 IKCP_CMD_WASK = 83;		// cmd: window probe (ask)
-const IUINT32 IKCP_CMD_WINS = 84;		// cmd: window size (tell)
-const IUINT32 IKCP_ASK_SEND = 1;		// need to send IKCP_CMD_WASK
-const IUINT32 IKCP_ASK_TELL = 2;		// need to send IKCP_CMD_WINS
-const IUINT32 IKCP_WND_SND = 32;
-
-// 🔥 NÂNG TỪ 128 LÊN 4096 ĐỂ KCP CHO PHÉP GỬI FILE VƯỢT QUÁ 128KB!
-const IUINT32 IKCP_WND_RCV = 4096;       // must >= max fragment size
-
-const IUINT32 IKCP_MTU_DEF = 1400;
-const IUINT32 IKCP_ACK_FAST	= 3;
-const IUINT32 IKCP_INTERVAL	= 100;
-const IUINT32 IKCP_OVERHEAD = 24;
-const IUINT32 IKCP_DEADLINK = 20;
-const IUINT32 IKCP_THRESH_INIT = 2;
-const IUINT32 IKCP_THRESH_MIN = 2;
-const IUINT32 IKCP_PROBE_INIT = 5000;		// 7 secs to probe window size
-const IUINT32 IKCP_PROBE_LIMIT = 120000;	// up to 120 secs to probe window
-const IUINT32 IKCP_FASTACK_LIMIT = 5;		// max times to trigger fastack
-
-
-//---------------------------------------------------------------------
-// encode / decode
-//---------------------------------------------------------------------
-
-/* encode 8 bits unsigned int */
-static inline char *ikcp_encode8u(char *p, unsigned char c)
-{
-	*(unsigned char*)p++ = c;
-	return p;
-}
-
-/* decode 8 bits unsigned int */
-static inline const char *ikcp_decode8u(const char *p, unsigned char *c)
-{
-	*c = *(unsigned char*)p++;
-	return p;
-}
-
-/* encode 16 bits unsigned int (lsb) */
-static inline char *ikcp_encode16u(char *p, unsigned short w)
-{
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-	*(unsigned char*)(p + 0) = (w & 255);
-	*(unsigned char*)(p + 1) = (w >> 8);
-#else
-	memcpy(p, &w, 2);
-#endif
-	p += 2;
-	return p;
-}
-
-/* decode 16 bits unsigned int (lsb) */
-static inline const char *ikcp_decode16u(const char *p, unsigned short *w)
-{
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-	*w = *(const unsigned char*)(p + 1);
-	*w = *(const unsigned char*)(p + 0) + (*w << 8);
-#else
-	memcpy(w, p, 2);
-#endif
-	p += 2;
-	return p;
-}
-
-/* encode 32 bits unsigned int (lsb) */
-static inline char *ikcp_encode32u(char *p, IUINT32 l)
-{
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-	*(unsigned char*)(p + 0) = (unsigned char)((l >>  0) & 0xff);
-	*(unsigned char*)(p + 1) = (unsigned char)((l >>  8) & 0xff);
-	*(unsigned char*)(p + 2) = (unsigned char)((l >> 16) & 0xff);
-	*(unsigned char*)(p + 3) = (unsigned char)((l >> 24) & 0xff);
-#else
-	memcpy(p, &l, 4);
-#endif
-	p += 4;
-	return p;
-}
-
-/* decode 32 bits unsigned int (lsb) */
-static inline const char *ikcp_decode32u(const char *p, IUINT32 *l)
-{
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-	*l = *(const unsigned char*)(p + 3);
-	*l = *(const unsigned char*)(p + 2) + (*l << 8);
-	*l = *(const unsigned char*)(p + 1) + (*l << 8);
-	*l = *(const unsigned char*)(p + 0) + (*l << 8);
-#else 
-	memcpy(l, p, 4);
-#endif
-	p += 4;
-	return p;
-}
-
-static inline IUINT32 _imin_(IUINT32 a, IUINT32 b) {
-	return a <= b ? a : b;
-}
-
-static inline IUINT32 _imax_(IUINT32 a, IUINT32 b) {
-	return a >= b ? a : b;
-}
-
-static inline IUINT32 _ibound_(IUINT32 lower, IUINT32 middle, IUINT32 upper) 
-{
-	return _imin_(_imax_(lower, middle), upper);
-}
-
-static inline long _itimediff(IUINT32 later, IUINT32 earlier) 
-{
-	return ((IINT32)(later - earlier));
-}
-
-//---------------------------------------------------------------------
-// manage segment
-//---------------------------------------------------------------------
-typedef struct IKCPSEG IKCPSEG;
-
-static void* (*ikcp_malloc_hook)(size_t) = NULL;
-static void (*ikcp_free_hook)(void *) = NULL;
-
-// internal malloc
-static void* ikcp_malloc(size_t size) {
-	if (ikcp_malloc_hook) 
-		return ikcp_malloc_hook(size);
-	return malloc(size);
-}
-
-// internal free
-static void ikcp_free(void *ptr) {
-	if (ikcp_free_hook) {
-		ikcp_free_hook(ptr);
-	}	else {
-		free(ptr);
-	}
-}
-
-// redefine allocator
-void ikcp_allocator(void* (*new_malloc)(size_t), void (*new_free)(void*))
-{
-	ikcp_malloc_hook = new_malloc;
-	ikcp_free_hook = new_free;
-}
-
-// allocate a new kcp segment
-static IKCPSEG* ikcp_segment_new(ikcpcb *kcp, int size)
-{
-	return (IKCPSEG*)ikcp_malloc(sizeof(IKCPSEG) + size);
-}
-
-// delete a segment
-static void ikcp_segment_delete(ikcpcb *kcp, IKCPSEG *seg)
-{
-	ikcp_free(seg);
-}
-
-// write log
-void ikcp_log(ikcpcb *kcp, int mask, const char *fmt, ...)
-{
-	char buffer[1024];
-	va_list argptr;
-	if ((mask & kcp->logmask) == 0 || kcp->writelog == 0) return;
-	va_start(argptr, fmt);
-	vsprintf(buffer, fmt, argptr);
-	va_end(argptr);
-	kcp->writelog(buffer, kcp, kcp->user);
-}
-
-// check log mask
-static int ikcp_canlog(const ikcpcb *kcp, int mask)
-{
-	if ((mask & kcp->logmask) == 0 || kcp->writelog == NULL) return 0;
-	return 1;
-}
-
-// output segment
-static int ikcp_output(ikcpcb *kcp, const void *data, int size)
-{
-	assert(kcp);
-	assert(kcp->output);
-	if (ikcp_canlog(kcp, IKCP_LOG_OUTPUT)) {
-		ikcp_log(kcp, IKCP_LOG_OUTPUT, "[RO] %ld bytes", (long)size);
-	}
-	if (size == 0) return 0;
-	return kcp->output((const char*)data, size, kcp, kcp->user);
-}
-
-// output queue
-void ikcp_qprint(const char *name, const struct IQUEUEHEAD *head)
-{
-#if 0
-	const struct IQUEUEHEAD *p;
-	printf("<%s>: [", name);
-	for (p = head->next; p != head; p = p->next) {
-		const IKCPSEG *seg = iqueue_entry(p, const IKCPSEG, node);
-		printf("(%lu %d)", (unsigned long)seg->sn, (int)(seg->ts % 10000));
-		if (p->next != head) printf(",");
-	}
-	printf("]\n");
-#endif
-}
-
-
-//---------------------------------------------------------------------
-// create a new kcpcb
-//---------------------------------------------------------------------
-ikcpcb* ikcp_create(IUINT32 conv, void *user)
-{
-	ikcpcb *kcp = (ikcpcb*)ikcp_malloc(sizeof(struct IKCPCB));
-	if (kcp == NULL) return NULL;
-	kcp->conv = conv;
-	kcp->user = user;
-	kcp->snd_una = 0;
-	kcp->snd_nxt = 0;
-	kcp->rcv_nxt = 0;
-	kcp->ts_recent = 0;
-	kcp->ts_lastack = 0;
-	kcp->ts_probe = 0;
-	kcp->probe_wait = 0;
-	kcp->snd_wnd = IKCP_WND_SND;
-	kcp->rcv_wnd = IKCP_WND_RCV;
-	kcp->rmt_wnd = IKCP_WND_RCV;
-	kcp->cwnd = 0;
-	kcp->incr = 0;
-	kcp->probe = 0;
-	kcp->mtu = IKCP_MTU_DEF;
-	kcp->mss = kcp->mtu - IKCP_OVERHEAD;
-	kcp->stream = 0;
-
-	kcp->buffer = (char*)ikcp_malloc((kcp->mtu + IKCP_OVERHEAD) * 3);
-	if (kcp->buffer == NULL) {
-		ikcp_free(kcp);
-		return NULL;
-	}
-
-	iqueue_init(&kcp->snd_queue);
-	iqueue_init(&kcp->rcv_queue);
-	iqueue_init(&kcp->snd_buf);
-	iqueue_init(&kcp->rcv_buf);
-	kcp->nrcv_buf = 0;
-	kcp->nsnd_buf = 0;
-	kcp->nrcv_que = 0;
-	kcp->nsnd_que = 0;
-	kcp->state = 0;
-	kcp->acklist = NULL;
-	kcp->ackblock = 0;
-	kcp->ackcount = 0;
-	kcp->ackedlen = 0;
-	kcp->rx_srtt = 0;
-	kcp->rx_rttval = 0;
-	kcp->rx_rto = IKCP_RTO_DEF;
-	kcp->rx_minrto = IKCP_RTO_MIN;
-	kcp->current = 0;
-	kcp->interval = IKCP_INTERVAL;
-	kcp->ts_flush = IKCP_INTERVAL;
-	kcp->nodelay = 0;
-	kcp->updated = 0;
-	kcp->logmask = 0;
-	kcp->ssthresh = IKCP_THRESH_INIT;
-	kcp->fastresend = 0;
-	kcp->fastlimit = IKCP_FASTACK_LIMIT;
-	kcp->nocwnd = 0;
-	kcp->xmit = 0;
-	kcp->dead_link = IKCP_DEADLINK;
-	kcp->output = NULL;
-	kcp->ccops = NULL;
-	kcp->congest = NULL;
-	kcp->writelog = NULL;
-
-	return kcp;
-}
-
-
-//---------------------------------------------------------------------
-// release a kcpcb
-//---------------------------------------------------------------------
-void ikcp_release(ikcpcb *kcp)
-{
-	IKCPSEG *seg;
-	assert(kcp);
-	if (kcp) {
-		if (kcp->ccops && kcp->ccops->release) {
-			kcp->ccops->release(kcp);
-		}
-		while (!iqueue_is_empty(&kcp->snd_buf)) {
-			seg = iqueue_entry(kcp->snd_buf.next, IKCPSEG, node);
-			iqueue_del(&seg->node);
-			ikcp_segment_delete(kcp, seg);
-		}
-		while (!iqueue_is_empty(&kcp->rcv_buf)) {
-			seg = iqueue_entry(kcp->rcv_buf.next, IKCPSEG, node);
-			iqueue_del(&seg->node);
-			ikcp_segment_delete(kcp, seg);
-		}
-		while (!iqueue_is_empty(&kcp->snd_queue)) {
-			seg = iqueue_entry(kcp->snd_queue.next, IKCPSEG, node);
-			iqueue_del(&seg->node);
-			ikcp_segment_delete(kcp, seg);
-		}
-		while (!iqueue_is_empty(&kcp->rcv_queue)) {
-			seg = iqueue_entry(kcp->rcv_queue.next, IKCPSEG, node);
-			iqueue_del(&seg->node);
-			ikcp_segment_delete(kcp, seg);
-		}
-		if (kcp->buffer) {
-			ikcp_free(kcp->buffer);
-		}
-		if (kcp->acklist) {
-			ikcp_free(kcp->acklist);
-		}
-
-		kcp->nrcv_buf = 0;
-		kcp->nsnd_buf = 0;
-		kcp->nrcv_que = 0;
-		kcp->nsnd_que = 0;
-		kcp->ackcount = 0;
-		kcp->buffer = NULL;
-		kcp->acklist = NULL;
-		ikcp_free(kcp);
-	}
-}
-
-
-//---------------------------------------------------------------------
-// set output callback, which will be invoked by kcp
-//---------------------------------------------------------------------
-void ikcp_setoutput(ikcpcb *kcp, int (*output)(const char *buf, int len,
-	ikcpcb *kcp, void *user))
-{
-	kcp->output = output;
-}
-
-
-//---------------------------------------------------------------------
-// upper-level recv: returns size, or a negative value for EAGAIN
-//---------------------------------------------------------------------
-int ikcp_recv(ikcpcb *kcp, char *buffer, int len)
-{
-	struct IQUEUEHEAD *p;
-	int ispeek = (len < 0)? 1 : 0;
-	int peeksize;
-	int recover = 0;
-	IKCPSEG *seg;
-	assert(kcp);
-
-	if (iqueue_is_empty(&kcp->rcv_queue))
-		return -1;
-
-	if (len < 0) len = -len;
-
-	peeksize = ikcp_peeksize(kcp);
-
-	if (peeksize < 0) 
-		return -2;
-
-	if (peeksize > len) 
-		return -3;
-
-	if (kcp->nrcv_que >= kcp->rcv_wnd)
-		recover = 1;
-
-	// merge fragment
-	for (len = 0, p = kcp->rcv_queue.next; p != &kcp->rcv_queue; ) {
-		int fragment;
-		seg = iqueue_entry(p, IKCPSEG, node);
-		p = p->next;
-
-		if (buffer) {
-			memcpy(buffer, seg->data, seg->len);
-			buffer += seg->len;
-		}
-
-		len += seg->len;
-		fragment = seg->frg;
-
-		if (ikcp_canlog(kcp, IKCP_LOG_RECV)) {
-			ikcp_log(kcp, IKCP_LOG_RECV, "recv sn=%lu", (unsigned long)seg->sn);
-		}
-
-		if (ispeek == 0) {
-			iqueue_del(&seg->node);
-			ikcp_segment_delete(kcp, seg);
-			kcp->nrcv_que--;
-		}
-
-		if (fragment == 0) 
-			break;
-	}
-
-	assert(len == peeksize);
-
-	// move available data from rcv_buf -> rcv_queue
-	while (! iqueue_is_empty(&kcp->rcv_buf)) {
-		seg = iqueue_entry(kcp->rcv_buf.next, IKCPSEG, node);
-		if (seg->sn == kcp->rcv_nxt && kcp->nrcv_que < kcp->rcv_wnd) {
-			iqueue_del(&seg->node);
-			kcp->nrcv_buf--;
-			iqueue_add_tail(&seg->node, &kcp->rcv_queue);
-			kcp->nrcv_que++;
-			kcp->rcv_nxt++;
-		}	else {
-			break;
-		}
-	}
-
-	// fast recover
-	if (kcp->nrcv_que < kcp->rcv_wnd && recover) {
-		// ready to send back IKCP_CMD_WINS in ikcp_flush
-		// tell remote my window size
-		kcp->probe |= IKCP_ASK_TELL;
-	}
-
-	return len;
-}
-
-
-//---------------------------------------------------------------------
-// peek data size
-//---------------------------------------------------------------------
-int ikcp_peeksize(const ikcpcb *kcp)
-{
-	struct IQUEUEHEAD *p;
-	IKCPSEG *seg;
-	int length = 0;
-
-	assert(kcp);
-
-	if (iqueue_is_empty(&kcp->rcv_queue)) return -1;
-
-	seg = iqueue_entry(kcp->rcv_queue.next, IKCPSEG, node);
-	if (seg->frg == 0) return seg->len;
-
-	if (kcp->nrcv_que < seg->frg + 1) return -1;
-
-	for (p = kcp->rcv_queue.next; p != &kcp->rcv_queue; p = p->next) {
-		seg = iqueue_entry(p, IKCPSEG, node);
-		length += seg->len;
-		if (seg->frg == 0) break;
-	}
-
-	return length;
-}
-
-
-//---------------------------------------------------------------------
-// upper-level send: returns size, or a negative value on error
-//---------------------------------------------------------------------
-int ikcp_send(ikcpcb *kcp, const char *buffer, int len)
-{
-	IKCPSEG *seg;
-	int count, i;
-	int sent = 0;
-
-	assert(kcp->mss > 0);
-	if (len < 0) return -1;
-
-	// append to previous segment in streaming mode (if possible)
-	if (kcp->stream != 0) {
-		if (!iqueue_is_empty(&kcp->snd_queue)) {
-			IKCPSEG *old = iqueue_entry(kcp->snd_queue.prev, IKCPSEG, node);
-			if (old->len < kcp->mss) {
-				int capacity = kcp->mss - old->len;
-				int extend = (len < capacity)? len : capacity;
-				seg = ikcp_segment_new(kcp, old->len + extend);
-				assert(seg);
-				if (seg == NULL) {
-					return -2;
-				}
-				iqueue_add_tail(&seg->node, &kcp->snd_queue);
-				memcpy(seg->data, old->data, old->len);
-				if (buffer) {
-					memcpy(seg->data + old->len, buffer, extend);
-					buffer += extend;
-				}
-				seg->len = old->len + extend;
-				seg->frg = 0;
-				len -= extend;
-				iqueue_del_init(&old->node);
-				ikcp_segment_delete(kcp, old);
-				sent = extend;
-			}
-		}
-		if (len <= 0) {
-			return sent;
-		}
-	}
-
-	if (len <= (int)kcp->mss) count = 1;
-	else count = (len + kcp->mss - 1) / kcp->mss;
-
-	if (count >= (int)IKCP_WND_RCV) {
-		if (kcp->stream != 0 && sent > 0) 
-			return sent;
-		return -2;
-	}
-
-	if (count == 0) count = 1;
-
-	// fragment
-	for (i = 0; i < count; i++) {
-		int size = len > (int)kcp->mss ? (int)kcp->mss : len;
-		seg = ikcp_segment_new(kcp, size);
-		assert(seg);
-		if (seg == NULL) {
-			return -2;
-		}
-		if (buffer && len > 0) {
-			memcpy(seg->data, buffer, size);
-		}
-		seg->len = size;
-		seg->frg = (kcp->stream == 0)? (count - i - 1) : 0;
-		iqueue_init(&seg->node);
-		iqueue_add_tail(&seg->node, &kcp->snd_queue);
-		kcp->nsnd_que++;
-		if (buffer) {
-			buffer += size;
-		}
-		len -= size;
-		sent += size;
-	}
-
-	return sent;
-}
-
-
-//---------------------------------------------------------------------
-// parse ack
-//---------------------------------------------------------------------
-static void ikcp_update_ack(ikcpcb *kcp, IINT32 rtt)
-{
-	IINT32 rto = 0;
-	if (kcp->rx_srtt == 0) {
-		kcp->rx_srtt = rtt;
-		kcp->rx_rttval = rtt / 2;
-	}	else {
-		long delta = rtt - kcp->rx_srtt;
-		if (delta < 0) delta = -delta;
-		kcp->rx_rttval = (3 * kcp->rx_rttval + delta) / 4;
-		kcp->rx_srtt = (7 * kcp->rx_srtt + rtt) / 8;
-		if (kcp->rx_srtt < 1) kcp->rx_srtt = 1;
-	}
-	rto = kcp->rx_srtt + _imax_(kcp->interval, 4 * kcp->rx_rttval);
-	kcp->rx_rto = _ibound_(kcp->rx_minrto, rto, IKCP_RTO_MAX);
-	if (kcp->ccops && kcp->ccops->on_rtt) {
-		kcp->ccops->on_rtt(kcp, rtt);
-	}
-}
-
-static void ikcp_shrink_buf(ikcpcb *kcp)
-{
-	struct IQUEUEHEAD *p = kcp->snd_buf.next;
-	if (p != &kcp->snd_buf) {
-		IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
-		kcp->snd_una = seg->sn;
-	}	else {
-		kcp->snd_una = kcp->snd_nxt;
-	}
-}
-
-static void ikcp_parse_ack(ikcpcb *kcp, IUINT32 sn)
-{
-	struct IQUEUEHEAD *p, *next;
-	IINT32 pkt_rtt;
-
-	if (_itimediff(sn, kcp->snd_una) < 0 || _itimediff(sn, kcp->snd_nxt) >= 0)
-		return;
-
-	for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = next) {
-		IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
-		next = p->next;
-		if (sn == seg->sn) {
-			kcp->ackedlen += seg->len;
-			if (kcp->ccops && kcp->ccops->on_pkt_acked) {
-				pkt_rtt = -1;
-				if (_itimediff(kcp->current, seg->ts) >= 0) {
-					pkt_rtt = _itimediff(kcp->current, seg->ts);
-				}
-				kcp->ccops->on_pkt_acked(kcp, seg->sn, seg->ts,
-						seg->len, pkt_rtt, seg->xmit);
-			}
-			iqueue_del(p);
-			ikcp_segment_delete(kcp, seg);
-			kcp->nsnd_buf--;
-			break;
-		}
-		if (_itimediff(sn, seg->sn) < 0) {
-			break;
-		}
-	}
-}
-
-static void ikcp_parse_una(ikcpcb *kcp, IUINT32 una)
-{
-	struct IQUEUEHEAD *p, *next;
-	for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = next) {
-		IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
-		next = p->next;
-		if (_itimediff(una, seg->sn) > 0) {
-			kcp->ackedlen += seg->len;
-			if (kcp->ccops && kcp->ccops->on_pkt_acked) {
-				kcp->ccops->on_pkt_acked(kcp, seg->sn, seg->ts,
-						seg->len, -1, seg->xmit);
-			}
-			iqueue_del(p);
-			ikcp_segment_delete(kcp, seg);
-			kcp->nsnd_buf--;
-		}	else {
-			break;
-		}
-	}
-}
-
-static void ikcp_parse_fastack(ikcpcb *kcp, IUINT32 sn, IUINT32 ts)
-{
-	struct IQUEUEHEAD *p, *next;
-
-	if (_itimediff(sn, kcp->snd_una) < 0 || _itimediff(sn, kcp->snd_nxt) >= 0)
-		return;
-
-	for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = next) {
-		IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
-		next = p->next;
-		if (_itimediff(sn, seg->sn) < 0) {
-			break;
-		}
-		else if (sn != seg->sn) {
-		#ifndef IKCP_FASTACK_CONSERVE
-			seg->fastack++;
-		#else
-			if (_itimediff(ts, seg->ts) >= 0)
-				seg->fastack++;
-		#endif
-		}
-	}
-}
-
-
-//---------------------------------------------------------------------
-// ack append
-//---------------------------------------------------------------------
-static void ikcp_ack_push(ikcpcb *kcp, IUINT32 sn, IUINT32 ts)
-{
-	IUINT32 newsize = kcp->ackcount + 1;
-	IUINT32 *ptr;
-
-	if (newsize > kcp->ackblock) {
-		IUINT32 *acklist;
-		IUINT32 newblock;
-
-		for (newblock = 8; newblock < newsize; newblock <<= 1);
-		acklist = (IUINT32*)ikcp_malloc(newblock * sizeof(IUINT32) * 2);
-
-		if (acklist == NULL) {
-			assert(acklist != NULL);
-			abort();
-		}
-
-		if (kcp->acklist != NULL) {
-			IUINT32 x;
-			for (x = 0; x < kcp->ackcount; x++) {
-				acklist[x * 2 + 0] = kcp->acklist[x * 2 + 0];
-				acklist[x * 2 + 1] = kcp->acklist[x * 2 + 1];
-			}
-			ikcp_free(kcp->acklist);
-		}
-
-		kcp->acklist = acklist;
-		kcp->ackblock = newblock;
-	}
-
-	ptr = &kcp->acklist[kcp->ackcount * 2];
-	ptr[0] = sn;
-	ptr[1] = ts;
-	kcp->ackcount++;
-}
-
-static void ikcp_ack_get(const ikcpcb *kcp, int p, IUINT32 *sn, IUINT32 *ts)
-{
-	if (sn) sn[0] = kcp->acklist[p * 2 + 0];
-	if (ts) ts[0] = kcp->acklist[p * 2 + 1];
-}
-
-
-//---------------------------------------------------------------------
-// parse data
-//---------------------------------------------------------------------
-void ikcp_parse_data(ikcpcb *kcp, IKCPSEG *newseg)
-{
-	struct IQUEUEHEAD *p, *prev;
-	IUINT32 sn = newseg->sn;
-	int repeat = 0;
-	
-	if (_itimediff(sn, kcp->rcv_nxt + kcp->rcv_wnd) >= 0 ||
-		_itimediff(sn, kcp->rcv_nxt) < 0) {
-		ikcp_segment_delete(kcp, newseg);
-		return;
-	}
-
-	for (p = kcp->rcv_buf.prev; p != &kcp->rcv_buf; p = prev) {
-		IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
-		prev = p->prev;
-		if (seg->sn == sn) {
-			repeat = 1;
-			break;
-		}
-		if (_itimediff(sn, seg->sn) > 0) {
-			break;
-		}
-	}
-
-	if (repeat == 0) {
-		iqueue_init(&newseg->node);
-		iqueue_add(&newseg->node, p);
-		kcp->nrcv_buf++;
-	}	else {
-		ikcp_segment_delete(kcp, newseg);
-	}
-
-#if 0
-	ikcp_qprint("rcvbuf", &kcp->rcv_buf);
-	printf("rcv_nxt=%lu\n", kcp->rcv_nxt);
-#endif
-
-	// move available data from rcv_buf -> rcv_queue
-	while (! iqueue_is_empty(&kcp->rcv_buf)) {
-		IKCPSEG *seg = iqueue_entry(kcp->rcv_buf.next, IKCPSEG, node);
-		if (seg->sn == kcp->rcv_nxt && kcp->nrcv_que < kcp->rcv_wnd) {
-			iqueue_del(&seg->node);
-			kcp->nrcv_buf--;
-			iqueue_add_tail(&seg->node, &kcp->rcv_queue);
-			kcp->nrcv_que++;
-			kcp->rcv_nxt++;
-		}	else {
-			break;
-		}
-	}
-
-#if 0
-	ikcp_qprint("queue", &kcp->rcv_queue);
-	printf("rcv_nxt=%lu\n", kcp->rcv_nxt);
-#endif
-
-#if 1
-//	printf("snd(buf=%d, queue=%d)\n", kcp->nsnd_buf, kcp->nsnd_que);
-//	printf("rcv(buf=%d, queue=%d)\n", kcp->nrcv_buf, kcp->nrcv_que);
-#endif
-}
-
-
-//---------------------------------------------------------------------
-// input data
-//---------------------------------------------------------------------
-int ikcp_input(ikcpcb *kcp, const char *data, long size)
-{
-	IUINT32 prev_una = kcp->snd_una;
-	IUINT32 prev_nsnd_buf = kcp->nsnd_buf;
-	IUINT32 acked_segs, prior_in_flight;
-	IUINT32 maxack = 0, latest_ts = 0;
-	int flag = 0;
-
-	kcp->ackedlen = 0;
-
-	if (ikcp_canlog(kcp, IKCP_LOG_INPUT)) {
-		ikcp_log(kcp, IKCP_LOG_INPUT, "[RI] %d bytes", (int)size);
-	}
-
-	if (data == NULL || (int)size < (int)IKCP_OVERHEAD) return -1;
-
-	while (1) {
-		IUINT32 ts, sn, len, una, conv;
-		IUINT16 wnd;
-		IUINT8 cmd, frg;
-		IKCPSEG *seg;
-
-		if (size < (int)IKCP_OVERHEAD) break;
-
-		data = ikcp_decode32u(data, &conv);
-		if (conv != kcp->conv) return -1;
-
-		data = ikcp_decode8u(data, &cmd);
-		data = ikcp_decode8u(data, &frg);
-		data = ikcp_decode16u(data, &wnd);
-		data = ikcp_decode32u(data, &ts);
-		data = ikcp_decode32u(data, &sn);
-		data = ikcp_decode32u(data, &una);
-		data = ikcp_decode32u(data, &len);
-
-		size -= IKCP_OVERHEAD;
-
-		if ((long)size < (long)len || (int)len < 0) return -2;
-
-		if (cmd != IKCP_CMD_PUSH && cmd != IKCP_CMD_ACK &&
-			cmd != IKCP_CMD_WASK && cmd != IKCP_CMD_WINS) 
-			return -3;
-
-		kcp->rmt_wnd = wnd;
-		ikcp_parse_una(kcp, una);
-		ikcp_shrink_buf(kcp);
-
-		if (cmd == IKCP_CMD_ACK) {
-			if (_itimediff(kcp->current, ts) >= 0) {
-				ikcp_update_ack(kcp, _itimediff(kcp->current, ts));
-			}
-			ikcp_parse_ack(kcp, sn);
-			ikcp_shrink_buf(kcp);
-			if (flag == 0) {
-				flag = 1;
-				maxack = sn;
-				latest_ts = ts;
-			}	else {
-				if (_itimediff(sn, maxack) > 0) {
-				#ifndef IKCP_FASTACK_CONSERVE
-					maxack = sn;
-					latest_ts = ts;
-				#else
-					if (_itimediff(ts, latest_ts) > 0) {
-						maxack = sn;
-						latest_ts = ts;
-					}
-				#endif
-				}
-			}
-			if (ikcp_canlog(kcp, IKCP_LOG_IN_ACK)) {
-				ikcp_log(kcp, IKCP_LOG_IN_ACK, 
-					"input ack: sn=%lu rtt=%ld rto=%ld", (unsigned long)sn, 
-					(long)_itimediff(kcp->current, ts),
-					(long)kcp->rx_rto);
-			}
-		}
-		else if (cmd == IKCP_CMD_PUSH) {
-			if (ikcp_canlog(kcp, IKCP_LOG_IN_DATA)) {
-				ikcp_log(kcp, IKCP_LOG_IN_DATA, 
-					"input psh: sn=%lu ts=%lu", (unsigned long)sn, (unsigned long)ts);
-			}
-			if (_itimediff(sn, kcp->rcv_nxt + kcp->rcv_wnd) < 0) {
-				ikcp_ack_push(kcp, sn, ts);
-				if (_itimediff(sn, kcp->rcv_nxt) >= 0) {
-					seg = ikcp_segment_new(kcp, len);
-					seg->conv = conv;
-					seg->cmd = cmd;
-					seg->frg = frg;
-					seg->wnd = wnd;
-					seg->ts = ts;
-					seg->sn = sn;
-					seg->una = una;
-					seg->len = len;
-
-					if (len > 0) {
-						memcpy(seg->data, data, len);
-					}
-
-					ikcp_parse_data(kcp, seg);
-				}
-			}
-		}
-		else if (cmd == IKCP_CMD_WASK) {
-			// ready to send back IKCP_CMD_WINS in ikcp_flush
-			// tell remote my window size
-			kcp->probe |= IKCP_ASK_TELL;
-			if (ikcp_canlog(kcp, IKCP_LOG_IN_PROBE)) {
-				ikcp_log(kcp, IKCP_LOG_IN_PROBE, "input probe");
-			}
-		}
-		else if (cmd == IKCP_CMD_WINS) {
-			// do nothing
-			if (ikcp_canlog(kcp, IKCP_LOG_IN_WINS)) {
-				ikcp_log(kcp, IKCP_LOG_IN_WINS,
-					"input wins: %lu", (unsigned long)(wnd));
-			}
-		}
-		else {
-			return -3;
-		}
-
-		data += len;
-		size -= len;
-	}
-
-	if (flag != 0) {
-		ikcp_parse_fastack(kcp, maxack, latest_ts);
-	}
-
-	if (_itimediff(kcp->snd_una, prev_una) > 0) {
-		acked_segs = kcp->snd_una - prev_una;
-		prior_in_flight = prev_nsnd_buf;
-		if (kcp->ccops && kcp->ccops->on_ack) {
-			kcp->ccops->on_ack(kcp, acked_segs, kcp->ackedlen, 
-					prior_in_flight);
-		}
-		else {
-			if (kcp->cwnd < kcp->rmt_wnd) {
-				IUINT32 mss = kcp->mss;
-				if (kcp->cwnd < kcp->ssthresh) {
-					kcp->cwnd++;
-					kcp->incr += mss;
-				}	else {
-					if (kcp->incr < mss) kcp->incr = mss;
-					kcp->incr += (mss * mss) / kcp->incr + (mss / 16);
-					if ((kcp->cwnd + 1) * mss <= kcp->incr) {
-					#if 1
-						kcp->cwnd = (kcp->incr + mss - 1) / ((mss > 0)? mss : 1);
-					#else
-						kcp->cwnd++;
-					#endif
-					}
-				}
-				if (kcp->cwnd > kcp->rmt_wnd) {
-					kcp->cwnd = kcp->rmt_wnd;
-					kcp->incr = kcp->rmt_wnd * mss;
-				}
-			}
-		}
-	}
-
-	return 0;
-}
-
-
-//---------------------------------------------------------------------
-// ikcp_encode_seg
-//---------------------------------------------------------------------
-static char *ikcp_encode_seg(char *ptr, const IKCPSEG *seg)
-{
-	ptr = ikcp_encode32u(ptr, seg->conv);
-	ptr = ikcp_encode8u(ptr, (IUINT8)seg->cmd);
-	ptr = ikcp_encode8u(ptr, (IUINT8)seg->frg);
-	ptr = ikcp_encode16u(ptr, (IUINT16)seg->wnd);
-	ptr = ikcp_encode32u(ptr, seg->ts);
-	ptr = ikcp_encode32u(ptr, seg->sn);
-	ptr = ikcp_encode32u(ptr, seg->una);
-	ptr = ikcp_encode32u(ptr, seg->len);
-	return ptr;
-}
-
-static int ikcp_wnd_unused(const ikcpcb *kcp)
-{
-	if (kcp->nrcv_que < kcp->rcv_wnd) {
-		return kcp->rcv_wnd - kcp->nrcv_que;
-	}
-	return 0;
-}
-
-
-//---------------------------------------------------------------------
-// ikcp_flush
-//---------------------------------------------------------------------
-void ikcp_flush(ikcpcb *kcp)
-{
-	IUINT32 current = kcp->current;
-	char *buffer = kcp->buffer;
-	char *ptr = buffer;
-	int count, size, i;
-	IUINT32 resent, cwnd;
-	IUINT32 rtomin;
-	IUINT32 prior_cwnd;
-	IUINT32 eff_cwnd, cur_inflight;
-	IINT32 pacing_budget = -1;
-	struct IQUEUEHEAD *p;
-	int change = 0;
-	int lost = 0;
-	IKCPSEG seg;
-
-	// 'ikcp_update' hasn't been called yet. 
-	if (kcp->updated == 0) return;
-
-	if (kcp->ccops && kcp->ccops->on_tick) {
-		kcp->ccops->on_tick(kcp);
-	}
-
-	if (kcp->ccops && kcp->ccops->pacing_rate) {
-		pacing_budget = (IINT32)kcp->ccops->pacing_rate(kcp);
-	}
-
-	prior_cwnd = kcp->cwnd;
-
-	seg.conv = kcp->conv;
-	seg.cmd = IKCP_CMD_ACK;
-	seg.frg = 0;
-	seg.wnd = ikcp_wnd_unused(kcp);
-	seg.una = kcp->rcv_nxt;
-	seg.len = 0;
-	seg.sn = 0;
-	seg.ts = 0;
-
-	// flush acknowledges
-	count = kcp->ackcount;
-	for (i = 0; i < count; i++) {
-		size = (int)(ptr - buffer);
-		if (size + (int)IKCP_OVERHEAD > (int)kcp->mtu) {
-			ikcp_output(kcp, buffer, size);
-			ptr = buffer;
-		}
-		ikcp_ack_get(kcp, i, &seg.sn, &seg.ts);
-		ptr = ikcp_encode_seg(ptr, &seg);
-	}
-
-	kcp->ackcount = 0;
-
-	// probe window size (if remote window size equals zero)
-	if (kcp->rmt_wnd == 0) {
-		if (kcp->probe_wait == 0) {
-			kcp->probe_wait = IKCP_PROBE_INIT;
-			kcp->ts_probe = kcp->current + kcp->probe_wait;
-		}	
-		else {
-			if (_itimediff(kcp->current, kcp->ts_probe) >= 0) {
-				if (kcp->probe_wait < IKCP_PROBE_INIT) 
-					kcp->probe_wait = IKCP_PROBE_INIT;
-				kcp->probe_wait += kcp->probe_wait / 2;
-				if (kcp->probe_wait > IKCP_PROBE_LIMIT)
-					kcp->probe_wait = IKCP_PROBE_LIMIT;
-				kcp->ts_probe = kcp->current + kcp->probe_wait;
-				kcp->probe |= IKCP_ASK_SEND;
-			}
-		}
-	}	else {
-		kcp->ts_probe = 0;
-		kcp->probe_wait = 0;
-	}
-
-	// flush window probing commands
-	if (kcp->probe & IKCP_ASK_SEND) {
-		seg.cmd = IKCP_CMD_WASK;
-		size = (int)(ptr - buffer);
-		if (size + (int)IKCP_OVERHEAD > (int)kcp->mtu) {
-			ikcp_output(kcp, buffer, size);
-			ptr = buffer;
-		}
-		ptr = ikcp_encode_seg(ptr, &seg);
-	}
-
-	// flush window probing commands
-	if (kcp->probe & IKCP_ASK_TELL) {
-		seg.cmd = IKCP_CMD_WINS;
-		size = (int)(ptr - buffer);
-		if (size + (int)IKCP_OVERHEAD > (int)kcp->mtu) {
-			ikcp_output(kcp, buffer, size);
-			ptr = buffer;
-		}
-		ptr = ikcp_encode_seg(ptr, &seg);
-	}
-
-	kcp->probe = 0;
-
-	// calculate window size
-	cwnd = _imin_(kcp->snd_wnd, kcp->rmt_wnd);
-	if (kcp->ccops != NULL || kcp->nocwnd == 0) cwnd = _imin_(kcp->cwnd, cwnd);
-
-	// move data from snd_queue to snd_buf
-	while (_itimediff(kcp->snd_nxt, kcp->snd_una + cwnd) < 0) {
-		IKCPSEG *newseg;
-		if (iqueue_is_empty(&kcp->snd_queue)) break;
-
-		newseg = iqueue_entry(kcp->snd_queue.next, IKCPSEG, node);
-
-		iqueue_del(&newseg->node);
-		iqueue_add_tail(&newseg->node, &kcp->snd_buf);
-		kcp->nsnd_que--;
-		kcp->nsnd_buf++;
-
-		newseg->conv = kcp->conv;
-		newseg->cmd = IKCP_CMD_PUSH;
-		newseg->wnd = seg.wnd;
-		newseg->ts = current;
-		newseg->sn = kcp->snd_nxt++;
-		newseg->una = kcp->rcv_nxt;
-		newseg->resendts = current;
-		newseg->rto = kcp->rx_rto;
-		newseg->fastack = 0;
-		newseg->xmit = 0;
-	}
-
-	// check on_app_limited
-	if (kcp->ccops && kcp->ccops->on_app_limited) {
-		if (iqueue_is_empty(&kcp->snd_queue)) {
-			eff_cwnd = _imin_(kcp->snd_wnd, kcp->rmt_wnd);
-			eff_cwnd = _imin_(kcp->cwnd, eff_cwnd);
-			cur_inflight = kcp->nsnd_buf;
-			if (cur_inflight < eff_cwnd) {
-				kcp->ccops->on_app_limited(kcp, cur_inflight);
-			}
-		}
-	}
-
-	// calculate resent
-	resent = (kcp->fastresend > 0)? (IUINT32)kcp->fastresend : 0xffffffff;
-	rtomin = (kcp->nodelay == 0)? (kcp->rx_rto >> 3) : 0;
-
-	// flush data segments
-	for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = p->next) {
-		IKCPSEG *segment = iqueue_entry(p, IKCPSEG, node);
-		int needsend = 0;
-		if (segment->xmit == 0) {
-			needsend = 1;
-			segment->xmit++;
-			segment->rto = kcp->rx_rto;
-			segment->resendts = current + segment->rto + rtomin;
-		}
-		else if (_itimediff(current, segment->resendts) >= 0) {
-			needsend = 1;
-			segment->xmit++;
-			kcp->xmit++;
-			if (kcp->nodelay == 0) {
-				segment->rto += _imax_(segment->rto, (IUINT32)kcp->rx_rto);
-			}	else {
-				IINT32 step = (kcp->nodelay < 2)? 
-					((IINT32)(segment->rto)) : kcp->rx_rto;
-				segment->rto += step / 2;
-			}
-			segment->resendts = current + segment->rto;
-			lost = 1;
-		}
-		else if (segment->fastack >= resent) {
-			if ((int)segment->xmit <= kcp->fastlimit || 
-				kcp->fastlimit <= 0) {
-				needsend = 1;
-				segment->xmit++;
-				segment->fastack = 0;
-				segment->resendts = current + segment->rto;
-				change++;
-			}
-		}
-
-		if (needsend) {
-			int need;
-			segment->ts = current;
-			segment->wnd = seg.wnd;
-			segment->una = kcp->rcv_nxt;
-
-			if (pacing_budget >= 0 && pacing_budget < (IINT32)segment->len) {
-				break;
-			}
-
-			if (kcp->ccops && kcp->ccops->on_pkt_sent) {
-				kcp->ccops->on_pkt_sent(kcp, segment->sn, current,
-						segment->len, kcp->nsnd_buf, segment->xmit);
-			}
-
-			size = (int)(ptr - buffer);
-			need = IKCP_OVERHEAD + segment->len;
-
-			if (size + need > (int)kcp->mtu) {
-				ikcp_output(kcp, buffer, size);
-				ptr = buffer;
-			}
-
-			ptr = ikcp_encode_seg(ptr, segment);
-
-			if (segment->len > 0) {
-				memcpy(ptr, segment->data, segment->len);
-				ptr += segment->len;
-			}
-
-			if (pacing_budget >= 0) {
-				pacing_budget -= (IINT32)segment->len;
-			}
-
-			if (segment->xmit >= kcp->dead_link) {
-				kcp->state = (IUINT32)-1;
-			}
-		}
-	}
-
-	// flash remaining segments
-	size = (int)(ptr - buffer);
-	if (size > 0) {
-		ikcp_output(kcp, buffer, size);
-	}
-
-	// update ssthresh
-	if (change) {
-		if (kcp->ccops && kcp->ccops->on_fast_retransmit) {
-			kcp->ccops->on_fast_retransmit(kcp, (IUINT32)change, 
-					kcp->nsnd_buf, prior_cwnd);
-		}
-		else {
-			IUINT32 inflight = kcp->snd_nxt - kcp->snd_una;
-			kcp->ssthresh = inflight / 2;
-			if (kcp->ssthresh < IKCP_THRESH_MIN)
-				kcp->ssthresh = IKCP_THRESH_MIN;
-			kcp->cwnd = kcp->ssthresh + resent;
-			kcp->incr = kcp->cwnd * kcp->mss;
-		}
-	}
-
-	if (lost) {
-		if (kcp->ccops && kcp->ccops->on_timeout) {
-			kcp->ccops->on_timeout(kcp, prior_cwnd);
-		}
-		else {
-			kcp->ssthresh = prior_cwnd / 2;
-			if (kcp->ssthresh < IKCP_THRESH_MIN)
-				kcp->ssthresh = IKCP_THRESH_MIN;
-			kcp->cwnd = 1;
-			kcp->incr = kcp->mss;
-		}
-	}
-
-	if (kcp->cwnd < 1) {
-		kcp->cwnd = 1;
-		kcp->incr = kcp->mss;
-	}
-}
-
-
-//---------------------------------------------------------------------
-// update state (call it repeatedly, every 10ms-100ms), or you can ask
-// ikcp_check when to call it again (if no ikcp_input/_send calls occur).
-// 'current' - current timestamp in milliseconds.
-//---------------------------------------------------------------------
-void ikcp_update(ikcpcb *kcp, IUINT32 current)
-{
-	IINT32 slap;
-
-	kcp->current = current;
-
-	if (kcp->updated == 0) {
-		kcp->updated = 1;
-		kcp->ts_flush = kcp->current;
-	}
-
-	slap = _itimediff(kcp->current, kcp->ts_flush);
-
-	if (slap >= 10000 || slap < -10000) {
-		kcp->ts_flush = kcp->current;
-		slap = 0;
-	}
-
-	if (slap >= 0) {
-		kcp->ts_flush += kcp->interval;
-		if (_itimediff(kcp->current, kcp->ts_flush) >= 0) {
-			kcp->ts_flush = kcp->current + kcp->interval;
-		}
-		ikcp_flush(kcp);
-	}
-}
-
-
-//---------------------------------------------------------------------
-// Determines when you should invoke ikcp_update next:
-// returns the timestamp (in milliseconds) at which you should call
-// ikcp_update, assuming no ikcp_input/_send calls occur in between.
-// You can call ikcp_update at that time instead of calling it repeatedly.
-// Important for reducing unnecessary ikcp_update invocations. Use it to
-// schedule ikcp_update (e.g., implementing an epoll-like mechanism,
-// or optimizing ikcp_update when handling massive kcp connections).
-//---------------------------------------------------------------------
-IUINT32 ikcp_check(const ikcpcb *kcp, IUINT32 current)
-{
-	IUINT32 ts_flush = kcp->ts_flush;
-	IINT32 tm_flush = 0x7fffffff;
-	IINT32 tm_packet = 0x7fffffff;
-	IUINT32 minimal = 0;
-	struct IQUEUEHEAD *p;
-
-	if (kcp->updated == 0) {
-		return current;
-	}
-
-	if (_itimediff(current, ts_flush) >= 10000 ||
-		_itimediff(current, ts_flush) < -10000) {
-		ts_flush = current;
-	}
-
-	if (_itimediff(current, ts_flush) >= 0) {
-		return current;
-	}
-
-	tm_flush = _itimediff(ts_flush, current);
-
-	for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = p->next) {
-		const IKCPSEG *seg = iqueue_entry(p, const IKCPSEG, node);
-		IINT32 diff = _itimediff(seg->resendts, current);
-		if (diff <= 0) {
-			return current;
-		}
-		if (diff < tm_packet) tm_packet = diff;
-	}
-
-	minimal = (IUINT32)(tm_packet < tm_flush ? tm_packet : tm_flush);
-	if (minimal >= kcp->interval) minimal = kcp->interval;
-
-	return current + minimal;
-}
-
-
-
-int ikcp_setmtu(ikcpcb *kcp, int mtu)
-{
-	char *buffer;
-	if (mtu < 50 || mtu < (int)IKCP_OVERHEAD) 
-		return -1;
-	buffer = (char*)ikcp_malloc((mtu + IKCP_OVERHEAD) * 3);
-	if (buffer == NULL) 
-		return -2;
-	kcp->mtu = mtu;
-	kcp->mss = kcp->mtu - IKCP_OVERHEAD;
-	ikcp_free(kcp->buffer);
-	kcp->buffer = buffer;
-	return 0;
-}
-
-int ikcp_interval(ikcpcb *kcp, int interval)
-{
-	if (interval > 5000) interval = 5000;
-	else if (interval < 10) interval = 10;
-	kcp->interval = interval;
-	return 0;
-}
-
-int ikcp_nodelay(ikcpcb *kcp, int nodelay, int interval, int resend, int nc)
-{
-	if (nodelay >= 0) {
-		kcp->nodelay = nodelay;
-		if (nodelay) {
-			kcp->rx_minrto = IKCP_RTO_NDL;	
-		}	
-		else {
-			kcp->rx_minrto = IKCP_RTO_MIN;
-		}
-	}
-	if (interval >= 0) {
-		if (interval > 5000) interval = 5000;
-		else if (interval < 10) interval = 10;
-		kcp->interval = interval;
-	}
-	if (resend >= 0) {
-		kcp->fastresend = resend;
-	}
-	if (nc >= 0) {
-		kcp->nocwnd = nc;
-	}
-	return 0;
-}
-
-
-int ikcp_wndsize(ikcpcb *kcp, int sndwnd, int rcvwnd)
-{
-	if (kcp) {
-		if (sndwnd > 0) {
-			kcp->snd_wnd = sndwnd;
-		}
-		if (rcvwnd > 0) {   // must >= max fragment size
-			kcp->rcv_wnd = _imax_(rcvwnd, IKCP_WND_RCV);
-		}
-	}
-	return 0;
-}
-
-int ikcp_waitsnd(const ikcpcb *kcp)
-{
-	return kcp->nsnd_buf + kcp->nsnd_que;
-}
-
-
-// read conv
-IUINT32 ikcp_getconv(const void *ptr)
-{
-	IUINT32 conv;
-	ikcp_decode32u((const char*)ptr, &conv);
-	return conv;
-}
-
-
-//---------------------------------------------------------------------
-// install congestion control
-//---------------------------------------------------------------------
-int ikcp_setcc(ikcpcb *kcp, const struct IKCPOPS *ops)
-{
-	assert(kcp);
-	if (kcp->ccops && kcp->ccops->release) {
-		kcp->ccops->release(kcp);
-	}
-	kcp->congest = NULL;
-	kcp->ccops = ops;
-	if (ops) {
-		if (ops->init) {
-			if (ops->init(kcp) < 0) {
-				kcp->ccops = NULL;
-				kcp->congest = NULL;
-				if (kcp->cwnd < 1) kcp->cwnd = 1;
-				kcp->incr = kcp->cwnd * kcp->mss;
-				return -1;
-			}
-		}
-	}
-	else {
-		if (kcp->cwnd < 1) kcp->cwnd = 1;
-		kcp->incr = kcp->cwnd * kcp->mss;
-		if (kcp->incr < kcp->mss) kcp->incr = kcp->mss;
-	}
-	return 0;
-}
-
-
-
-
---- END OF FILE: src/rpc_client/ikcp.c ---
-
---- START FILE PATH: src/rpc_client/vfs_client.cpp ---
-#include "bridge/client_bridge.h"
-#include "rpc_client/vfs_client.h"
-#include "rpc_client/crypto_box.h"
-#include "rpc_client/vfs_packet.h"
-#include <iostream>
-#include <chrono>
-#include <iomanip>
-#include <sstream>
-#include <algorithm>
-#include <fstream>
-// #include <sys/sysinfo.h>
-
-using asio::ip::udp;
-
-static std::string getRealtimeLog() {
-    auto now = std::chrono::system_clock::now();
-    auto time_t_now = std::chrono::system_clock::to_time_t(now);
-    auto duration = now.time_since_epoch();
-    auto micros = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() % 1000000;
-    std::tm bt{}; localtime_r(&time_t_now, &bt);
-    std::ostringstream oss;
-    oss << std::put_time(&bt, "%Y-%m-%d %H:%M:%S") << "." << std::setfill('0') << std::setw(6) << micros;
-    return oss.str();
-}
-
-static size_t calculateAbsoluteMaxSocketBuffer() {
-    return 16777216; // Chơi khô máu, phang thẳng 16MB bộ đệm cho chắc cốp
-}
-
-VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
-                     int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd)
-    : socket_(io_context_, udp::endpoint(udp::v4(), 0)), is_running_(false), 
-      recv_buffer_(65536), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu),
-      nodelay_(nodelay), interval_(interval), resend_(resend), nc_(nc), snd_wnd_(snd_wnd), rcv_wnd_(rcv_wnd)
-{
-    asio::ip::udp::resolver resolver(io_context_);
-    server_endpoint_ = *resolver.resolve(udp::v4(), server_ip, std::to_string(port)).begin();
-    size_t auto_buf_sz = calculateAbsoluteMaxSocketBuffer();
-    try {
-        socket_.set_option(asio::socket_base::receive_buffer_size(auto_buf_sz));
-        socket_.set_option(asio::socket_base::send_buffer_size(auto_buf_sz));
-    } catch(...) {}
-}
-
-VfsClient::~VfsClient() { stop(); }
-
-bool VfsClient::start() {
-    if (is_running_) return true;
-    is_running_ = true;
-    kcp_cb_ = ikcp_create(0x11223344, this);
-    kcp_cb_->output = kcp_output_callback;
+--- END OF FILE: include/rpc_vfs/ikcp.h ---
+
+--- START FILE PATH: include/rpc_vfs/crypto_box.h ---
+#ifndef ZHIAUTH_CRYPTO_BOX_H
+#define ZHIAUTH_CRYPTO_BOX_H
+
+#include <vector>
+#include <string>
+#include <cstdint>
+
+class CryptoBox {
+public:
+    // Khởi động động cơ mã hóa (Phải gọi 1 lần khi hệ thống nổ máy)
+    static bool initialize();
     
-    // 🔥 ÉP THAM SỐ KCP TUNING ĐỘNG ĐƯỢC NHẬN TỪ SERVER HOẶC FALLBACK
-    ikcp_nodelay(kcp_cb_, nodelay_, interval_, resend_, nc_);
-    int safe_mtu = (mtu_ > 100) ? (mtu_ - 56) : 1350; 
-    ikcp_wndsize(kcp_cb_, snd_wnd_, rcv_wnd_); 
-    kcp_cb_->stream = 0; 
-    ikcp_setmtu(kcp_cb_, safe_mtu); 
-    kcp_cb_->rx_minrto = 10;
+    // Đóng gói: Mặc giáp ChaCha20-Poly1305 + Bơm Nonce chống Replay Attack
+    static bool encrypt_payload(const std::vector<uint8_t>& plaintext, const std::string& symmetric_key, std::vector<uint8_t>& ciphertext);
+    
+    // Gỡ gói: Rã giáp, kiểm tra tính toàn vẹn (MAC). Trả về false nếu gói tin bị can thiệp
+    static bool decrypt_payload(const std::vector<uint8_t>& ciphertext, const std::string& symmetric_key, std::vector<uint8_t>& plaintext);
+};
 
-    std::cout << "[" << getRealtimeLog() << "] [DYNAMIC_SPEED_CLIENT] KCP Engine Operational | Tuning Params -> NoDelay: " 
-              << nodelay_ << ", Interval: " << interval_ << "ms, Resend: " << resend_ << ", NC: " << nc_ 
-              << ", WND (SND/RCV): " << snd_wnd_ << "/" << rcv_wnd_ << " | Safe MTU: " << safe_mtu << std::endl;
+#endif // ZHIAUTH_CRYPTO_BOX_H
 
-    io_thread_ = std::thread(&VfsClient::receive_loop, this);
-    timer_thread_ = std::thread(&VfsClient::kcp_update_loop, this);
-    return true;
-}
+--- END OF FILE: include/rpc_vfs/crypto_box.h ---
 
-void VfsClient::stop() {
-    if (!is_running_) return;
-    is_running_ = false; socket_.close();
-    if (io_thread_.joinable()) io_thread_.join();
-    if (timer_thread_.joinable()) timer_thread_.join();
-    if (kcp_cb_) { ikcp_release(kcp_cb_); kcp_cb_ = nullptr; }
-}
-
-int VfsClient::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user) {
-    VfsClient* client = static_cast<VfsClient*>(user);
-    std::error_code ec;
-    client->socket_.send_to(asio::buffer(buf, len), client->server_endpoint_, 0, ec);
-    return 0;
-}
-
-// 🔥 VÒNG LẶP HÚT CẠN CỦA CLIENT
-void VfsClient::receive_loop() {
-    while (is_running_) {
-        std::error_code ec;
-        asio::ip::udp::endpoint sender;
-        size_t bytes_recvd = socket_.receive_from(asio::buffer(recv_buffer_), sender, 0, ec);
-        
-        if (ec || bytes_recvd == 0) {
-            if (ec == asio::error::would_block || ec == asio::error::try_again) continue;
-            break;
-        }
-
-        std::lock_guard<std::mutex> lock(kcp_mutex_);
-        ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
-        
-        int len;
-        while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
-            std::vector<uint8_t> encrypted_payload(len);
-            ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
-            std::vector<uint8_t> plaintext;
-            if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
-                if (plaintext.size() >= sizeof(VfsPacketHeader)) {
-                    VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
-                    uint32_t req_id = (uint32_t)(hdr->session_id & 0xFFFFFFFF);
-                    zhiauth_cgo_on_response(req_id, plaintext.data(), plaintext.size());
-                }
-            }
-        }
-    }
-}
-
-void VfsClient::kcp_update_loop() {
-    while (is_running_) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        uint32_t current_clock = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        std::lock_guard<std::mutex> lock(kcp_mutex_);
-        if (kcp_cb_) ikcp_update(kcp_cb_, current_clock);
-    }
-}
-
-void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
-    if (request_payload.size() < sizeof(VfsPacketHeader)) return;
-    std::vector<uint8_t> encrypted_payload;
-    if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) return;
-    {
-        std::lock_guard<std::mutex> lock(kcp_mutex_);
-        ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), encrypted_payload.size());
-        ikcp_flush(kcp_cb_);
-    }
-}
---- END OF FILE: src/rpc_client/vfs_client.cpp ---
-
---- START FILE PATH: src/rpc_client/vfs_client.h ---
-#ifndef ZHIAUTH_VFS_CLIENT_H
-#define ZHIAUTH_VFS_CLIENT_H
+--- START FILE PATH: include/rpc_vfs/vfs_server.h ---
+#ifndef ZHIAUTH_VFS_SERVER_H
+#define ZHIAUTH_VFS_SERVER_H
 #include <asio.hpp>
 #include <thread>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 #include <string>
-#include <condition_variable>
-#include <unordered_map>
 #include <memory>
-#include "rpc_client/ikcp.h"
+#include <atomic>
+#include "rpc_vfs/ikcp.h"
 
-struct RpcContext {
-    std::mutex mtx;
-    std::condition_variable cv;
-    std::vector<uint8_t> response;
-    bool done = false;
+class VfsServer;
+
+// Cấu trúc Context truyền trực tiếp vào KCP để bắn UDP không qua vòng lặp Duyệt Map
+struct KcpUserContext {
+    VfsServer* server;
+    asio::ip::udp::endpoint remote_endpoint;
 };
 
-class VfsClient {
+struct KcpSession {
+    ikcpcb* kcp_cb;
+    std::shared_ptr<KcpUserContext> user_ctx;
+    uint64_t last_active_time;
+    std::string uds_path;
+    
+    // 🔥 FIX NÚT THẮT 1 & 2: Cấp cho mỗi Session 1 cái Khóa và 1 Ống nước UDS dùng mãi mãi!
+    std::shared_ptr<std::mutex> kcp_mtx;
+    std::shared_ptr<int> uds_fd; 
+};
+
+class VfsServer {
 public:
-    VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
-              int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
-    ~VfsClient();
-    bool start();
+    VfsServer(uint16_t port, const std::string& master_sym_key, int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);    ~VfsServer();
+    void start();
     void stop();
-    void send_rpc_async(const std::vector<uint8_t>& request_payload);
     static int kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user);
+    uint64_t get_last_active_time(const std::string& ip);
+    
+    // 🔥 FIX TỬ HUYỆT: io_context BẮT BUỘC PHẢI KHAI BÁO TRƯỚC socket ĐỂ KHỞI TẠO ĐÚNG TRÌNH TỰ
+    asio::io_context io_context_;
+    asio::ip::udp::socket socket_;
+
 private:
     void receive_loop();
     void kcp_update_loop();
-    void kcp_adaptive_tuner_loop();
-    asio::io_context io_context_;
-    asio::ip::udp::socket socket_;
-    asio::ip::udp::endpoint server_endpoint_;
+    void process_kcp_payload(KcpSession session_copy, std::vector<uint8_t> encrypted_payload);
+    
+    int nodelay_, interval_, resend_, nc_, snd_wnd_, rcv_wnd_;
+    asio::ip::udp::endpoint sender_endpoint_;
     std::vector<uint8_t> recv_buffer_;
     std::thread io_thread_;
     std::thread timer_thread_;
-    std::thread tuner_thread_;
     std::atomic<bool> is_running_;
-    ikcpcb* kcp_cb_;
-    std::mutex kcp_mutex_;
-    std::string sym_key_;
-    int mtu_; 
-    int nodelay_, interval_, resend_, nc_, snd_wnd_, rcv_wnd_;
-
-    std::unordered_map<uint64_t, std::shared_ptr<RpcContext>> rpc_map_;
-    std::mutex rpc_map_mutex_;
+    std::unordered_map<std::string, KcpSession> sessions_;
+    std::mutex session_mutex_;
+    std::string master_sym_key_;
 };
 #endif
 
---- END OF FILE: src/rpc_client/vfs_client.h ---
+--- END OF FILE: include/rpc_vfs/vfs_server.h ---
 
---- START FILE PATH: src/bridge/client_bridge.cpp ---
-#include "bridge/client_bridge.h"
-#include "rpc_client/crypto_box.h"
-#include "rpc_client/vfs_client.h"
+--- START FILE PATH: include/rpc_vfs/vfs_io_worker.h ---
+#ifndef ZHIAUTH_VFS_IO_WORKER_H
+#define ZHIAUTH_VFS_IO_WORKER_H
+#include <string>
+#include <vector>
+#include <cstdint>
 
-static VfsClient* g_vfs_client = nullptr;
+class VfsIoWorker {
+public:
+    static bool read_block(const std::string& path, uint64_t offset, uint32_t length, std::vector<uint8_t>& out_buffer);
+    static bool write_block(const std::string& path, uint64_t offset, const std::vector<uint8_t>& data);
+    static bool stat_file(const std::string& path, uint64_t& out_size, bool& out_is_dir);
+    static bool list_directory(const std::string& path, std::string& out_list);
+    static void close_cached_fd(const std::string& path);
+};
+#endif
 
-extern "C" {
-int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, int mtu,
-                        int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
-    if (!CryptoBox::initialize()) return -1;
-    if (g_vfs_client != nullptr) delete g_vfs_client;
+--- END OF FILE: include/rpc_vfs/vfs_io_worker.h ---
+
+--- START FILE PATH: include/rpc_vfs/vfs_packet.h ---
+#ifndef ZHIAUTH_VFS_PACKET_H
+#define ZHIAUTH_VFS_PACKET_H
+
+#include <cstdint>
+
+#pragma pack(push, 1)
+
+enum class VfsOpcode : uint8_t {
+    OP_PING     = 0x00,
+    OP_STAT     = 0x01,
+    OP_LIST     = 0x02,
+    OP_READ     = 0x03,
+    OP_WRITE    = 0x04,
+    OP_MKDIR    = 0x05,
+    OP_DELETE   = 0x06,
+    OP_RENAME   = 0x07,
+    OP_TRUNCATE = 0x08, 
+    OP_ERROR    = 0xFF
+};
+
+// TRẢ LẠI NGUYÊN BẢN CHO V6.0
+struct VfsPacketHeader {
+    uint32_t magic;      // 0x5A484941 ("ZHIA")
+    VfsOpcode opcode;
+    uint64_t session_id; // Sẽ giấu cả client_id và req_id vào đây!
+    uint64_t offset;     
+    uint32_t data_len;
+    uint16_t path_len;
+};
+
+#pragma pack(pop)
+
+#endif // ZHIAUTH_VFS_PACKET_H
+--- END OF FILE: include/rpc_vfs/vfs_packet.h ---
+
+--- START FILE PATH: include/rpc_quic/msquic_server.h ---
+#ifndef ZHIAUTH_MSQUIC_SERVER_H
+#define ZHIAUTH_MSQUIC_SERVER_H
+#include <msquic.h>
+#include <string>
+#include <vector>
+#include <thread>
+
+class MsQuicServer {
+public:
+    static bool initialize(uint16_t auth_port, uint16_t data_port, const std::string& cert_path, const std::string& key_path);
+    static void shutdown();
+private:
+    static QUIC_STATUS QUIC_API AuthStreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVENT* Event);
+    static QUIC_STATUS QUIC_API AuthConnCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT* Event);
+    static QUIC_STATUS QUIC_API AuthListenerCallback(HQUIC Listener, void* Context, QUIC_LISTENER_EVENT* Event);
+
+    static QUIC_STATUS QUIC_API DataStreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVENT* Event);
+    static QUIC_STATUS QUIC_API DataConnCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT* Event);
+    static QUIC_STATUS QUIC_API DataListenerCallback(HQUIC Listener, void* Context, QUIC_LISTENER_EVENT* Event);
+
+    static void ProxyUdsTask(HQUIC Stream, std::string uds_path, std::vector<uint8_t> payload);
+};
+#endif
+
+--- END OF FILE: include/rpc_quic/msquic_server.h ---
+
+--- START FILE PATH: include/common/sqlite_handler.h ---
+#ifndef ZHIAUTH_SQLITE_HANDLER_H
+#define ZHIAUTH_SQLITE_HANDLER_H
+
+#include <string>
+#include <sqlite3.h>
+
+struct UserRecord {
+    int id;
+    std::string username;
+    std::string password_hash;
+    int system_uid;
+    std::string shared_path;
+    std::string permission;
+};
+
+class SQLiteHandler {
+public:
+    SQLiteHandler();
+    ~SQLiteHandler();
+
+    // Khởi tạo kết nối DB và ép cấu hình WAL
+    bool initialize_database(const std::string& db_path);
     
-    g_vfs_client = new VfsClient(server_ip, port, sym_key, mtu, nodelay, interval, resend, nc, snd_wnd, rcv_wnd);
-    g_vfs_client->start();
+    // Xác thực tài khoản bằng mật khẩu thô (sẽ tự động băm kèm muối bên trong)
+    bool authenticate_user(const std::string& username, const std::string& raw_password, UserRecord& out_user);
+    
+    // Nạp một Session hoạt động mới vào DB khi đăng nhập thành công
+    bool add_active_session(int user_id, const std::string& token_raw, const std::string& local_ip, const std::string& tailscale_ip, const std::string& hardware_hash);
+    
+    // Kiểm tra tính hợp lệ của Token và đối chiếu dấu vân tay phần cứng (Chống trộm Token)
+    bool verify_session_token(const std::string& token_raw, const std::string& hardware_hash, UserRecord& out_user);
+    
+    // Cập nhật động địa chỉ IP khi Client thực hiện Roaming (LAN <-> Tailscale)
+    bool update_session_roaming(const std::string& token_raw, const std::string& new_ip, bool is_local_ip);
+    
+    // Xóa session khỏi hệ thống khi người dùng Logout hoặc bị Timeout
+    bool terminate_session(const std::string& token_raw);
+
+private:
+    sqlite3* db;
+    std::string db_file_path;
+    
+    // Hàm băm nội bộ SHA-256 thuần C++ để xử lý Pass và Token
+    std::string calculate_sha256(const std::string& input);
+};
+
+#endif // ZHIAUTH_SQLITE_HANDLER_H
+
+--- END OF FILE: include/common/sqlite_handler.h ---
+
+--- START FILE PATH: include/common/logger.h ---
+#ifndef ZHIAUTH_LOGGER_H
+#define ZHIAUTH_LOGGER_H
+
+#include <string>
+#include <mutex>
+
+enum class LogLevel {
+    DEBUG,
+    INFO,
+    WARNING,
+    ERROR
+};
+
+class Logger {
+public:
+    // Hàm thực thi ghi log cốt lõi
+    static void log(LogLevel level, const std::string& file, int line, const std::string& func, const std::string& message);
+
+private:
+    static std::mutex log_mutex;
+    static std::string level_to_string(LogLevel level);
+    static std::string get_current_timestamp();
+};
+
+// HỆ THỐNG MACRO THÔNG MINH TỰ ĐỘNG BẮT ĐỊNH DANH LUỒNG CHẠY
+#define ZHI_LOG_DEBUG(msg) Logger::log(LogLevel::DEBUG, __FILE__, __LINE__, __FUNCTION__, msg)
+#define ZHI_LOG_INFO(msg)  Logger::log(LogLevel::INFO,  __FILE__, __LINE__, __FUNCTION__, msg)
+#define ZHI_LOG_WARN(msg)  Logger::log(LogLevel::WARNING, __FILE__, __LINE__, __FUNCTION__, msg)
+#define ZHI_LOG_ERR(msg)   Logger::log(LogLevel::ERROR, __FILE__, __LINE__, __FUNCTION__, msg)
+
+#endif // ZHIAUTH_LOGGER_H
+
+--- END OF FILE: include/common/logger.h ---
+
+--- START FILE PATH: include/system/sys_control.h ---
+#ifndef ZHIAUTH_SYS_CONTROL_H
+#define ZHIAUTH_SYS_CONTROL_H
+
+#include <string>
+#include <unistd.h>
+#include <sys/types.h>
+
+class SysControl {
+public:
+    SysControl() = default;
+    ~SysControl() = default;
+
+    // Kiểm tra xem thư mục đích gộp MergerFS (/mnt/HDD_merge) có đang hoạt động hay không
+    bool verify_system_storage_paths(const std::string& storage_path);
+
+    // Xử lý luồng hạ quyền lực từ admin tối cao về UID/GID của user thường để chạy tiến trình con an toàn
+    bool drop_process_privileges(uid_t target_uid, gid_t target_gid);
+
+    // Lấy thông tin UID hiện tại của tiến trình đang chạy
+    void log_current_execution_identity();
+};
+
+#endif // ZHIAUTH_SYS_CONTROL_H
+
+--- END OF FILE: include/system/sys_control.h ---
+
+--- START FILE PATH: include/system/ufw_manager.h ---
+#ifndef ZHIAUTH_UFW_MANAGER_H
+#define ZHIAUTH_UFW_MANAGER_H
+
+#include <string>
+#include <queue>
+#include <mutex>
+#include <thread>
+#include <condition_variable>
+#include <atomic>
+
+struct UFWTask {
+    std::string ip_address;
+    int port;
+    std::string protocol; // "udp" hoặc "tcp"
+    bool is_allow_action; // true = OPEN (allow), false = CLOSE (delete allow)
+};
+
+class UFWManager {
+public:
+    UFWManager();
+    ~UFWManager();
+
+    // Kích hoạt luồng công nhân chạy ngầm
+    void start_worker();
+    
+    // Dừng luồng an toàn khi tắt daemon
+    void stop_worker();
+    
+    // Đẩy một yêu cầu đóng/mở port vào hàng đợi tuyến tính
+    void push_task(const std::string& ip, int port, const std::string& proto, bool allow);
+
+private:
+    // Vòng lặp vô tận của Worker Thread gắp việc ra làm tuần tự
+    void worker_loop();
+    
+    // Hàm thực thi tương tác lệnh hệ thống thô qua ubuntu_admin
+    void execute_system_command(const UFWTask& task);
+
+    std::queue<UFWTask> task_queue;
+    std::mutex queue_mutex;
+    std::condition_variable cv;
+    std::thread worker_thread;
+    std::atomic<bool> is_running;
+};
+
+#endif // ZHIAUTH_UFW_MANAGER_H
+
+--- END OF FILE: include/system/ufw_manager.h ---
+
+--- START FILE PATH: config/config.json ---
+{
+  "network": {
+    "auth_port": 5555,
+    "quic_data_port": 4433,
+    "kcp_data_port": 6666,
+    "custom_mtu": 1350
+  },
+  "kcp_tuning": {
+    "nodelay": 1,
+    "interval": 1,
+    "resend": 2,
+    "nc": 1,
+    "snd_wnd": 4096,
+    "rcv_wnd": 4096
+  },
+  "paths": {
+    "safe_root": "/export/HDD_merge",
+    "log_path": "/tmp/zhiauth_gateway.log",
+    "tls_crt": "config/zhiserver.tailc979c1.ts.net.crt",
+    "tls_key": "config/zhiserver.tailc979c1.ts.net.key",
+    "database": "database/zhiauth.db"
+  },
+  "security": {
+    "master_sym_key": "ZhiAuth_Secret_KCP_Key_2026_1234",
+    "hash_salt": "ZhiAuth_Secret_Salt_2026_",
+    "system_admin_user": "huang",
+    "max_fail_attempts": 5,
+    "ban_duration_minutes": 15
+  }
+}
+
+--- END OF FILE: config/config.json ---
+
+--- START FILE PATH: src/server_main.cpp ---
+#include "common/logger.h"
+#include "bridge/auth_bridge.h"
+#include "system/ufw_manager.h"
+#include <nlohmann/json.hpp>
+#include <fstream>
+#include <iostream>
+#include <thread>
+#include <chrono>
+#include <vector>
+#include <mutex>
+#include <unordered_map>
+#include <sodium.h>
+#include <cstring>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <cstdlib>
+#include <algorithm>
+
+using json = nlohmann::json;
+
+struct UserContext {
+    std::string username;
+    std::string shared_path;
+    std::string lan_ip;
+    std::string ts_ip;
+    uint64_t last_active;
+};
+
+static std::unordered_map<std::string, std::shared_ptr<UserContext>> g_session_cache;
+static std::mutex g_session_mtx;
+static json g_config;
+static UFWManager ufw_manager;
+
+extern "C" const char* go_get_username_by_ip(const char* ip) {
+    std::lock_guard<std::mutex> lock(g_session_mtx);
+    auto it = g_session_cache.find(ip);
+    if (it != g_session_cache.end()) {
+        it->second->last_active = time(NULL);
+        return strdup(it->second->username.c_str());
+    }
+    return nullptr;
+}
+
+std::string hash_sha256(const std::string& input) {
+    unsigned char hash[crypto_hash_sha256_BYTES];
+    crypto_hash_sha256(hash, (const unsigned char*)input.c_str(), input.length());
+    char hex[crypto_hash_sha256_BYTES * 2 + 1];
+    for(int i=0; i<crypto_hash_sha256_BYTES; i++) snprintf(hex + i*2, sizeof(hex) - i*2, "%02x", hash[i]);
+    return std::string(hex);
+}
+
+std::string extract_field(const std::string& payload, const std::string& key) {
+    size_t pos = payload.find(key + ":");
+    if (pos == std::string::npos) return "";
+    pos += key.length() + 1;
+    size_t end = payload.find("|", pos);
+    if (end == std::string::npos) end = payload.length();
+    return payload.substr(pos, end - pos);
+}
+
+extern "C" const char* go_on_msquic_auth(const char* payload, const char* remote_ip) {
+    std::string p(payload);
+    if (p == "AUTH_REQ|PING") {
+        std::lock_guard<std::mutex> lock(g_session_mtx);
+        auto it = g_session_cache.find(remote_ip);
+        // 🔥 VÁ TỬ HUYỆT: Chỉ trả lời PONG nếu Session còn sống. Nếu chết phải đuổi cổ!
+        if (it != g_session_cache.end()) {
+            it->second->last_active = time(NULL);
+            return strdup("PONG");
+        } else {
+            return strdup("AUTH_FAILED");
+        }
+    }
+
+    if (p.find("AUTH_REQ|") == 0) {
+        std::string user = extract_field(p, "USER");
+        std::string pass = extract_field(p, "PASS");
+        std::string lan = extract_field(p, "LAN");
+        std::string ts = extract_field(p, "TS");
+        std::string hwid = extract_field(p, "HWID");
+
+        std::string salt = g_config["security"]["hash_salt"].get<std::string>();
+        std::string hashed_pass = hash_sha256(pass + salt);
+
+        const char* res = zhiauth_authenticate_and_trigger(user.c_str(), hashed_pass.c_str(), lan.c_str(), ts.c_str(), hwid.c_str());
+        std::string res_str = res;
+
+        if (res_str.find("1|") == 0) {
+            size_t first = res_str.find('|');
+            size_t second = res_str.find('|', first + 1);
+            std::string dbUser = res_str.substr(first + 1, second - first - 1);
+            std::string dbPath = res_str.substr(second + 1);
+
+            std::string uds_path = "/tmp/zhiauth_kcp_" + dbUser + ".sock";
+            int test_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+            struct sockaddr_un addr; memset(&addr, 0, sizeof(addr));
+            addr.sun_family = AF_UNIX; strncpy(addr.sun_path, uds_path.c_str(), sizeof(addr.sun_path) - 1);
+            bool is_alive = (connect(test_sock, (struct sockaddr*)&addr, sizeof(addr)) == 0);
+            close(test_sock);
+
+            if (!is_alive) {
+                remove(uds_path.c_str());
+                std::string cmd = "sudo -n -u " + dbUser + " /usr/local/bin/zhiauth_kcp_worker " + uds_path + " > /tmp/zhiauth_worker_" + dbUser + ".log 2>&1 &";
+                system(cmd.c_str());
+                ZHI_LOG_INFO("[MULTI-CLIENT] Đã spawn KCP Worker cho user: " + dbUser);
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(g_session_mtx);
+                auto ctx = std::make_shared<UserContext>(UserContext{dbUser, dbPath, lan, ts, (uint64_t)time(NULL)});
+                if (!lan.empty() && lan != "NONE") g_session_cache[lan] = ctx;
+                if (!ts.empty() && ts != "NONE") g_session_cache[ts] = ctx;
+                g_session_cache[remote_ip] = ctx;
+            }
+
+            int quic_port = g_config["network"]["quic_data_port"].get<int>();
+            int kcp_port = g_config["network"]["kcp_data_port"].get<int>();
+            if (!lan.empty() && lan != "NONE") { ufw_manager.push_task(lan, quic_port, "udp", true); ufw_manager.push_task(lan, kcp_port, "udp", true); }
+            if (!ts.empty() && ts != "NONE") { ufw_manager.push_task(ts, quic_port, "udp", true); ufw_manager.push_task(ts, kcp_port, "udp", true); }
+
+            char resp[512];
+            snprintf(resp, sizeof(resp), "AUTH_SUCCESS|%s|%d|%d|%d|%d|%d|%d|%d|%d",
+                dbPath.c_str(), quic_port, kcp_port,
+                g_config["kcp_tuning"]["nodelay"].get<int>(), g_config["kcp_tuning"]["interval"].get<int>(),
+                g_config["kcp_tuning"]["resend"].get<int>(), g_config["kcp_tuning"]["nc"].get<int>(),
+                g_config["kcp_tuning"]["snd_wnd"].get<int>(), g_config["kcp_tuning"]["rcv_wnd"].get<int>()
+            );
+            return strdup(resp);
+        }
+    }
+    return strdup("AUTH_FAILED");
+}
+
+void watchdog_loop() {
+    ZHI_LOG_INFO("[WATCHDOG] Chó canh gác C++ đã thức giấc (Tuần tra mỗi 30s)");
+    while(true) {
+        std::this_thread::sleep_for(std::chrono::seconds(30));
+        uint64_t now = time(NULL);
+        std::unordered_map<std::string, std::string> to_kill;
+        {
+            std::lock_guard<std::mutex> lock(g_session_mtx);
+            for (auto it = g_session_cache.begin(); it != g_session_cache.end(); ++it) {
+                uint64_t kcp_lan = zhiauth_check_kcp_active(it->second->lan_ip.c_str());
+                uint64_t kcp_ts = zhiauth_check_kcp_active(it->second->ts_ip.c_str());
+                uint64_t last_act = it->second->last_active;
+                if (kcp_lan > last_act) last_act = kcp_lan;
+                if (kcp_ts > last_act) last_act = kcp_ts;
+                if (now - last_act > 120) to_kill[it->second->username] = it->second->shared_path;
+            }
+        }
+        int quic_port = g_config["network"]["quic_data_port"].get<int>();
+        int kcp_port = g_config["network"]["kcp_data_port"].get<int>();
+        for (const auto& kv : to_kill) {
+            ZHI_LOG_WARN("[WATCHDOG-ALERT] Mất tín hiệu user '" + kv.first + "'. Tiến hành càn quét!");
+            std::string cmd = "sudo pkill -9 -u " + kv.first + " -f zhiauth_kcp_worker";
+            system(cmd.c_str());
+            remove(("/tmp/zhiauth_kcp_" + kv.first + ".sock").c_str());
+            std::lock_guard<std::mutex> lock(g_session_mtx);
+            for (auto it = g_session_cache.begin(); it != g_session_cache.end(); ) {
+                if (it->second->username == kv.first) {
+                    ufw_manager.push_task(it->second->lan_ip, quic_port, "udp", false); ufw_manager.push_task(it->second->lan_ip, kcp_port, "udp", false);
+                    ufw_manager.push_task(it->second->ts_ip, quic_port, "udp", false); ufw_manager.push_task(it->second->ts_ip, kcp_port, "udp", false);
+                    it = g_session_cache.erase(it);
+                } else { ++it; }
+            }
+        }
+    }
+}
+
+int main() {
+    std::ifstream f("/home/huang/zhiauth/config/config.json");
+    if (!f.is_open()) return 1;
+    g_config = json::parse(f);
+    ZHI_LOG_INFO("🚀 ZHIAUTH PURE C++ DAEMON v6.0 - TỐI ĐA HÓA SỨC MẠNH VẬT LÝ");
+    std::string db_path = "/home/huang/zhiauth/" + g_config["paths"]["database"].get<std::string>();
+    std::string master_key = g_config["security"]["master_sym_key"].get<std::string>();
+    std::string crt_path = "/home/huang/zhiauth/config/zhiserver.tailc979c1.ts.net.crt";
+    std::string key_path = "/home/huang/zhiauth/config/zhiserver.tailc979c1.ts.net.key";
+    
+    ufw_manager.start_worker();
+    zhiauth_core_init(db_path.c_str(), master_key.c_str(), g_config["network"]["auth_port"].get<int>(), g_config["network"]["kcp_data_port"].get<int>(), g_config["network"]["quic_data_port"].get<int>(), crt_path.c_str(), key_path.c_str(), g_config["kcp_tuning"]["nodelay"].get<int>(), g_config["kcp_tuning"]["interval"].get<int>(), g_config["kcp_tuning"]["resend"].get<int>(), g_config["kcp_tuning"]["nc"].get<int>(), g_config["kcp_tuning"]["snd_wnd"].get<int>(), g_config["kcp_tuning"]["rcv_wnd"].get<int>());
+
+    std::thread watchdog(watchdog_loop);
+    watchdog.join(); 
     return 0;
 }
 
-void zhiauth_send_vfs_command_async(const uint8_t* payload, size_t payload_len) {
-    if (g_vfs_client) {
-        std::vector<uint8_t> req(payload, payload + payload_len);
-        g_vfs_client->send_rpc_async(req); // Đổi thành Async!
-    }
-}
+--- END OF FILE: src/server_main.cpp ---
 
-void zhiauth_client_shutdown() {
-    if (g_vfs_client) { g_vfs_client->stop(); delete g_vfs_client; g_vfs_client = nullptr; }
-}
-}
+--- START FILE PATH: src/bridge/auth_bridge.cpp ---
+#include "bridge/auth_bridge.h"
+#include "common/sqlite_handler.h"
+#include "system/ufw_manager.h"
+#include "rpc_vfs/crypto_box.h"
+#include "rpc_vfs/vfs_server.h"
+#include "rpc_quic/msquic_server.h"
+#include "common/logger.h"
+#include <string>
 
---- END OF FILE: src/bridge/client_bridge.cpp ---
+static SQLiteHandler db_handler;
+static UFWManager ufw_manager;
+static VfsServer* kcp_server = nullptr;
+static int g_kcp_port = 0;
+static int g_quic_port = 0;
+static int g_nodelay = 1, g_interval = 10, g_resend = 2, g_nc = 0, g_snd_wnd = 512, g_rcv_wnd = 512;
 
---- START FILE PATH: src/bridge/client_bridge.h ---
-#ifndef CLIENT_BRIDGE_H
-#define CLIENT_BRIDGE_H
-#include <stdint.h>
-#include <stddef.h>
-#ifdef __cplusplus
+void vfs_register_ip_uds(const std::string& ip, const std::string& uds_path);
+
 extern "C" {
-#endif
-int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, int mtu,
-                        int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
-// Gọi cái này là trả lời qua hàm callback, siêu mượt!
-void zhiauth_send_vfs_command_async(const uint8_t* payload, size_t payload_len);
-void zhiauth_client_shutdown();
 
-// Khai báo hàm Go để gọi ngược lên
-extern void zhiauth_cgo_on_response(uint64_t reqId, uint8_t* data, size_t length);
-#ifdef __cplusplus
-}
-#endif
-#endif
+int zhiauth_core_init(const char* db_path, const char* master_key, int auth_port, int kcp_port, int quic_port, const char* cert_path, const char* key_path, int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
+    g_kcp_port = kcp_port; 
+    g_quic_port = quic_port;
+    g_nodelay = nodelay; 
+    g_interval = interval; 
+    g_resend = resend; 
+    g_nc = nc;
+    g_snd_wnd = snd_wnd; 
+    g_rcv_wnd = rcv_wnd;
 
---- END OF FILE: src/bridge/client_bridge.h ---
-
---- START FILE PATH: ZhiAuth/ZhiLogger.swift ---
-import Foundation
-
-enum LogLevel: String {
-    case DEBUG = "DEBUG"
-    case INFO = "INFO"
-    case WARNING = "WARNING"
-    case ERROR = "ERROR"
-}
-
-class ZhiLogger {
-    private static let lock = NSLock()
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        return formatter
-    }()
+    if (!db_handler.initialize_database(db_path ? db_path : "")) return -1;
+    ufw_manager.start_worker();
+    if (!CryptoBox::initialize()) return -1;
     
-    static func log(level: LogLevel, file: String = #file, line: Int = #line, function: String = #function, message: String) {
-        lock.lock()
-        defer { lock.unlock() }
+    kcp_server = new VfsServer(g_kcp_port, master_key ? master_key : "", g_nodelay, g_interval, g_resend, g_nc, g_snd_wnd, g_rcv_wnd);
+    kcp_server->start();
+    
+    std::string str_cert = cert_path ? cert_path : "cert.pem";
+    std::string str_key = key_path ? key_path : "key.pem";
+    MsQuicServer::initialize(auth_port, quic_port, str_cert, str_key);
+    
+    return 0;
+}
+
+const char* zhiauth_authenticate_and_trigger(const char* username, const char* password, const char* client_lan, const char* client_ts, const char* client_hwid) {
+    static std::string result_cache;
+    std::string user = username ? username : ""; std::string pass = password ? password : ""; 
+    std::string lan = client_lan ? client_lan : ""; std::string ts_ip = client_ts ? client_ts : "";
+    
+    UserRecord user_rec;
+    if (!db_handler.authenticate_user(user, pass, user_rec)) return "0|AUTH_FAIL";
+
+    std::string uds_path = "/tmp/zhiauth_kcp_" + user_rec.username + ".sock";
+
+    if (!lan.empty() && lan != "NONE") {
+        vfs_register_ip_uds(lan, uds_path);
+        ufw_manager.push_task(lan, g_quic_port, "udp", true); 
+        ufw_manager.push_task(lan, g_kcp_port, "udp", true); 
+        ufw_manager.push_task(lan, 0, "icmp", true);
+    }
+    if (!ts_ip.empty() && ts_ip != "NONE") {
+        vfs_register_ip_uds(ts_ip, uds_path);
+        ufw_manager.push_task(ts_ip, g_quic_port, "udp", true); 
+        ufw_manager.push_task(ts_ip, g_kcp_port, "udp", true); 
+        ufw_manager.push_task(ts_ip, 0, "icmp", true);
+    }
+    result_cache = "1|" + user_rec.username + "|" + user_rec.shared_path;
+    return result_cache.c_str();
+}
+
+void zhiauth_revoke_access(const char* client_ip, const char* shared_path) {
+    std::string ip = client_ip ? client_ip : "";
+    if (!ip.empty()) {
+        ufw_manager.push_task(ip, g_quic_port, "udp", false); 
+        ufw_manager.push_task(ip, g_kcp_port, "udp", false); 
+        ufw_manager.push_task(ip, 0, "icmp", false);
+    }
+}
+
+uint64_t zhiauth_check_kcp_active(const char* client_ip) {
+    if (!kcp_server || !client_ip) return 0;
+    return kcp_server->get_last_active_time(client_ip);
+}
+
+void zhiauth_core_shutdown() { 
+    MsQuicServer::shutdown();
+    if (kcp_server) { kcp_server->stop(); delete kcp_server; } 
+    ufw_manager.stop_worker(); 
+}
+
+} // extern "C"
+
+--- END OF FILE: src/bridge/auth_bridge.cpp ---
+
+--- START FILE PATH: src/rpc_vfs/vfs_server.cpp ---
+#include "rpc_vfs/vfs_server.h"
+#include "rpc_vfs/vfs_packet.h"
+#include "rpc_vfs/crypto_box.h"
+#include "common/logger.h"
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <time.h>
+#include <chrono>
+#include <algorithm>
+#include <fstream>
+#include <sys/sysinfo.h>
+#include <queue>
+#include <functional>
+#include <vector>
+#include <cerrno>
+
+using asio::ip::udp;
+
+static std::unordered_map<std::string, std::string> g_kcp_ip_uds_map;
+static std::mutex g_kcp_ip_uds_mutex;
+static std::queue<std::function<void()>> g_task_queue;
+static std::mutex g_task_mutex;
+static std::condition_variable g_task_cv;
+static bool g_task_running = false;
+static std::vector<std::thread> g_worker_pool;
+
+static bool send_all(int fd, const void* buf, size_t len) {
+    const char* p = (const char*)buf;
+    while (len > 0) { ssize_t n = send(fd, p, len, MSG_NOSIGNAL); if (n <= 0) return false; p += n; len -= n; }
+    return true;
+}
+static bool recv_all(int fd, void* buf, size_t len) {
+    char* p = (char*)buf;
+    while (len > 0) { ssize_t n = recv(fd, p, len, MSG_WAITALL); if (n <= 0) return false; p += n; len -= n; }
+    return true;
+}
+
+void vfs_register_ip_uds(const std::string& ip, const std::string& uds_path) {
+    std::lock_guard<std::mutex> lock(g_kcp_ip_uds_mutex); g_kcp_ip_uds_map[ip] = uds_path;
+}
+std::string vfs_get_uds_by_ip(const std::string& ip) {
+    std::lock_guard<std::mutex> lock(g_kcp_ip_uds_mutex); return g_kcp_ip_uds_map.count(ip) ? g_kcp_ip_uds_map[ip] : "";
+}
+
+VfsServer::VfsServer(uint16_t port, const std::string& master_sym_key, int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) 
+    : socket_(io_context_, udp::endpoint(udp::v4(), port)), is_running_(false), recv_buffer_(65536),
+      master_sym_key_(master_sym_key), nodelay_(nodelay), interval_(interval), resend_(resend), nc_(nc), snd_wnd_(snd_wnd), rcv_wnd_(rcv_wnd) {
+    try { socket_.set_option(asio::socket_base::receive_buffer_size(16777216)); socket_.set_option(asio::socket_base::send_buffer_size(16777216)); } catch (...) {}
+}
+VfsServer::~VfsServer() { stop(); }
+
+uint64_t VfsServer::get_last_active_time(const std::string& ip) {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    uint64_t max_time = 0;
+    for (const auto& pair : sessions_) {
+        if (pair.first.rfind(ip + ":", 0) == 0) { 
+            if (pair.second.last_active_time > max_time) max_time = pair.second.last_active_time;
+        }
+    }
+    return max_time;
+}
+
+static void start_task_worker() {
+    if (g_task_running) return; g_task_running = true; size_t num_threads = 8;
+    for (size_t i = 0; i < num_threads; ++i) {
+        g_worker_pool.emplace_back([]() {
+            while (g_task_running) {
+                std::function<void()> task;
+                {
+                    std::unique_lock<std::mutex> lock(g_task_mutex);
+                    g_task_cv.wait(lock, []{ return !g_task_queue.empty() || !g_task_running; });
+                    if (!g_task_running && g_task_queue.empty()) break;
+                    task = std::move(g_task_queue.front()); g_task_queue.pop();
+                }
+                if (task) task();
+            }
+        });
+    }
+}
+static void stop_task_worker() {
+    g_task_running = false; g_task_cv.notify_all();
+    for (auto& th : g_worker_pool) { if (th.joinable()) th.join(); }
+    g_worker_pool.clear();
+}
+
+void VfsServer::start() {
+    if (is_running_) return; is_running_ = true; sessions_.reserve(100); start_task_worker();
+    ZHI_LOG_INFO("Kích nổ Gateway UDP Proxy (Blocking I/O Mode) - HYPER KCP Engine Operational");
+    io_thread_ = std::thread(&VfsServer::receive_loop, this);
+    timer_thread_ = std::thread(&VfsServer::kcp_update_loop, this);
+}
+void VfsServer::stop() {
+    is_running_ = false; socket_.close();
+    if (io_thread_.joinable()) io_thread_.join();
+    if (timer_thread_.joinable()) timer_thread_.join(); stop_task_worker();
+}
+
+int VfsServer::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user) {
+    auto* ctx = static_cast<KcpUserContext*>(user);
+    if (ctx && ctx->server) { std::error_code ec; ctx->server->socket_.send_to(asio::buffer(buf, len), ctx->remote_endpoint, 0, ec); }
+    return 0;
+}
+
+void VfsServer::receive_loop() {
+    while (is_running_) {
+        std::error_code ec;
+        size_t bytes_recvd = socket_.receive_from(asio::buffer(recv_buffer_), sender_endpoint_, 0, ec);
         
-        let timestamp = dateFormatter.string(from: Date())
-        let fileName = (file as NSString).lastPathComponent
-        NSLog("%@", "[\(timestamp)] [\(level.rawValue)] [\(fileName):\(line)::\(function)] -> \(message)")
-    }
-    
-    static func debug(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
-        log(level: .DEBUG, file: file, line: line, function: function, message: message)
-    }
-    
-    static func info(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
-        log(level: .INFO, file: file, line: line, function: function, message: message)
-    }
-    
-    static func warning(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
-        log(level: .WARNING, file: file, line: line, function: function, message: message)
-    }
-    
-    static func error(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
-        log(level: .ERROR, file: file, line: line, function: function, message: message)
-    }
-}
---- END OF FILE: ZhiAuth/ZhiLogger.swift ---
+        if (ec || bytes_recvd == 0) {
+            if (ec == asio::error::would_block || ec == asio::error::try_again) continue;
+            break; 
+        }
 
---- START FILE PATH: ZhiAuth/Info.plist ---
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundlePackageType</key>
-	<string>XPC!</string>
-	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>NSExtension</key>
-	<dict>
-		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.fileprovider-nonui</string>
-		<key>NSExtensionPrincipalClass</key>
-		<string>$(PRODUCT_MODULE_NAME).ZhiFileProviderExtension</string>
-
-                <key>NSExtensionFileProviderDocumentGroup</key>
-                <string>group.com.ruanhuang.ZhiAuth</string>
-	</dict>
-</dict>
-</plist>
---- END OF FILE: ZhiAuth/Info.plist ---
-
---- START FILE PATH: ZhiAuth/ZhiFileProviderExtension.swift ---
-import FileProvider
-import Foundation
-import UniformTypeIdentifiers
-import UIKit
-
-class ZhiFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
-    var quicTunnel: ZhiQuicTunnel?
-    var serverIP = "192.168.1.83"
-    
-    required init(domain: NSFileProviderDomain) {
-        super.init()
-        ZhiLogger.info("ZhiAuth FileProvider Extension initialized for domain: \(domain.identifier.rawValue)")
+        std::string ip = sender_endpoint_.address().to_string(); if(ip.find("::ffff:")==0) ip = ip.substr(7); std::string client_key = ip + ":" + std::to_string(sender_endpoint_.port());
         
-        Task { [self] in
-            do {
-                // Bọc MainActor.run để lấy HWID an toàn từ UIKit
-                let hwid = await MainActor.run {
-                    UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS"
-                }
-                
-                let authCmd = "AUTH_REQ|USER:huang|PASS:123456|LAN:\(self.serverIP)|TS:NONE|HWID:\(hwid)"
-                
-                let auth = try await ZhiNetworkAuth.executePortKnockingAuth(ip: self.serverIP, authPort: 5555, authCmd: authCmd)
-                
-                if auth.isSuccess {
-                    _ = ZhiKcpEngine.initCore(ip: self.serverIP, port: Int32(auth.kcpPort), symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1350, tuning: auth.tuning)
-                    
-                    self.quicTunnel = ZhiQuicTunnel(ip: self.serverIP, port: auth.quicPort)
-                    self.quicTunnel?.connect()
-                    
-                    ZhiLogger.info("Dual-Tunnel (KCP + QUIC) is fully operational!")
-                }
-            } catch {
-                ZhiLogger.error("Authentication/Tunnel ignition failed: \(error.localizedDescription)")
-            }
-        }
-    }
-    
-    func invalidate() {
-        ZhiLogger.warning("ZhiAuth FileProvider Extension invalidated.")
-        ZhiKcpEngine.shutdownCore()
-    }
-    
-    // 1. LẤY THÔNG TIN FILE (OP_STAT)
-    func item(for identifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest, completionHandler: @escaping (NSFileProviderItem?, Error?) -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 1)
-        Task {
-            do {
-                let path = identifier.rawValue == NSFileProviderItemIdentifier.rootContainer.rawValue ? "/" : identifier.rawValue
-                let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: path, offset: 0, reqLen: 0, payloadData: nil)
-                
-                if statData.count >= 37 {
-                    let size = statData.subdata(in: 0..<8).withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
-                    let isDir = statData[8] == 1
-                    let item = ZhiFileItem(identifier: identifier, filename: (path as NSString).lastPathComponent, isDirectory: isDir, size: Int64(size))
-                    completionHandler(item, nil)
-                } else {
-                    completionHandler(nil, NSFileProviderError(.noSuchItem))
-                }
-            } catch {
-                ZhiLogger.error("Failed to stat item at path: \(identifier.rawValue) - Error: \(error.localizedDescription)")
-                completionHandler(nil, error)
-            }
-        }
-        return progress
-    }
-    
-    // 2. TẢI NỘI DUNG FILE (OP_READ)
-    func fetchContents(for itemIdentifier: NSFileProviderItemIdentifier, version requestedVersion: NSFileProviderItemVersion?, request: NSFileProviderRequest, completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 100)
-        Task {
-            do {
-                let path = itemIdentifier.rawValue
-                ZhiLogger.info("Fetching contents via KCP for file: \(path)")
-                let statData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: path, offset: 0, reqLen: 0, payloadData: nil)
-                var size: UInt64 = 0
-                if statData.count >= 37 {
-                    size = statData.subdata(in: 0..<8).withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
-                }
-                
-                let fileData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_READ, path: path, offset: 0, reqLen: UInt32(size), payloadData: nil)
-                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-                try fileData.write(to: tempURL)
-                
-                let item = ZhiFileItem(identifier: itemIdentifier, filename: (path as NSString).lastPathComponent, isDirectory: false, size: Int64(fileData.count))
-                completionHandler(tempURL, item, nil)
-            } catch {
-                ZhiLogger.error("Fetch contents failed for \(itemIdentifier.rawValue) - Error: \(error.localizedDescription)")
-                completionHandler(nil, nil, error)
-            }
-        }
-        return progress
-    }
+        std::unique_lock<std::mutex> lock(session_mutex_);
+        auto it = sessions_.find(client_key);
+        if (it == sessions_.end()) {
+            KcpSession new_session;
+            new_session.user_ctx = std::make_shared<KcpUserContext>(KcpUserContext{this, sender_endpoint_});
+            new_session.kcp_cb = ikcp_create(0x11223344, new_session.user_ctx.get());
+            new_session.kcp_cb->output = kcp_output_callback;
+            
+            ikcp_nodelay(new_session.kcp_cb, nodelay_, interval_, resend_, nc_); 
+            ikcp_wndsize(new_session.kcp_cb, snd_wnd_, rcv_wnd_);
+            ikcp_setmtu(new_session.kcp_cb, 1350); 
+            new_session.kcp_cb->rx_minrto = 10; 
+            new_session.kcp_cb->dead_link = 200;
+            new_session.uds_path = vfs_get_uds_by_ip(ip); if(new_session.uds_path.empty()) ZHI_LOG_WARN("[KCP-ENGINE] IP chưa Knocking: " + ip);
+            
+            new_session.kcp_mtx = std::make_shared<std::mutex>();
+            new_session.uds_fd = std::make_shared<int>(-1);
 
-    // 3. TẠO FILE/THƯ MỤC MỚI (OP_MKDIR / OP_WRITE)
-    func createItem(basedOn itemTemplate: NSFileProviderItem, fields: NSFileProviderItemFields, contents url: URL?, options: NSFileProviderCreateItemOptions = [], request: NSFileProviderRequest, completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 1)
-        Task {
-            do {
-                let path = itemTemplate.itemIdentifier.rawValue
-                let isDir = itemTemplate.contentType == .folder
-                let opcode: VfsOpcode = isDir ? .OP_MKDIR : .OP_WRITE
-                var payloadData: Data? = nil
-                if let url = url, !isDir {
-                    payloadData = try Data(contentsOf: url)
-                }
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: opcode, path: path, offset: 0, reqLen: 0, payloadData: payloadData)
-                let createdItem = ZhiFileItem(identifier: itemTemplate.itemIdentifier, filename: itemTemplate.filename, isDirectory: isDir, size: Int64(payloadData?.count ?? 0))
-                completionHandler(createdItem, [], false, nil)
-            } catch {
-                ZhiLogger.error("Create item failed: \(error.localizedDescription)")
-                completionHandler(nil, [], false, error)
-            }
-        }
-        return progress
-    }
-
-    // 4. SỬA FILE (OP_WRITE)
-    func modifyItem(_ item: NSFileProviderItem, baseVersion: NSFileProviderItemVersion, changedFields: NSFileProviderItemFields, contents newContents: URL?, options: NSFileProviderModifyItemOptions = [], request: NSFileProviderRequest, completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 1)
-        Task {
-            do {
-                let path = item.itemIdentifier.rawValue
-                var payloadData: Data? = nil
-                if let newContents = newContents {
-                    payloadData = try Data(contentsOf: newContents)
-                }
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_WRITE, path: path, offset: 0, reqLen: 0, payloadData: payloadData)
-                completionHandler(item, [], false, nil)
-            } catch {
-                ZhiLogger.error("Modify item failed: \(error.localizedDescription)")
-                completionHandler(nil, [], false, error)
-            }
-        }
-        return progress
-    }
-
-    // 5. XÓA FILE/THƯ MỤC (OP_DELETE)
-    func deleteItem(identifier: NSFileProviderItemIdentifier, baseVersion: NSFileProviderItemVersion, options: NSFileProviderDeleteItemOptions = [], request: NSFileProviderRequest, completionHandler: @escaping (Error?) -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 1)
-        Task {
-            do {
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_DELETE, path: identifier.rawValue, offset: 0, reqLen: 0, payloadData: nil)
-                completionHandler(nil)
-            } catch {
-                ZhiLogger.error("Delete item failed: \(error.localizedDescription)")
-                completionHandler(error)
-            }
-        }
-        return progress
-    }
-    
-    // 6. XEM DANH SÁCH THƯ MỤC
-    func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest) throws -> NSFileProviderEnumerator {
-        return ZhiFileEnumerator(containerIdentifier: containerItemIdentifier)
-    }
-}
-
-class ZhiFileItem: NSObject, NSFileProviderItem {
-    var itemIdentifier: NSFileProviderItemIdentifier
-    var parentItemIdentifier: NSFileProviderItemIdentifier
-    var filename: String
-    var contentType: UTType
-    var documentSize: NSNumber?
-    
-    init(identifier: NSFileProviderItemIdentifier, filename: String, isDirectory: Bool, size: Int64) {
-        self.itemIdentifier = identifier
-        self.parentItemIdentifier = .rootContainer
-        self.filename = filename
-        self.contentType = isDirectory ? .folder : .data
-        self.documentSize = NSNumber(value: size)
-    }
-}
-
-class ZhiFileEnumerator: NSObject, NSFileProviderEnumerator {
-    let containerIdentifier: NSFileProviderItemIdentifier
-    init(containerIdentifier: NSFileProviderItemIdentifier) {
-        self.containerIdentifier = containerIdentifier
-    }
-    func invalidate() {}
-    
-    func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
-        Task {
-            do {
-                let path = containerIdentifier.rawValue == NSFileProviderItemIdentifier.rootContainer.rawValue ? "/" : containerIdentifier.rawValue
-                ZhiLogger.info("Enumerating items for folder: \(path)")
-                let listData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_LIST, path: path, offset: 0, reqLen: 0, payloadData: nil)
-                
-                var items: [ZhiFileItem] = []
-                var offset = 0
-                let totalLen = listData.count
-                
-                while offset + 15 <= totalLen {
-                    let nameLen = Int(listData.subdata(in: offset..<offset+2).withUnsafeBytes { $0.load(as: UInt16.self).littleEndian })
-                    let isDirVal = listData[offset + 2]
-                    let size = listData.subdata(in: offset+3..<offset+11).withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
-                    offset += 15
-                    if offset + nameLen > totalLen { break }
-                    
-                    let nameData = listData.subdata(in: offset..<offset+nameLen)
-                    let name = String(data: nameData, encoding: .utf8) ?? "Unknown"
-                    offset += nameLen
-                    
-                    let itemID = NSFileProviderItemIdentifier(path == "/" ? "/\(name)" : "\(path)/\(name)")
-                    let item = ZhiFileItem(identifier: itemID, filename: name, isDirectory: isDirVal == 1, size: Int64(size))
-                    items.append(item)
-                }
-                observer.didEnumerate(items)
-                observer.finishEnumerating(upTo: nil)
-            } catch {
-                ZhiLogger.error("Enumerate items failed: \(error.localizedDescription)")
-                observer.finishEnumeratingWithError(error)
-            }
-        }
-    }
-}
---- END OF FILE: ZhiAuth/ZhiFileProviderExtension.swift ---
-
---- START FILE PATH: ZhiAuth/ZhiKcpEngine.swift ---
-import Foundation
-
-struct KcpTuningParams {
-    var noDelay: Int32 = 1
-    var interval: Int32 = 10
-    var resend: Int32 = 2
-    var nc: Int32 = 0
-    var sndWnd: Int32 = 512
-    var rcvWnd: Int32 = 512
-    var isDynamic: Bool = false
-}
-
-enum VfsOpcode: UInt8 {
-    case OP_PING     = 0x00
-    case OP_STAT     = 0x01
-    case OP_LIST     = 0x02
-    case OP_READ     = 0x03
-    case OP_WRITE    = 0x04
-    case OP_MKDIR    = 0x05
-    case OP_DELETE   = 0x06
-    case OP_RENAME   = 0x07
-    case OP_TRUNCATE = 0x08
-    case OP_ERROR    = 0xFF
-}
-
-private var pendingRequests: [UInt32: (Data) -> Void] = [:]
-private let requestLock = NSLock()
-private var globalReqId: UInt32 = 0
-private let appClientID: UInt32 = UInt32((Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 1) * 1_000_000_000).rounded())
-
-@_cdecl("zhiauth_cgo_on_response")
-public func zhiauth_cgo_on_response(reqId: UInt64, data: UnsafePointer<UInt8>?, length: Int) {
-    guard let dataPtr = data, length > 0 else {
-        ZhiLogger.error("C++ Core returned EMPTY payload for Request ID: \(reqId)!")
-        return
-    }
-    
-    let goReqId = UInt32(truncatingIfNeeded: reqId)
-    let responseData = Data(bytes: dataPtr, count: length)
-    
-    requestLock.lock()
-    let completion = pendingRequests[goReqId]
-    pendingRequests.removeValue(forKey: goReqId)
-    requestLock.unlock()
-    
-    if let completion = completion {
-        completion(responseData)
-    } else {
-        ZhiLogger.warning("Phantom callback! Request ID \(goReqId) not found in pending queue.")
-    }
-}
-
-class ZhiKcpEngine {
-    static func initCore(ip: String, port: Int32, symKey: String, mtu: Int32, tuning: KcpTuningParams) -> Bool {
-        ZhiLogger.info("Igniting C++ KCP Engine... Target: \(ip):\(port)")
-        
-        let result = ip.withCString { ipPtr in
-            symKey.withCString { keyPtr in
-                zhiauth_client_init(
-                    ipPtr, port, keyPtr, mtu,
-                    tuning.noDelay, tuning.interval, tuning.resend, tuning.nc,
-                    tuning.sndWnd, tuning.rcvWnd
-                )
-            }
+            sessions_[client_key] = new_session; 
+            it = sessions_.find(client_key);
         }
         
-        if result == 0 {
-            ZhiLogger.info("C++ KCP Engine Operational!")
-            return true
-        } else {
-            ZhiLogger.error("C++ KCP Engine Initialization FAILED!")
-            return false
-        }
-    }
-    
-    static func shutdownCore() {
-        ZhiLogger.warning("Halting C++ KCP Engine...")
-        zhiauth_client_shutdown()
-    }
-    
-    static func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
-        return try await withCheckedThrowingContinuation { continuation in
-            var buf = Data()
+        it->second.last_active_time = time(NULL);
+        KcpSession current_session = it->second; 
+        lock.unlock(); 
+
+        std::lock_guard<std::mutex> kcp_lock(*current_session.kcp_mtx);
+        ikcp_input(current_session.kcp_cb, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
+        
+        int len;
+        while ((len = ikcp_peeksize(current_session.kcp_cb)) > 0) {
+            std::vector<uint8_t> encrypted_payload(len);
+            ikcp_recv(current_session.kcp_cb, reinterpret_cast<char*>(encrypted_payload.data()), len);
             
-            requestLock.lock()
-            globalReqId &+= 1
-            let currentReqId = globalReqId
-            requestLock.unlock()
-            
-            let combinedSessionId: UInt64 = (UInt64(appClientID) << 32) | UInt64(currentReqId)
-            let dataLen: UInt32 = (opcode == .OP_READ) ? reqLen : UInt32(payloadData?.count ?? 0)
-            let pathData = path.data(using: .utf8) ?? Data()
-            let pathLen: UInt16 = UInt16(pathData.count)
-            
-            withUnsafeBytes(of: UInt32(0x5A484941).littleEndian) { buf.append(contentsOf: $0) }
-            buf.append(opcode.rawValue)
-            withUnsafeBytes(of: combinedSessionId.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: offset.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: dataLen.littleEndian) { buf.append(contentsOf: $0) }
-            withUnsafeBytes(of: pathLen.littleEndian) { buf.append(contentsOf: $0) }
-            
-            buf.append(pathData)
-            if let pData = payloadData {
-                buf.append(pData)
+            {
+                std::lock_guard<std::mutex> tlock(g_task_mutex);
+                g_task_queue.push([this, current_session, encrypted_payload]() { 
+                    process_kcp_payload(current_session, encrypted_payload); 
+                });
             }
-            
-            ZhiLogger.debug("Pumping Request [ID: \(currentReqId)] [OP: \(opcode.rawValue)] down to C++ Core... (Payload Size: \(buf.count) bytes)")
-            
-            requestLock.lock()
-            pendingRequests[currentReqId] = { responseBytes in
-                if responseBytes.count < 27 {
-                    continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "VFS Packet Corrupted"]))
-                    return
-                }
-                if responseBytes[4] == VfsOpcode.OP_ERROR.rawValue {
-                    continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -2, userInfo: [NSLocalizedDescriptionKey: "Server VFS Error"]))
-                    return
-                }
-                let actualData = responseBytes.subdata(in: 27..<responseBytes.count)
-                continuation.resume(returning: actualData)
-            }
-            requestLock.unlock()
-            
-            Task {
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
-                var didTimeout = false
-                requestLock.lock()
-                if pendingRequests.keys.contains(currentReqId) {
-                    pendingRequests.removeValue(forKey: currentReqId)
-                    didTimeout = true
-                }
-                requestLock.unlock()
-                
-                if didTimeout {
-                    ZhiLogger.error("CRITICAL! Signal lost. 15-second Timeout on Request ID: \(currentReqId) [OP: \(opcode.rawValue)] [Path: \(path)]")
-                    continuation.resume(throwing: NSError(domain: "ZhiAuth", code: -3, userInfo: [NSLocalizedDescriptionKey: "VFS RPC Timeout"]))
-                }
-            }
-            
-            buf.withUnsafeBytes { rawBuffer in
-                if let ptr = rawBuffer.bindMemory(to: UInt8.self).baseAddress {
-                    zhiauth_send_vfs_command_async(ptr, buf.count)
-                }
-            }
+            g_task_cv.notify_one();
         }
     }
 }
---- END OF FILE: ZhiAuth/ZhiKcpEngine.swift ---
+
+void VfsServer::process_kcp_payload(KcpSession session_copy, std::vector<uint8_t> encrypted_payload) {
+    std::vector<uint8_t> plaintext;
+    if (!CryptoBox::decrypt_payload(encrypted_payload, master_sym_key_, plaintext)) return;
+    if (plaintext.size() < sizeof(VfsPacketHeader)) return;
+
+    VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
+    if (hdr->opcode == VfsOpcode::OP_PING) {
+        VfsPacketHeader res_hdr = *hdr;
+        std::vector<uint8_t> response_payload(sizeof(VfsPacketHeader));
+        std::memcpy(response_payload.data(), &res_hdr, sizeof(VfsPacketHeader));
+        std::vector<uint8_t> final_encrypted;
+        if (CryptoBox::encrypt_payload(response_payload, master_sym_key_, final_encrypted)) {
+	    std::lock_guard<std::mutex> kcp_lock(*session_copy.kcp_mtx); 
+	    ikcp_send(session_copy.kcp_cb, reinterpret_cast<const char*>(final_encrypted.data()), final_encrypted.size());
+	    ikcp_flush(session_copy.kcp_cb);
+            
+        }
+        return;
+    }
+
+    if (session_copy.uds_path.empty()) return;
+
+    int uds_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (uds_fd < 0) return;
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, session_copy.uds_path.c_str(), sizeof(addr.sun_path) - 1);
+
+    struct timeval tv;
+    tv.tv_sec = 10;
+    tv.tv_usec = 0;
+    setsockopt(uds_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    setsockopt(uds_fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+
+    if (connect(uds_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(uds_fd);
+        return;
+    }
+
+    uint32_t req_sz = plaintext.size();
+    if (!send_all(uds_fd, &req_sz, 4) || !send_all(uds_fd, plaintext.data(), plaintext.size())) {
+        close(uds_fd);
+        return;
+    }
+
+    uint32_t resp_sz = 0;
+    if (!recv_all(uds_fd, &resp_sz, 4)) {
+        close(uds_fd);
+        return;
+    }
+
+    std::vector<uint8_t> response_payload(resp_sz);
+    if (!recv_all(uds_fd, response_payload.data(), resp_sz)) {
+        close(uds_fd);
+        return;
+    }
+    close(uds_fd);
+
+    std::vector<uint8_t> final_encrypted;
+    if (CryptoBox::encrypt_payload(response_payload, master_sym_key_, final_encrypted)) {
+        std::lock_guard<std::mutex> kcp_lock(*session_copy.kcp_mtx);
+        ikcp_send(session_copy.kcp_cb, reinterpret_cast<const char*>(final_encrypted.data()), final_encrypted.size());
+        ikcp_flush(session_copy.kcp_cb);
+    }
+}
+
+void VfsServer::kcp_update_loop() {
+    while (is_running_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1)); 
+        uint32_t current_clock = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        for (auto& pair : sessions_) {
+            std::lock_guard<std::mutex> kcp_lock(*pair.second.kcp_mtx);
+            ikcp_update(pair.second.kcp_cb, current_clock);
+        }
+    }
+}
+
+--- END OF FILE: src/rpc_vfs/vfs_server.cpp ---
+
+--- START FILE PATH: src/rpc_vfs/vfs_io_worker.cpp ---
+#include "rpc_vfs/vfs_io_worker.h"
+#include "common/logger.h"
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <filesystem>
+#include <cstring>
+#include <unordered_map>
+#include <mutex>
+
+namespace fs = std::filesystem;
+
+static std::unordered_map<std::string, int> g_fd_cache;
+static std::mutex g_fd_mutex;
+
+static int get_or_open_fd(const std::string& path, int flags, mode_t mode = 0) {
+    std::lock_guard<std::mutex> lock(g_fd_mutex);
+    auto it = g_fd_cache.find(path);
+    if (it != g_fd_cache.end()) return it->second;
+    int fd = open(path.c_str(), flags, mode);
+    if (fd >= 0) {
+        if (g_fd_cache.size() > 50) {
+            auto first_it = g_fd_cache.begin();
+            close(first_it->second);
+            g_fd_cache.erase(first_it);
+        }
+        g_fd_cache[path] = fd;
+    }
+    return fd;
+}
+
+bool VfsIoWorker::read_block(const std::string& path, uint64_t offset, uint32_t length, std::vector<uint8_t>& out_buffer) {
+    int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) { ZHI_LOG_ERR("[IO-READ] Thất bại khi open file: " + path); return false; }
+    out_buffer.resize(length);
+    ssize_t bytes_read = pread(fd, out_buffer.data(), length, offset);
+    close(fd);
+    if (bytes_read < 0) return false;
+    out_buffer.resize(bytes_read);
+    return true;
+}
+
+bool VfsIoWorker::write_block(const std::string& path, uint64_t offset, const std::vector<uint8_t>& data) {
+    int fd = open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0666);
+    if (fd < 0) { ZHI_LOG_ERR("[IO-WRITE] Thất bại khi open file: " + path); return false; }
+    if (!data.empty()) {
+        ssize_t bytes_written = pwrite(fd, data.data(), data.size(), offset);
+        close(fd);
+        return bytes_written == static_cast<ssize_t>(data.size());
+    }
+    close(fd);
+    return true;
+}
+
+bool VfsIoWorker::stat_file(const std::string& path, uint64_t& out_size, bool& out_is_dir) {
+    struct stat file_stat;
+    if (stat(path.c_str(), &file_stat) != 0) return false;
+    out_size = file_stat.st_size;
+    out_is_dir = S_ISDIR(file_stat.st_mode);
+    return true;
+}
+
+bool VfsIoWorker::list_directory(const std::string& path, std::string& out_list) {
+    try {
+        out_list.clear();
+        for (const auto& entry : fs::directory_iterator(path)) {
+            std::error_code ec;
+            uint64_t size = entry.is_regular_file(ec) ? entry.file_size(ec) : 0;
+            uint8_t is_dir = entry.is_directory(ec) ? 1 : 0;
+            
+            // 🔥 ĐỒNG BỘ CHUẨN 39 BYTES VỚI ANDROID KOTLIN (Lấy thêm time)
+            struct stat st;
+            uint64_t mtime = 0, ctime = 0, atime = 0;
+            uint32_t mode = 33188; 
+            
+            if (stat(entry.path().string().c_str(), &st) == 0) {
+                mtime = st.st_mtime;
+                ctime = st.st_ctime;
+                atime = st.st_atime;
+                mode = st.st_mode;
+            }
+            
+            std::string name = entry.path().filename().string();
+            uint16_t name_len = static_cast<uint16_t>(name.length());
+
+            char buf[39];
+            buf[0] = name_len & 0xFF; buf[1] = (name_len >> 8) & 0xFF;
+            buf[2] = is_dir;
+            std::memcpy(buf + 3, &size, 8);
+            std::memcpy(buf + 11, &mtime, 8);
+            std::memcpy(buf + 19, &ctime, 8);
+            std::memcpy(buf + 27, &atime, 8);
+            std::memcpy(buf + 35, &mode, 4);
+
+            out_list.append(buf, 39);
+            out_list.append(name);
+        }
+        return true;
+    } catch (...) { return false; }
+}
+
+void VfsIoWorker::close_cached_fd(const std::string& path) {
+    std::lock_guard<std::mutex> lock(g_fd_mutex);
+    auto it = g_fd_cache.find(path);
+    if (it != g_fd_cache.end()) {
+        close(it->second);
+        g_fd_cache.erase(it);
+    }
+}
+
+--- END OF FILE: src/rpc_vfs/vfs_io_worker.cpp ---
+
+--- START FILE PATH: src/rpc_vfs/crypto_box.cpp ---
+#include "rpc_vfs/crypto_box.h"
+#include "common/logger.h"
+#include <sodium.h>
+
+bool CryptoBox::initialize() {
+    if (sodium_init() < 0) {
+        ZHI_LOG_ERR("Hệ thống mã hóa Libsodium khởi động THẤT BẠI! Tắt Daemon ngay!");
+        return false;
+    }
+    ZHI_LOG_INFO("Động cơ mã hóa ChaCha20-Poly1305 (Libsodium) đã sẵn sàng.");
+    return true;
+}
+
+bool CryptoBox::encrypt_payload(const std::vector<uint8_t>& plaintext, const std::string& symmetric_key, std::vector<uint8_t>& ciphertext) {
+    if (symmetric_key.size() != crypto_aead_chacha20poly1305_ietf_KEYBYTES) {
+        ZHI_LOG_ERR("Lỗi độ dài Key bảo mật! Bắt buộc phải là 32 bytes.");
+        return false;
+    }
+
+    // 1. Dành chỗ cho: [Nonce (12 Bytes)] + [Ciphertext] + [MAC (16 Bytes)]
+    ciphertext.resize(crypto_aead_chacha20poly1305_ietf_NPUBBYTES + plaintext.size() + crypto_aead_chacha20poly1305_ietf_ABYTES);
+
+    // 2. Tạo Nonce ngẫu nhiên (chống tấn công phát lại Replay Attack) và dán vào đầu mảng
+    unsigned char* nonce = ciphertext.data();
+    randombytes_buf(nonce, crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
+
+    // 3. Mã hóa phần thân dữ liệu (nằm ngay sau Nonce)
+    unsigned long long ciphertext_len;
+    int result = crypto_aead_chacha20poly1305_ietf_encrypt(
+        ciphertext.data() + crypto_aead_chacha20poly1305_ietf_NPUBBYTES, // Vị trí ghi Ciphertext
+        &ciphertext_len,
+        plaintext.data(), plaintext.size(),
+        nullptr, 0, // Không dùng Dữ liệu xác thực bổ sung (AD)
+        nullptr,    // Không cần Secret Nonce
+        nonce,
+        reinterpret_cast<const unsigned char*>(symmetric_key.data())
+    );
+
+    if (result != 0) {
+        ZHI_LOG_ERR("Cỗ máy Libsodium báo lỗi khi đang ép giáp mã hóa!");
+        return false;
+    }
+
+    // Cắt gọt lại mảng (resize) cho khít với độ dài thực tế vừa ghi xuống
+    ciphertext.resize(crypto_aead_chacha20poly1305_ietf_NPUBBYTES + ciphertext_len);
+    return true;
+}
+
+bool CryptoBox::decrypt_payload(const std::vector<uint8_t>& ciphertext, const std::string& symmetric_key, std::vector<uint8_t>& plaintext) {
+    if (symmetric_key.size() != crypto_aead_chacha20poly1305_ietf_KEYBYTES) {
+        ZHI_LOG_ERR("Lỗi độ dài Key giải mã! Bắt buộc 32 bytes.");
+        return false;
+    }
+
+    // Gói tin tối thiểu phải dài hơn mẩu Nonce và MAC
+    if (ciphertext.size() < crypto_aead_chacha20poly1305_ietf_NPUBBYTES + crypto_aead_chacha20poly1305_ietf_ABYTES) {
+        ZHI_LOG_WARN("Gói tin bị cắt xén hoặc quá ngắn! DROP lập tức!");
+        return false;
+    }
+
+    // 1. Trích xuất mẩu Nonce ở 12 bytes đầu tiên
+    const unsigned char* nonce = ciphertext.data();
+    const unsigned char* actual_cipher = ciphertext.data() + crypto_aead_chacha20poly1305_ietf_NPUBBYTES;
+    unsigned long long actual_cipher_len = ciphertext.size() - crypto_aead_chacha20poly1305_ietf_NPUBBYTES;
+
+    // 2. Chuẩn bị mảng hứng dữ liệu nguyên bản (Plaintext)
+    plaintext.resize(actual_cipher_len - crypto_aead_chacha20poly1305_ietf_ABYTES);
+
+    // 3. Giải mã và Verify chữ ký MAC cùng lúc
+    unsigned long long plaintext_len;
+    int result = crypto_aead_chacha20poly1305_ietf_decrypt(
+        plaintext.data(),
+        &plaintext_len,
+        nullptr,
+        actual_cipher, actual_cipher_len,
+        nullptr, 0,
+        nonce,
+        reinterpret_cast<const unsigned char*>(symmetric_key.data())
+    );
+
+    if (result != 0) {
+        // LUÔN BẮN LOG GẮT Ở ĐÂY VÌ ĐÓ LÀ DẤU HIỆU CÓ NGƯỜI ĐANG QUÉT MẠNG HOẶC PHÁ GÓI TIN!
+        ZHI_LOG_ERR("💀 BÁO ĐỘNG ĐỎ: Chữ ký MAC bị sai lệch hoặc Key không khớp! DROP GÓI TIN!");
+        return false;
+    }
+
+    plaintext.resize(plaintext_len);
+    return true;
+}
+
+--- END OF FILE: src/rpc_vfs/crypto_box.cpp ---
+
+
+--- END OF FILE: server_0.txt ---
 
