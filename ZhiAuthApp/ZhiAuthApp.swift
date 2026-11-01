@@ -25,9 +25,15 @@ func getDeviceIPs() -> (lan: String, ts: String) {
     return (lan, ts)
 }
 
+enum ActiveTunnel {
+    case none
+    case kcp
+    case quic
+}
+
 class AppState: ObservableObject {
     @Published var isLoggedIn: Bool = false
-    @Published var currentPath: String = "/"
+    @Published var currentPath: String = "/" // Dùng "/" làm gốc chọn Tunnel
     @Published var fileList: [ZhiFileItem] = []
     @Published var isLoading: Bool = false
     @Published var logs: String = "💀 Sẵn sàng chọc thủng server...\n"
@@ -39,6 +45,10 @@ class AppState: ObservableObject {
     
     var sharedRoot: String = ""
     var baseIP: String = ""
+    var quicPort: UInt16 = 4433
+    
+    @Published var activeTunnel: ActiveTunnel = .none
+    var quicTunnel = ZhiQuicTunnel()
     
     func log(_ msg: String) {
         DispatchQueue.main.async {
@@ -61,7 +71,6 @@ class DocumentPresenter: NSObject, UIDocumentInteractionControllerDelegate {
             
             let canPreview = self.documentController?.presentPreview(animated: true) ?? false
             
-            // Nếu iOS KHÔNG hỗ trợ định dạng này -> Tự động rớt xuống mở popup Share mặc định
             if !canPreview {
                 guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                       let window = scene.windows.first,
@@ -116,7 +125,7 @@ struct LoginView: View {
                 SecureField("Password", text: $password).textFieldStyle(RoundedBorderTextFieldStyle())
             }.padding(.horizontal, 30)
             
-            if state.isLoading { ProgressView("Đang khởi động KCP Engine...").padding() }
+            if state.isLoading { ProgressView("Đang khởi động KCP & QUIC Engines...").padding() }
             
             Button(action: performLogin) {
                 Text("KẾT NỐI SERVER")
@@ -153,17 +162,30 @@ struct LoginView: View {
                 }
                 
                 guard let (winningIP, auth) = winner else { state.log("❌ Lỗi mạng: Knocking Timeout!"); state.isLoading = false; return }
-                state.log("✅ Auth OK qua [\(winningIP)]! KCP Port: \(auth.kcpPort)")
+                state.log("✅ Auth OK qua [\(winningIP)]! KCP: \(auth.kcpPort) | QUIC: \(auth.quicPort)")
                 
-                if ZhiKcpEngine.initCore(ip: winningIP, port: Int32(auth.kcpPort), symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1200, tuning: auth.tuning) {
-                    state.log("🔥 Lõi KCP đã nổ máy!")
-                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                // Khởi động cả 2 Engines song song nhưng ngầm
+                let kcpOk = ZhiKcpEngine.initCore(ip: winningIP, port: Int32(auth.kcpPort), symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1200, tuning: auth.tuning)
+                let quicOk = state.quicTunnel.connect(ip: winningIP, port: UInt16(auth.quicPort))
+                
+                if kcpOk { state.log("🔥 Lõi KCP đã nổ máy (Standby)!") } else { state.log("⚠️ Lõi KCP khởi động lỗi!") }
+                if quicOk { state.log("⚡️ Luồng QUIC đã kết nối (Standby)!") } else { state.log("⚠️ Luồng QUIC khởi động lỗi!") }
+                
+                if kcpOk || quicOk {
+                    try await Task.sleep(nanoseconds: 500_000_000)
                     state.sharedRoot = auth.sharedPath.isEmpty ? "/tmp" : auth.sharedPath
                     state.baseIP = winningIP
+                    state.quicPort = UInt16(auth.quicPort)
                     
-                    _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: state.sharedRoot, offset: 0, reqLen: 0, payloadData: nil)
-                    await MainActor.run { state.currentPath = state.sharedRoot; state.isLoggedIn = true; state.isLoading = false }
-                } else { state.log("❌ Khởi động KCP Engine thất bại."); state.isLoading = false }
+                    await MainActor.run {
+                        state.currentPath = "/"
+                        state.activeTunnel = .none
+                        state.isLoggedIn = true
+                        state.isLoading = false
+                    }
+                } else {
+                    state.log("❌ Cả 2 luồng đều gãy. Đăng nhập thất bại."); state.isLoading = false
+                }
             } catch { state.log("❌ Lỗi: \(error.localizedDescription)"); state.isLoading = false }
         }
     }
@@ -200,9 +222,10 @@ struct FileExplorerView: View {
     @State private var infoMessage = ""
 
     func displayPath(for rawPath: String) -> String {
+        if rawPath == "/" { return "Chọn Luồng Truyền Tải" }
         if rawPath.hasPrefix(state.sharedRoot) {
             let relative = String(rawPath.dropFirst(state.sharedRoot.count))
-            return relative.isEmpty ? "/" : relative
+            return relative.isEmpty ? (state.activeTunnel == .kcp ? "ZhiAuth_KCP" : "ZhiAuth_QUIC") : relative
         }
         return rawPath
     }
@@ -211,44 +234,61 @@ struct FileExplorerView: View {
         NavigationView {
             VStack {
                 HStack {
-                    Text("Tốc độ: \(state.transferSpeed)").font(.caption).foregroundColor(.gray)
+                    Text(state.activeTunnel == .none ? "Standby" : "Tốc độ: \(state.transferSpeed)")
+                        .font(.caption).foregroundColor(state.activeTunnel == .kcp ? .blue : (state.activeTunnel == .quic ? .orange : .gray))
                     Spacer()
                     Text(displayPath(for: state.currentPath)).font(.caption).lineLimit(1).truncationMode(.middle)
                 }.padding(.horizontal)
                 
                 List(state.fileList, id: \.id) { item in
                     Button(action: {
-                        if item.isDirectory {
-                            let newPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(item.name)" : "\(state.currentPath)/\(item.name)"
-                            loadDirectory(path: newPath)
+                        if state.currentPath == "/" { // Đang ở Menu chọn Tunnel
+                            if item.name == "ZhiAuth_KCP" {
+                                state.activeTunnel = .kcp
+                                loadDirectory(path: state.sharedRoot)
+                            } else if item.name == "ZhiAuth_QUIC" {
+                                state.activeTunnel = .quic
+                                loadDirectory(path: state.sharedRoot)
+                            }
                         } else {
-                            downloadAndShareFile(item: item)
+                            if item.isDirectory {
+                                let newPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(item.name)" : "\(state.currentPath)/\(item.name)"
+                                loadDirectory(path: newPath)
+                            } else {
+                                downloadAndShareFile(item: item)
+                            }
                         }
                     }) {
                         HStack(spacing: 15) {
-                            Image(systemName: item.isDirectory ? "folder.fill" : "doc.text.fill")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 26, height: 26)
-                                .foregroundColor(item.isDirectory ? .blue : .gray)
+                            if state.currentPath == "/" {
+                                Image(systemName: item.name == "ZhiAuth_KCP" ? "network" : "bolt.horizontal.fill")
+                                    .resizable().aspectRatio(contentMode: .fit).frame(width: 26, height: 26)
+                                    .foregroundColor(item.name == "ZhiAuth_KCP" ? .blue : .orange)
+                            } else {
+                                Image(systemName: item.isDirectory ? "folder.fill" : "doc.text.fill")
+                                    .resizable().aspectRatio(contentMode: .fit).frame(width: 26, height: 26)
+                                    .foregroundColor(item.isDirectory ? .blue : .gray)
+                            }
                             
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(item.name).font(.body).foregroundColor(.primary)
-                                Text(item.sizeString).font(.caption).foregroundColor(.secondary)
+                                if state.currentPath != "/" { Text(item.sizeString).font(.caption).foregroundColor(.secondary) }
                             }
-                            Spacer() // 🔥 CĂNG BỀ NGANG FULL DÒNG CHO DỄ BẤM
+                            Spacer()
                         }
-                        .contentShape(Rectangle()) // Nhận cảm ứng trên toàn bộ diện tích
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(FileItemButtonStyle()) // 🔥 ÁP DỤNG HIỆU ỨNG NHÚN VÀ SHADOW KHI BẤM
+                    .buttonStyle(FileItemButtonStyle())
                     .contextMenu {
-                        Button(action: { showFileInfo(item) }) { Label("Thông tin", systemImage: "info.circle") }
-                        Button(action: { state.clipboardItem = item; state.isCutOperation = false; state.log("Đã copy '\(item.name)' vào bộ nhớ tạm") }) { Label("Copy", systemImage: "doc.on.doc") }
-                        Button(action: { state.clipboardItem = item; state.isCutOperation = true; state.log("Đã cắt '\(item.name)' vào bộ nhớ tạm") }) { Label("Cut", systemImage: "scissors") }
-                        Button(action: { itemToRename = item; newName = item.name; showRenameAlert = true }) { Label("Đổi tên", systemImage: "pencil") }
-                        Button(role: .destructive, action: { itemToDelete = item; showDeleteAlert = true }) { Label("Xóa", systemImage: "trash") }
+                        if state.currentPath != "/" {
+                            Button(action: { showFileInfo(item) }) { Label("Thông tin", systemImage: "info.circle") }
+                            Button(action: { state.clipboardItem = item; state.isCutOperation = false; state.log("Đã copy '\(item.name)' vào bộ nhớ tạm (\(state.activeTunnel == .kcp ? "KCP" : "QUIC"))") }) { Label("Copy", systemImage: "doc.on.doc") }
+                            Button(action: { state.clipboardItem = item; state.isCutOperation = true; state.log("Đã cắt '\(item.name)' vào bộ nhớ tạm (\(state.activeTunnel == .kcp ? "KCP" : "QUIC"))") }) { Label("Cut", systemImage: "scissors") }
+                            Button(action: { itemToRename = item; newName = item.name; showRenameAlert = true }) { Label("Đổi tên", systemImage: "pencil") }
+                            Button(role: .destructive, action: { itemToDelete = item; showDeleteAlert = true }) { Label("Xóa", systemImage: "trash") }
+                        }
                     }
-                    .listRowSeparator(.hidden) // Giấu gạch dưới để hiển thị block nhìn pro hơn
+                    .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                 }
                 .listStyle(.plain)
@@ -265,16 +305,18 @@ struct FileExplorerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    if state.currentPath != state.sharedRoot {
+                    if state.currentPath != "/" {
                         Button(action: goUp) { HStack { Image(systemName: "chevron.backward"); Text("Quay lại") } }
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 15) {
-                        if state.clipboardItem != nil {
-                            Button(action: pasteItem) { Image(systemName: "doc.on.clipboard").foregroundColor(.green) }
+                        if state.currentPath != "/" {
+                            if state.clipboardItem != nil {
+                                Button(action: pasteItem) { Image(systemName: "doc.on.clipboard").foregroundColor(.green) }
+                            }
+                            Button(action: { newFolderName = ""; showNewFolderAlert = true }) { Image(systemName: "folder.badge.plus").foregroundColor(.blue) }
                         }
-                        Button(action: { newFolderName = ""; showNewFolderAlert = true }) { Image(systemName: "folder.badge.plus").foregroundColor(.blue) }
                         Button(action: logout) { Image(systemName: "power").foregroundColor(.red) }
                     }
                 }
@@ -295,25 +337,35 @@ struct FileExplorerView: View {
             .alert("Cảnh báo Xóa", isPresented: $showDeleteAlert) {
                 Button("Xóa ngay", role: .destructive, action: deleteItem)
                 Button("Hủy", role: .cancel) { }
-            } message: {
-                Text("Xóa file/thư mục này là vĩnh viễn, không thể phục hồi. Bạn có chắc không?")
-            }
+            } message: { Text("Xóa file/thư mục này là vĩnh viễn, không thể phục hồi. Bạn có chắc không?") }
             .alert("Thông tin", isPresented: $showInfoAlert) {
                 Button("Đóng", role: .cancel) { }
             } message: { Text(infoMessage) }
         }
     }
     
-    // MARK: - CÁC HÀM THAO TÁC FILE CỐT LÕI
+    // MARK: - CÁC HÀM THAO TÁC FILE ĐỊNH TUYẾN THEO TUNNEL
+    
+    // Hàm bọc logic gọi RPC tùy theo luồng KCP hoặc QUIC
+    func dispatchRpc(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
+        if state.activeTunnel == .quic {
+            // TODO: Triển khai gọi hàm qua QUIC Tunnel ở đây
+            state.log("⚠️ Chức năng gọi RPC qua QUIC đang được xây dựng (Dummy data).")
+            throw NSError(domain: "ZhiAuth", code: -99, userInfo: [NSLocalizedDescriptionKey: "Luồng QUIC chưa hoàn thiện phần Ruột RPC."])
+        } else {
+            // Chạy luồng KCP thuần
+            return try await ZhiKcpEngine.sendRpcVfs(opcode: opcode, path: path, offset: offset, reqLen: reqLen, payloadData: payloadData)
+        }
+    }
     
     func createFolder() {
         let cleanName = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleanName.isEmpty { return }
         let targetPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(cleanName)" : "\(state.currentPath)/\(cleanName)"
-        state.log("Đang tạo thư mục: \(cleanName)...")
+        state.log("Đang tạo thư mục (\(state.activeTunnel)): \(cleanName)...")
         Task {
             do {
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_MKDIR, path: targetPath, offset: 0, reqLen: 0, payloadData: nil)
+                _ = try await dispatchRpc(opcode: .OP_MKDIR, path: targetPath, offset: 0, reqLen: 0, payloadData: nil)
                 await refreshList()
             } catch { state.log("❌ Lỗi tạo thư mục: \(error.localizedDescription)") }
         }
@@ -321,10 +373,10 @@ struct FileExplorerView: View {
     
     func deleteItem() {
         guard let item = itemToDelete else { return }
-        state.log("Đang xóa: \(item.name)...")
+        state.log("Đang xóa (\(state.activeTunnel)): \(item.name)...")
         Task {
             do {
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_DELETE, path: item.path, offset: 0, reqLen: 0, payloadData: nil)
+                _ = try await dispatchRpc(opcode: .OP_DELETE, path: item.path, offset: 0, reqLen: 0, payloadData: nil)
                 await refreshList()
                 if state.clipboardItem?.id == item.id { await MainActor.run { state.clipboardItem = nil } }
             } catch { state.log("❌ Lỗi xóa: \(error.localizedDescription)") }
@@ -339,13 +391,12 @@ struct FileExplorerView: View {
         let url = URL(fileURLWithPath: item.path)
         let newPath = url.deletingLastPathComponent().appendingPathComponent(cleanName).path
         
-        state.log("Đang đổi tên thành: \(cleanName)...")
+        state.log("Đang đổi tên thành (\(state.activeTunnel)): \(cleanName)...")
         Task {
             do {
                 var newPathData = newPath.data(using: .utf8)!
                 newPathData.append(0)
-                
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_RENAME, path: item.path, offset: 0, reqLen: UInt32(newPathData.count), payloadData: newPathData)
+                _ = try await dispatchRpc(opcode: .OP_RENAME, path: item.path, offset: 0, reqLen: UInt32(newPathData.count), payloadData: newPathData)
                 await refreshList()
                 if state.clipboardItem?.id == item.id { await MainActor.run { state.clipboardItem = nil } }
             } catch { state.log("❌ Lỗi đổi tên: \(error.localizedDescription)") }
@@ -357,47 +408,39 @@ struct FileExplorerView: View {
         let destPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(item.name)" : "\(state.currentPath)/\(item.name)"
         
         if state.isCutOperation {
-            state.log("Đang di chuyển (Cut) file...")
+            state.log("Đang di chuyển (Cut) file qua \(state.activeTunnel)...")
             Task {
                 do {
                     var newPathData = destPath.data(using: .utf8)!
                     newPathData.append(0)
-                    
-                    _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_RENAME, path: item.path, offset: 0, reqLen: UInt32(newPathData.count), payloadData: newPathData)
+                    _ = try await dispatchRpc(opcode: .OP_RENAME, path: item.path, offset: 0, reqLen: UInt32(newPathData.count), payloadData: newPathData)
                     await MainActor.run { state.clipboardItem = nil; state.isCutOperation = false }
                     await refreshList()
                 } catch { state.log("❌ Lỗi Cut: \(error.localizedDescription)") }
             }
         } else {
-            if item.isDirectory {
-                state.log("❌ Server chưa hỗ trợ Copy cả Thư mục (Bạn có thể Cut hoặc Copy từng file lẻ).")
-                return
-            }
-            state.log("⏳ Đang Copy (Download & Upload tốc độ cao qua KCP)...")
+            if item.isDirectory { state.log("❌ Server chưa hỗ trợ Copy cả Thư mục."); return }
+            state.log("⏳ Đang Copy (Download & Upload) qua luồng \(state.activeTunnel)...")
             state.isLoading = true
             Task {
                 do {
                     var offset: UInt64 = 0
                     let chunkSize: UInt32 = 65536
-                    
-                    _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_WRITE, path: destPath, offset: 0, reqLen: 0, payloadData: Data())
+                    _ = try await dispatchRpc(opcode: .OP_WRITE, path: destPath, offset: 0, reqLen: 0, payloadData: Data())
                     
                     while offset < item.size {
                         let remain = UInt32(min(UInt64(chunkSize), item.size - offset))
-                        let readData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_READ, path: item.path, offset: offset, reqLen: remain, payloadData: nil)
-                        
+                        let readData = try await dispatchRpc(opcode: .OP_READ, path: item.path, offset: offset, reqLen: remain, payloadData: nil)
                         if readData.count > 27 {
                             let chunk = readData.subdata(in: 27..<readData.count)
-                            _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_WRITE, path: destPath, offset: offset, reqLen: UInt32(chunk.count), payloadData: chunk)
+                            _ = try await dispatchRpc(opcode: .OP_WRITE, path: destPath, offset: offset, reqLen: UInt32(chunk.count), payloadData: chunk)
                             offset += UInt64(chunk.count)
                         } else { break }
                     }
                     state.log("✅ Copy hoàn tất: \(item.name)")
                     await MainActor.run { state.clipboardItem = nil }
                     await refreshList()
-                } catch {
-                    state.log("❌ Lỗi Copy: \(error.localizedDescription)")
-                }
+                } catch { state.log("❌ Lỗi Copy: \(error.localizedDescription)") }
                 await MainActor.run { state.isLoading = false }
             }
         }
@@ -413,7 +456,8 @@ struct FileExplorerView: View {
         Loại: \(item.isDirectory ? "Thư mục" : "Tập tin")
         Dung lượng: \(item.isDirectory ? "Không đếm" : item.sizeString)
         Ngày sửa: \(formatter.string(from: date))
-        Đường dẫn: \(displayPath(for: item.path))
+        Đường dẫn ảo: \(displayPath(for: item.path))
+        Luồng: \(state.activeTunnel == .kcp ? "KCP (UDP Fast)" : "QUIC (TCP/UDP Fallback)")
         """
         showInfoAlert = true
     }
@@ -421,13 +465,17 @@ struct FileExplorerView: View {
     // MARK: - LOGIC ĐIỀU HƯỚNG VÀ DANH SÁCH
     
     func goUp() {
-        var components = state.currentPath.split(separator: "/").map(String.init)
-        if components.count > 1 {
-            components.removeLast()
-            let parentPath = "/" + components.joined(separator: "/")
-            loadDirectory(path: parentPath)
-        } else {
+        if state.currentPath == state.sharedRoot {
             loadDirectory(path: "/")
+        } else {
+            var components = state.currentPath.split(separator: "/").map(String.init)
+            if components.count > 1 {
+                components.removeLast()
+                let parentPath = "/" + components.joined(separator: "/")
+                loadDirectory(path: parentPath)
+            } else {
+                loadDirectory(path: "/")
+            }
         }
     }
     
@@ -435,25 +483,37 @@ struct FileExplorerView: View {
         state.isLoading = true
         state.currentPath = path
         Task {
-            do {
-                let data = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_LIST, path: path, offset: 0, reqLen: 0, payloadData: nil)
-                let parsedList = parseList(data: data, basePath: path)
+            if path == "/" {
+                // Render Menu chọn Tunnel
                 await MainActor.run {
-                    state.fileList = parsedList.sorted {
-                        if $0.isDirectory == $1.isDirectory { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-                        return $0.isDirectory
-                    }
+                    state.fileList = [
+                        ZhiFileItem(name: "ZhiAuth_KCP", isDirectory: true, size: 0, modifiedTime: 0, path: state.sharedRoot),
+                        ZhiFileItem(name: "ZhiAuth_QUIC", isDirectory: true, size: 0, modifiedTime: 0, path: state.sharedRoot)
+                    ]
+                    state.activeTunnel = .none
                     state.isLoading = false
                 }
-            } catch {
-                await MainActor.run { state.log("❌ Lỗi load thư mục: \(error.localizedDescription)"); state.isLoading = false }
+            } else {
+                do {
+                    let data = try await dispatchRpc(opcode: .OP_LIST, path: path, offset: 0, reqLen: 0, payloadData: nil)
+                    let parsedList = parseList(data: data, basePath: path)
+                    await MainActor.run {
+                        state.fileList = parsedList.sorted {
+                            if $0.isDirectory == $1.isDirectory { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                            return $0.isDirectory
+                        }
+                        state.isLoading = false
+                    }
+                } catch {
+                    await MainActor.run { state.log("❌ Lỗi load thư mục: \(error.localizedDescription)"); state.isLoading = false }
+                }
             }
         }
     }
     
     func downloadAndShareFile(item: ZhiFileItem) {
         state.isLoading = true
-        state.log("⏳ Đang tải file \(item.name) qua KCP...")
+        state.log("⏳ Đang tải file \(item.name) qua luồng \(state.activeTunnel)...")
         Task {
             do {
                 let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(item.name)
@@ -467,7 +527,7 @@ struct FileExplorerView: View {
                 
                 while offset < item.size {
                     let remain = UInt32(min(UInt64(chunkSize), item.size - offset))
-                    let data = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_READ, path: item.path, offset: offset, reqLen: remain, payloadData: nil)
+                    let data = try await dispatchRpc(opcode: .OP_READ, path: item.path, offset: offset, reqLen: remain, payloadData: nil)
                     
                     if data.count > 27 {
                         let fileData = data.subdata(in: 27..<data.count)
@@ -492,6 +552,7 @@ struct FileExplorerView: View {
     
     func logout() {
         ZhiKcpEngine.stopCore()
+        state.quicTunnel.disconnect()
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(state.baseIP), port: 5555)
         let conn = NWConnection(to: endpoint, using: .udp)
         conn.start(queue: .global())
@@ -501,7 +562,8 @@ struct FileExplorerView: View {
         state.fileList = []
         state.currentPath = "/"
         state.clipboardItem = nil
-        state.log("🛑 Đã đăng xuất và ngắt lõi KCP.")
+        state.activeTunnel = .none
+        state.log("🛑 Đã đăng xuất và ngắt sạch 2 Engines.")
     }
     
     func parseList(data: Data, basePath: String) -> [ZhiFileItem] {
