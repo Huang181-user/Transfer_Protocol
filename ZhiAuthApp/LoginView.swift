@@ -31,7 +31,6 @@ struct LoginView: View {
     @AppStorage("savedTsIP") private var tsIP: String = AppConfig.shared.defaultTsIp
     @AppStorage("savedUser") private var username: String = AppConfig.shared.defaultUsername
     @AppStorage("savedPass") private var password: String = ""
-    @AppStorage("savedSymKey") private var customSymKey: String = AppConfig.shared.kcpSymmetricKey
     
     var body: some View {
         VStack(spacing: 14) {
@@ -53,9 +52,6 @@ struct LoginView: View {
                     .autocapitalization(.none)
                 SecureField("Password", text: $password)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
-                SecureField("KCP Master Key (Tự nạp từ ZhiConfig.json)", text: $customSymKey)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .autocapitalization(.none)
             }
             .padding(.horizontal, 24)
             
@@ -85,26 +81,19 @@ struct LoginView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
         }
-        .onAppear {
-            if customSymKey.isEmpty && !AppConfig.shared.kcpSymmetricKey.isEmpty {
-                customSymKey = AppConfig.shared.kcpSymmetricKey
-            }
-        }
     }
     
     private func performLogin() {
         let safeLanIP = lanIP.trimmingCharacters(in: .whitespacesAndNewlines)
         let safeTsIP = tsIP.trimmingCharacters(in: .whitespacesAndNewlines)
-        let activeSymKey = customSymKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? AppConfig.shared.kcpSymmetricKey
-            : customSymKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let activeSymKey = AppConfig.shared.kcpSymmetricKey
         
         if safeLanIP.isEmpty && safeTsIP.isEmpty {
             state.log("❌ Lỗi: Phải nhập ít nhất 1 địa chỉ IP Server!")
             return
         }
         if activeSymKey.count != 32 {
-            state.log("❌ Lỗi: KCP Master Key phải đủ 32 ký tự (trong ZhiConfig.json hoặc ô nhập)!")
+            state.log("❌ Lỗi: KCP Master Key trong ZhiConfig.json chưa đúng 32 ký tự!")
             return
         }
         
