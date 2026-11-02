@@ -21,13 +21,13 @@ struct FileExplorerView: View {
     @State private var showLogSheet = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 statusBarView
                 Divider()
                 fileListContentView
             }
-            .navigationTitle("ZhiAuth Explorer")
+            .navigationTitle(state.currentPath == "/" ? "ZhiAuth Explorer" : URL(fileURLWithPath: state.currentPath).lastPathComponent)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -78,21 +78,21 @@ struct FileExplorerView: View {
         HStack {
             HStack(spacing: 4) {
                 Circle()
-                    .fill(state.activeTunnel == .kcp ? Color.blue : (state.activeTunnel == .quic ? Color.orange : Color.green))
-                    .frame(width: 8, height: 8)
+                    .fill(state.activeTunnel == .kcp ? Color.blue : (state.activeTunnel == .quic ? Color.orange : Color.gray))
+                    .frame(width: 6, height: 6)
                 Text("\(state.activeTunnel.rawValue) | \(state.transferSpeed)")
-                    .font(.caption.monospacedDigit().bold())
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(state.activeTunnel == .kcp ? .blue : (state.activeTunnel == .quic ? .orange : .secondary))
             }
             Spacer()
             Text(state.displayPath(for: state.currentPath))
-                .font(.caption.monospaced())
+                .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
                 .truncationMode(.head)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(Color(UIColor.secondarySystemBackground))
     }
     
@@ -117,7 +117,7 @@ struct FileExplorerView: View {
                 }
             )
             .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+            .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
         }
         .listStyle(.plain)
         .refreshable {
@@ -129,19 +129,24 @@ struct FileExplorerView: View {
     @ViewBuilder
     private var loadingOverlayView: some View {
         if state.isLoading {
-            VStack(spacing: 10) {
+            VStack(spacing: 12) {
                 ProgressView()
+                    .scaleEffect(1.2)
                 Text("Đang xử lý (\(state.transferSpeed))...")
                     .font(.caption.bold())
             }
-            .padding(16)
-            .background(Color(UIColor.systemBackground).opacity(0.92))
+            .padding(20)
+            .background(.ultraThinMaterial)
             .cornerRadius(12)
-            .shadow(radius: 6)
         } else if state.fileList.isEmpty {
-            Text("Thư mục trống")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+            VStack(spacing: 8) {
+                Image(systemName: "folder.badge.questionmark")
+                    .font(.largeTitle)
+                    .foregroundColor(.secondary)
+                Text("Thư mục trống")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
         }
     }
     
@@ -149,40 +154,49 @@ struct FileExplorerView: View {
     private var leadingToolbarView: some View {
         if state.currentPath != "/" {
             Button(action: goUp) {
-                HStack(spacing: 4) {
+                HStack(spacing: 2) {
                     Image(systemName: "chevron.backward")
+                        .font(.system(size: 14, weight: .semibold))
                     Text("Lùi lại")
+                        .font(.subheadline)
                 }
             }
         }
     }
     
     private var trailingToolbarView: some View {
-        HStack(spacing: 14) {
-            if state.currentPath != "/" {
-                if state.clipboardItem != nil {
-                    Button(action: pasteItem) {
-                        Image(systemName: "doc.on.clipboard.fill").foregroundColor(.green)
+        HStack(spacing: 12) {
+            Button(action: { showLogSheet = true }) {
+                Image(systemName: "terminal")
+            }
+            
+            Menu {
+                if state.currentPath != "/" {
+                    Button(action: { showFileImporter = true }) {
+                        Label("Tải lên File", systemImage: "square.and.arrow.up")
+                    }
+                    Button(action: { newFolderName = ""; showNewFolderAlert = true }) {
+                        Label("Thư mục mới", systemImage: "folder.badge.plus")
+                    }
+                    if state.clipboardItem != nil {
+                        Divider()
+                        Button(action: pasteItem) {
+                            Label("Dán (Paste)", systemImage: "doc.on.clipboard")
+                        }
                     }
                 }
-                Button(action: { showFileImporter = true }) {
-                    Image(systemName: "square.and.arrow.up").foregroundColor(.blue)
+                Divider()
+                Button(role: .destructive, action: logout) {
+                    Label("Đăng xuất", systemImage: "power")
                 }
-                Button(action: { newFolderName = ""; showNewFolderAlert = true }) {
-                    Image(systemName: "folder.badge.plus").foregroundColor(.blue)
-                }
-            }
-            Button(action: { showLogSheet = true }) {
-                Image(systemName: "terminal").foregroundColor(.primary)
-            }
-            Button(action: logout) {
-                Image(systemName: "power").foregroundColor(.red)
+            } label: {
+                Image(systemName: "ellipsis.circle")
             }
         }
     }
     
     private var logConsoleSheetView: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 Text(state.logs)
                     .font(.system(size: 11, design: .monospaced))
@@ -479,7 +493,6 @@ struct FileExplorerView: View {
             do {
                 let startTotal = CFAbsoluteTimeGetCurrent()
                 
-                // Mở quyền truy cập file từ Document Picker
                 let hasSecurityScope = url.startAccessingSecurityScopedResource()
                 defer { if hasSecurityScope { url.stopAccessingSecurityScopedResource() } }
                 
