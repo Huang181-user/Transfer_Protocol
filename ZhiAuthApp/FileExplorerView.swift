@@ -107,7 +107,7 @@ struct FileExplorerView: View {
                         }
                     }
                     Button(action: { showFileImporter = true }) {
-                        Image(systemName: "square.and.arrow.up")
+                        Image(systemName: "plus")
                             .font(.system(size: 15))
                             .foregroundColor(.blue)
                     }
