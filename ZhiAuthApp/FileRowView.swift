@@ -11,13 +11,6 @@ struct FileRowView: View {
     let onSaveToDevice: () -> Void
     let onDelete: () -> Void
     
-    private var iconName: String {
-        if isRootTunnelMenu {
-            return item.name == "ZhiAuth_KCP" ? "bolt.Custom.network" : "shield.lefthalf.filled"
-        }
-        return item.isDirectory ? "folder.fill" : "doc.text.fill"
-    }
-    
     private var systemIconName: String {
         if isRootTunnelMenu {
             return item.name == "ZhiAuth_KCP" ? "network" : "bolt.horizontal.circle.fill"
@@ -43,20 +36,20 @@ struct FileRowView: View {
     
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 14) {
+            HStack(spacing: 10) {
                 Image(systemName: systemIconName)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 22, height: 22)
                     .foregroundColor(iconColor)
                 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(item.name)
-                        .font(.body.weight(.medium))
+                        .font(.subheadline.weight(.medium))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                     Text(subtitleText)
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -64,7 +57,7 @@ struct FileRowView: View {
                 Spacer()
                 
                 Image(systemName: "chevron.right")
-                    .font(.caption2)
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.secondary)
             }
             .contentShape(Rectangle())

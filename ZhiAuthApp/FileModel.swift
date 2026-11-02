@@ -26,12 +26,12 @@ struct ZhiFileItem: Identifiable, Hashable {
 struct FileItemButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .padding(.vertical, 10)
-            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(configuration.isPressed ? Color.blue.opacity(0.12) : Color(UIColor.secondarySystemBackground).opacity(0.45))
-            .cornerRadius(10)
-            .shadow(color: configuration.isPressed ? Color.black.opacity(0.22) : Color.black.opacity(0.04), radius: configuration.isPressed ? 4 : 1, x: 0, y: 2)
+            .background(configuration.isPressed ? Color.blue.opacity(0.15) : Color(UIColor.secondarySystemBackground).opacity(0.4))
+            .cornerRadius(8)
+            .shadow(color: configuration.isPressed ? Color.black.opacity(0.18) : Color.clear, radius: 2, x: 0, y: 1)
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }

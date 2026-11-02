@@ -16,7 +16,6 @@ class DocumentPresenter: NSObject, UIDocumentInteractionControllerDelegate {
         return topVC
     }
 
-    // Ưu tiên mở bằng trình mặc định của iOS (QuickLook), nếu không hỗ trợ mới bung bảng Share
     func presentNativeOrShare(for url: URL) {
         DispatchQueue.main.async {
             let controller = UIDocumentInteractionController(url: url)
@@ -30,7 +29,6 @@ class DocumentPresenter: NSObject, UIDocumentInteractionControllerDelegate {
         }
     }
     
-    // Mở trực tiếp bảng Share / Save to Files của iOS
     func presentShareSheet(for url: URL) {
         DispatchQueue.main.async {
             guard let topVC = self.topViewController() else { return }
@@ -49,9 +47,8 @@ class DocumentPresenter: NSObject, UIDocumentInteractionControllerDelegate {
     }
 }
 
-// Bộ chọn file từ bộ nhớ trong của iPhone để chép lên Server
 struct LocalFilePicker: UIViewControllerRepresentable {
-    var onPick: (URL) -> Void
+    var onPick: ([URL]) -> Void
     
     func makeCoordinator() -> Coordinator {
         Coordinator(onPick: onPick)
@@ -60,19 +57,19 @@ struct LocalFilePicker: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
         picker.delegate = context.coordinator
-        picker.allowsMultipleSelection = false
+        picker.allowsMultipleSelection = true
         return picker
     }
     
     func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
     
     class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPick: (URL) -> Void
-        init(onPick: @escaping (URL) -> Void) { self.onPick = onPick }
+        let onPick: ([URL]) -> Void
+        init(onPick: @escaping ([URL]) -> Void) { self.onPick = onPick }
         
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let first = urls.first else { return }
-            onPick(first)
+            guard !urls.isEmpty else { return }
+            onPick(urls)
         }
     }
 }

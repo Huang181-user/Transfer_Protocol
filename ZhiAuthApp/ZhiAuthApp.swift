@@ -15,6 +15,9 @@ struct ZhiAuthApp: App {
                         .environmentObject(appState)
                 }
             }
+            .onOpenURL { url in
+                appState.enqueueSharedFile(url: url)
+            }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ZhiAuthLog"))) { note in
                 if let msg = note.object as? String {
                     appState.log(msg)

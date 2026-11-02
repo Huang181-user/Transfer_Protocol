@@ -13,6 +13,9 @@ class AppState: ObservableObject {
     @Published var isCutOperation: Bool = false
     @Published var activeTunnel: ActiveTunnel = .none
     
+    // Danh sách các file được Share từ ứng dụng khác đang chờ người dùng chọn thư mục để lưu
+    @Published var pendingSharedURLs: [URL] = []
+    
     var sharedRoot: String = ""
     var baseIP: String = ""
     var kcpPort: Int = 6666
@@ -49,6 +52,14 @@ class AppState: ObservableObject {
         }
     }
     
+    // Tiêu đề thanh điều hướng không bao giờ làm lộ tên thư mục vật lý trên Server
+    var currentFolderTitle: String {
+        if currentPath == "/" { return "ZhiAuth Explorer" }
+        let prefix = activeTunnel == .kcp ? "ZhiAuth_KCP" : "ZhiAuth_QUIC"
+        if currentPath == sharedRoot { return prefix }
+        return URL(fileURLWithPath: currentPath).lastPathComponent
+    }
+    
     func displayPath(for rawPath: String) -> String {
         if rawPath == "/" { return "/ (Chọn Luồng)" }
         let prefix = activeTunnel == .kcp ? "/ZhiAuth_KCP" : "/ZhiAuth_QUIC"
@@ -60,7 +71,40 @@ class AppState: ObservableObject {
         return prefix
     }
     
-    // Bộ điều phối thông minh: KCP ưu tiên, tự động nhảy sang QUIC nếu KCP gặp sự cố
+    // Nhận file được Share từ ứng dụng khác (Photos, Files, Zalo...) và lưu vào bộ nhớ đệm chờ chọn đường dẫn
+    func enqueueSharedFile(url: URL) {
+        let hasScope = url.startAccessingSecurityScopedResource()
+        defer { if hasScope { url.stopAccessingSecurityScopedResource() } }
+        
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ZhiSharedInbox", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let destURL = tempDir.appendingPathComponent(url.lastPathComponent)
+        
+        do {
+            if FileManager.default.fileExists(atPath: destURL.path) {
+                try FileManager.default.removeItem(at: destURL)
+            }
+            try FileManager.default.copyItem(at: url, to: destURL)
+            DispatchQueue.main.async {
+                if !self.pendingSharedURLs.contains(destURL) {
+                    self.pendingSharedURLs.append(destURL)
+                }
+                self.log("📎 Đã nhận tệp '\(destURL.lastPathComponent)' từ Share Sheet. Hãy mở thư mục đích rồi bấm [Lưu vào đây].")
+            }
+        } catch {
+            log("❌ Không thể nhận tệp chia sẻ: \(error.localizedDescription)")
+        }
+    }
+    
+    func clearPendingSharedFiles() {
+        for url in pendingSharedURLs {
+            try? FileManager.default.removeItem(at: url)
+        }
+        DispatchQueue.main.async {
+            self.pendingSharedURLs.removeAll()
+        }
+    }
+    
     func dispatchRpc(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
         let startTime = CFAbsoluteTimeGetCurrent()
         let responseData: Data

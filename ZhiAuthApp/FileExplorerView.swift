@@ -23,26 +23,22 @@ struct FileExplorerView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                compactHeaderBar
                 statusBarView
                 Divider()
                 fileListContentView
-            }
-            .navigationTitle(state.currentPath == "/" ? "ZhiAuth Explorer" : URL(fileURLWithPath: state.currentPath).lastPathComponent)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    leadingToolbarView
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    trailingToolbarView
+                if !state.pendingSharedURLs.isEmpty {
+                    Divider()
+                    sharedFilesDestinationBar
                 }
             }
+            .toolbar(.hidden, for: .navigationBar)
             .onAppear {
                 loadDirectory(path: state.currentPath)
             }
             .sheet(isPresented: $showFileImporter) {
-                LocalFilePicker { pickedURL in
-                    uploadFileFromDevice(url: pickedURL)
+                LocalFilePicker { pickedURLs in
+                    uploadFilesFromDevice(urls: pickedURLs)
                 }
             }
             .sheet(isPresented: $showLogSheet) {
@@ -72,11 +68,75 @@ struct FileExplorerView: View {
         }
     }
     
-    // MARK: - Subviews
+    // MARK: - Thanh điều hướng nhỏ gọn (Không bị đóng khung viên thuốc khổng lồ trên iOS 26)
+    
+    private var compactHeaderBar: some View {
+        HStack(spacing: 12) {
+            if state.currentPath != "/" {
+                Button(action: goUp) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.backward")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text("Lùi lại")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .foregroundColor(.blue)
+                }
+            } else {
+                Image(systemName: "externaldrive.fill.badge.wifi")
+                    .font(.system(size: 16))
+                    .foregroundColor(.blue)
+            }
+            
+            Spacer()
+            
+            Text(state.currentFolderTitle)
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+            
+            Spacer()
+            
+            HStack(spacing: 14) {
+                if state.currentPath != "/" {
+                    if state.clipboardItem != nil {
+                        Button(action: pasteItem) {
+                            Image(systemName: "doc.on.clipboard.fill")
+                                .font(.system(size: 15))
+                                .foregroundColor(.green)
+                        }
+                    }
+                    Button(action: { showFileImporter = true }) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 15))
+                            .foregroundColor(.blue)
+                    }
+                    Button(action: { newFolderName = ""; showNewFolderAlert = true }) {
+                        Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 15))
+                            .foregroundColor(.blue)
+                    }
+                }
+                Button(action: { showLogSheet = true }) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 15))
+                        .foregroundColor(.primary)
+                }
+                Button(action: logout) {
+                    Image(systemName: "power")
+                        .font(.system(size: 15))
+                        .foregroundColor(.red)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(UIColor.systemBackground))
+    }
     
     private var statusBarView: some View {
         HStack {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Circle()
                     .fill(state.activeTunnel == .kcp ? Color.blue : (state.activeTunnel == .quic ? Color.orange : Color.gray))
                     .frame(width: 6, height: 6)
@@ -93,6 +153,57 @@ struct FileExplorerView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
+        .background(Color(UIColor.secondarySystemBackground))
+    }
+    
+    // MARK: - Thanh chọn thư mục đích khi Share file từ ngoài vào (Giống Google Drive / Owlfiles)
+    
+    private var sharedFilesDestinationBar: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Image(systemName: "tray.and.arrow.down.fill")
+                    .foregroundColor(.blue)
+                Text(state.pendingSharedURLs.count == 1
+                     ? "Tệp chờ lưu: \(state.pendingSharedURLs[0].lastPathComponent)"
+                     : "Đang chờ lưu \(state.pendingSharedURLs.count) tệp")
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Spacer()
+            }
+            
+            HStack(spacing: 10) {
+                Button(role: .destructive, action: {
+                    state.clearPendingSharedFiles()
+                }) {
+                    Text("Hủy bỏ")
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.red.opacity(0.15))
+                        .foregroundColor(.red)
+                        .cornerRadius(8)
+                }
+                
+                Button(action: {
+                    let urls = state.pendingSharedURLs
+                    uploadFilesFromDevice(urls: urls, clearPendingWhenDone: true)
+                }) {
+                    Text(state.currentPath == "/"
+                         ? "Hãy mở KCP/QUIC để chọn nơi lưu"
+                         : "Lưu vào \(state.displayPath(for: state.currentPath))")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(state.currentPath == "/" ? Color.gray.opacity(0.3) : Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                }
+                .disabled(state.currentPath == "/" || state.isLoading)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .background(Color(UIColor.secondarySystemBackground))
     }
     
@@ -117,7 +228,7 @@ struct FileExplorerView: View {
                 }
             )
             .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
+            .listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
         }
         .listStyle(.plain)
         .refreshable {
@@ -129,68 +240,22 @@ struct FileExplorerView: View {
     @ViewBuilder
     private var loadingOverlayView: some View {
         if state.isLoading {
-            VStack(spacing: 12) {
+            VStack(spacing: 10) {
                 ProgressView()
-                    .scaleEffect(1.2)
                 Text("Đang xử lý (\(state.transferSpeed))...")
                     .font(.caption.bold())
             }
-            .padding(20)
+            .padding(14)
             .background(.ultraThinMaterial)
-            .cornerRadius(12)
+            .cornerRadius(10)
         } else if state.fileList.isEmpty {
-            VStack(spacing: 8) {
-                Image(systemName: "folder.badge.questionmark")
-                    .font(.largeTitle)
+            VStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.title2)
                     .foregroundColor(.secondary)
                 Text("Thư mục trống")
-                    .font(.subheadline)
+                    .font(.caption)
                     .foregroundColor(.secondary)
-            }
-        }
-    }
-    
-    @ViewBuilder
-    private var leadingToolbarView: some View {
-        if state.currentPath != "/" {
-            Button(action: goUp) {
-                HStack(spacing: 2) {
-                    Image(systemName: "chevron.backward")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Lùi lại")
-                        .font(.subheadline)
-                }
-            }
-        }
-    }
-    
-    private var trailingToolbarView: some View {
-        HStack(spacing: 12) {
-            Button(action: { showLogSheet = true }) {
-                Image(systemName: "terminal")
-            }
-            
-            Menu {
-                if state.currentPath != "/" {
-                    Button(action: { showFileImporter = true }) {
-                        Label("Tải lên File", systemImage: "square.and.arrow.up")
-                    }
-                    Button(action: { newFolderName = ""; showNewFolderAlert = true }) {
-                        Label("Thư mục mới", systemImage: "folder.badge.plus")
-                    }
-                    if state.clipboardItem != nil {
-                        Divider()
-                        Button(action: pasteItem) {
-                            Label("Dán (Paste)", systemImage: "doc.on.clipboard")
-                        }
-                    }
-                }
-                Divider()
-                Button(role: .destructive, action: logout) {
-                    Label("Đăng xuất", systemImage: "power")
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
             }
         }
     }
@@ -483,50 +548,54 @@ struct FileExplorerView: View {
         }
     }
     
-    func uploadFileFromDevice(url: URL) {
-        let fileName = url.lastPathComponent
-        let destPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(fileName)" : "\(state.currentPath)/\(fileName)"
+    func uploadFilesFromDevice(urls: [URL], clearPendingWhenDone: Bool = false) {
+        guard !urls.isEmpty, state.currentPath != "/" else { return }
         state.isLoading = true
-        state.log("⬆️ Đang tải '\(fileName)' từ iPhone lên Server qua \(state.activeTunnel.rawValue)...")
         
         Task {
-            do {
-                let startTotal = CFAbsoluteTimeGetCurrent()
+            for url in urls {
+                let fileName = url.lastPathComponent
+                let destPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(fileName)" : "\(state.currentPath)/\(fileName)"
+                state.log("⬆️ Đang tải '\(fileName)' lên \(state.displayPath(for: state.currentPath)) qua \(state.activeTunnel.rawValue)...")
                 
-                let hasSecurityScope = url.startAccessingSecurityScopedResource()
-                defer { if hasSecurityScope { url.stopAccessingSecurityScopedResource() } }
-                
-                let fileData = try Data(contentsOf: url)
-                let totalSize = fileData.count
-                
-                _ = try await state.dispatchRpc(opcode: .OP_TRUNCATE, path: destPath, offset: 0, reqLen: 0, payloadData: nil)
-                
-                var offset = 0
-                let chunkSize = 32768
-                while offset < totalSize {
-                    let end = min(offset + chunkSize, totalSize)
-                    let chunk = fileData.subdata(in: offset..<end)
-                    _ = try await state.dispatchRpc(
-                        opcode: .OP_WRITE,
-                        path: destPath,
-                        offset: UInt64(offset),
-                        reqLen: UInt32(chunk.count),
-                        payloadData: chunk
-                    )
-                    offset = end
-                }
-                
-                let totalElapsed = CFAbsoluteTimeGetCurrent() - startTotal
-                state.updateSpeed(bytes: totalSize, durationSeconds: totalElapsed)
-                state.log("✅ Đã tải lên '\(fileName)' (\(totalSize) Bytes) thành công!")
-                await MainActor.run { state.isLoading = false }
-                await refreshList()
-            } catch {
-                await MainActor.run {
-                    state.isLoading = false
-                    state.log("❌ Lỗi tải file lên Server: \(error.localizedDescription)")
+                do {
+                    let startTotal = CFAbsoluteTimeGetCurrent()
+                    let hasSecurityScope = url.startAccessingSecurityScopedResource()
+                    defer { if hasSecurityScope { url.stopAccessingSecurityScopedResource() } }
+                    
+                    let fileData = try Data(contentsOf: url)
+                    let totalSize = fileData.count
+                    
+                    _ = try await state.dispatchRpc(opcode: .OP_TRUNCATE, path: destPath, offset: 0, reqLen: 0, payloadData: nil)
+                    
+                    var offset = 0
+                    let chunkSize = 32768
+                    while offset < totalSize {
+                        let end = min(offset + chunkSize, totalSize)
+                        let chunk = fileData.subdata(in: offset..<end)
+                        _ = try await state.dispatchRpc(
+                            opcode: .OP_WRITE,
+                            path: destPath,
+                            offset: UInt64(offset),
+                            reqLen: UInt32(chunk.count),
+                            payloadData: chunk
+                        )
+                        offset = end
+                    }
+                    
+                    let totalElapsed = CFAbsoluteTimeGetCurrent() - startTotal
+                    state.updateSpeed(bytes: totalSize, durationSeconds: totalElapsed)
+                    state.log("✅ Đã tải lên '\(fileName)' (\(totalSize) Bytes) thành công!")
+                } catch {
+                    state.log("❌ Lỗi tải file '\(fileName)': \(error.localizedDescription)")
                 }
             }
+            
+            if clearPendingWhenDone {
+                state.clearPendingSharedFiles()
+            }
+            await MainActor.run { state.isLoading = false }
+            await refreshList()
         }
     }
     

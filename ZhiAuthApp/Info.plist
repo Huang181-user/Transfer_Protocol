@@ -16,7 +16,26 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>UILaunchScreen</key>
+	<dict/>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Cần quyền mạng nội bộ để kết nối KCP (UDP) tới Server.</string>
+	<string>Cần quyền mạng nội bộ để kết nối KCP và QUIC tới Server.</string>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>All Files</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.item</string>
+				<string>public.data</string>
+				<string>public.content</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
