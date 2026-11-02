@@ -37,6 +37,7 @@ struct FileExplorerView: View {
                     trailingToolbarView
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ZhiAuthRefreshList"))) { _ in Task { await refreshList() } }
             .onAppear {
                 loadDirectory(path: state.currentPath)
             }

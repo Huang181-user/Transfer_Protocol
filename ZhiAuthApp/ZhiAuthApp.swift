@@ -4,7 +4,7 @@ import SwiftUI
 struct ZhiAuthApp: App {
     @StateObject private var appState = AppState()
     
-    // Biến hứng URL file được ném từ app khác qua
+    // Biến dùng để hứng file từ các App khác bắn qua Share Sheet
     @State private var sharedFileURL: URL? = nil
     @State private var showUploadConfirm = false
     
@@ -14,24 +14,25 @@ struct ZhiAuthApp: App {
                 if appState.isLoggedIn {
                     FileExplorerView()
                         .environmentObject(appState)
-                        // Bắt sự kiện iOS mở app và ném file vào
+                        // Lắng nghe sự kiện iOS ném URL file vào App
                         .onOpenURL { url in
-                            // Copy file vào thư mục temp để tránh bị iOS thu hồi quyền truy cập
-                            if let tempURL = copyToTemp(url: url) {
-                                sharedFileURL = tempURL
-                                showUploadConfirm = true
+                            if let safeURL = copyFileToTempDir(url: url) {
+                                self.sharedFileURL = safeURL
+                                self.showUploadConfirm = true
+                            } else {
+                                appState.log("❌ Lỗi: Không thể sao chép file từ Share Sheet vào bộ nhớ đệm an toàn của ZhiAuth.")
                             }
                         }
-                        // Hiển thị hộp thoại hỏi người dùng có muốn upload không
-                        .alert("Lưu file lên ZhiAuth", isPresented: $showUploadConfirm, presenting: sharedFileURL) { fileURL in
-                            Button("Tải lên ngay", action: {
+                        // Bật popup hỏi xem ný muốn upload nó đi đâu
+                        .alert("Lưu File lên ZhiAuth", isPresented: $showUploadConfirm, presenting: sharedFileURL) { fileURL in
+                            Button("Lưu vào Thư mục hiện tại") {
                                 uploadSharedFile(url: fileURL)
-                            })
+                            }
                             Button("Hủy", role: .cancel) {
                                 try? FileManager.default.removeItem(at: fileURL)
                             }
                         } message: { fileURL in
-                            Text("Bạn muốn tải file '\(fileURL.lastPathComponent)' lên thư mục hiện tại: \(appState.displayPath(for: appState.currentPath)) không?")
+                            Text("Bạn muốn đẩy tệp '\(fileURL.lastPathComponent)' lên thư mục [ \(appState.displayPath(for: appState.currentPath)) ] không?")
                         }
                 } else {
                     LoginView()
@@ -46,10 +47,15 @@ struct ZhiAuthApp: App {
         }
     }
     
-    // Copy file vào thư mục Temp nội bộ của app để đọc an toàn
-    private func copyToTemp(url: URL) -> URL? {
+    // 🔥 Bảo vệ an toàn (Sandbox bypass): Copy URL được Share vào thư mục Tmp của App trước
+    private func copyFileToTempDir(url: URL) -> URL? {
+        // Có những trường hợp iOS đòi cấp quyền bảo mật
+        let hasSecurityScope = url.startAccessingSecurityScopedResource()
+        defer { if hasSecurityScope { url.stopAccessingSecurityScopedResource() } }
+        
         let tempDir = FileManager.default.temporaryDirectory
         let destURL = tempDir.appendingPathComponent(url.lastPathComponent)
+        
         do {
             if FileManager.default.fileExists(atPath: destURL.path) {
                 try FileManager.default.removeItem(at: destURL)
@@ -57,18 +63,17 @@ struct ZhiAuthApp: App {
             try FileManager.default.copyItem(at: url, to: destURL)
             return destURL
         } catch {
-            appState.log("❌ Lỗi tiếp nhận file chia sẻ: \(error.localizedDescription)")
             return nil
         }
     }
     
-    // Bơm file lên Server qua luồng đang Active (KCP hoặc QUIC)
+    // Gọi hàm upload từ xa trong FileExplorerView thông qua AppState (tránh nhúng view loạn xạ)
     private func uploadSharedFile(url: URL) {
         let fileName = url.lastPathComponent
         let destPath = appState.currentPath.hasSuffix("/") ? "\(appState.currentPath)\(fileName)" : "\(appState.currentPath)/\(fileName)"
         
         appState.isLoading = true
-        appState.log("⬆️ Đang tải '\(fileName)' được Share từ ngoài vào Server qua \(appState.activeTunnel.rawValue)...")
+        appState.log("⬆️ Đang tải tệp '\(fileName)' từ Share Sheet lên Server qua luồng \(appState.activeTunnel.rawValue)...")
         
         Task {
             do {
@@ -95,20 +100,17 @@ struct ZhiAuthApp: App {
                 
                 let totalElapsed = CFAbsoluteTimeGetCurrent() - startTotal
                 appState.updateSpeed(bytes: totalSize, durationSeconds: totalElapsed)
-                appState.log("✅ Đã tải file Share lên Server thành công!")
+                appState.log("✅ Đã nhận và tải file Share lên Server thành công!")
                 
-                // Dọn rác
-                try? FileManager.default.removeItem(at: url)
+                try? FileManager.default.removeItem(at: url) // Dọn rác file tạm
+                await MainActor.run { appState.isLoading = false }
                 
-                // Kích hoạt load lại thư mục
-                await MainActor.run {
-                    appState.isLoading = false
-                    NotificationCenter.default.post(name: NSNotification.Name("ZhiAuthRefresh"), object: nil)
-                }
+                // Cập nhật lại UI thông qua Notification
+                NotificationCenter.default.post(name: NSNotification.Name("ZhiAuthRefreshList"), object: nil)
             } catch {
                 await MainActor.run {
                     appState.isLoading = false
-                    appState.log("❌ Lỗi tải file Share lên Server: \(error.localizedDescription)")
+                    appState.log("❌ Lỗi Upload file Share: \(error.localizedDescription)")
                 }
             }
         }
