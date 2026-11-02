@@ -37,7 +37,6 @@ struct FileExplorerView: View {
                     trailingToolbarView
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ZhiAuthRefreshList"))) { _ in Task { await refreshList() } }
             .onAppear {
                 loadDirectory(path: state.currentPath)
             }
@@ -73,7 +72,7 @@ struct FileExplorerView: View {
         }
     }
     
-    // MARK: - Subviews được tách nhỏ giúp Swift biên dịch tức thì
+    // MARK: - Subviews
     
     private var statusBarView: some View {
         HStack {
@@ -202,7 +201,7 @@ struct FileExplorerView: View {
         }
     }
     
-    // MARK: - Xử lý thao tác duyệt file & truyền tải
+    // MARK: - Xử lý thao tác
     
     private func handleItemTap(_ item: ZhiFileItem) {
         if state.currentPath == "/" {
@@ -419,7 +418,6 @@ struct FileExplorerView: View {
         }
     }
     
-    // Tải file từ Server về iPhone để mở bằng QuickLook gốc hoặc Lưu vào máy
     func downloadFile(item: ZhiFileItem, openNativePreview: Bool) {
         state.isLoading = true
         state.log("⬇️ Đang tải '\(item.name)' (\(item.sizeString)) qua \(state.activeTunnel.rawValue)...")
@@ -471,7 +469,6 @@ struct FileExplorerView: View {
         }
     }
     
-    // Chép file từ bộ nhớ trong của iPhone lên thẳng Server
     func uploadFileFromDevice(url: URL) {
         let fileName = url.lastPathComponent
         let destPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(fileName)" : "\(state.currentPath)/\(fileName)"
@@ -481,10 +478,14 @@ struct FileExplorerView: View {
         Task {
             do {
                 let startTotal = CFAbsoluteTimeGetCurrent()
+                
+                // Mở quyền truy cập file từ Document Picker
+                let hasSecurityScope = url.startAccessingSecurityScopedResource()
+                defer { if hasSecurityScope { url.stopAccessingSecurityScopedResource() } }
+                
                 let fileData = try Data(contentsOf: url)
                 let totalSize = fileData.count
                 
-                // Khởi tạo / làm rỗng file đích trước khi bơm từng khối
                 _ = try await state.dispatchRpc(opcode: .OP_TRUNCATE, path: destPath, offset: 0, reqLen: 0, payloadData: nil)
                 
                 var offset = 0
