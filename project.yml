@@ -1,6 +1,6 @@
 name: ZhiAuth
 options:
-  bundleIdPrefix: com.ruanhuang
+  bundleIdPrefix: com.zhiauth
 
 packages:
   Sodium:
@@ -18,16 +18,18 @@ targets:
         excludes:
           - Info.plist
       - src
-      - ZhiConfig.json
+      - path: ZhiConfig.json
+        buildPhase: resources
     infoPlist: ZhiAuthApp/Info.plist
     settings:
-      PRODUCT_BUNDLE_IDENTIFIER: com.ruanhuang.ZhiAuthApp
+      PRODUCT_BUNDLE_IDENTIFIER: com.zhiauth.client
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h
       HEADER_SEARCH_PATHS: 
         - $(SRCROOT)/src/bridge
         - $(SRCROOT)/src/rpc_client
         - $(SRCROOT)/src
         - /opt/homebrew/include
+        - /opt/homebrew/opt/asio/include
         - /usr/local/include
       CLANG_ENABLE_MODULES: "YES"
       OTHER_LDFLAGS: "-lc++"

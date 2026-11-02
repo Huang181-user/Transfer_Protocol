@@ -1,1 +1,7 @@
 ZhiConfig.json
+build/
+Payload/
+*.ipa
+*.xcuserdata
+xcuserdata/
+.DS_Store

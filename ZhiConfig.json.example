@@ -1,0 +1,10 @@
+{
+  "kcp_symmetric_key": "",
+  "default_lan_ip": "",
+  "default_ts_ip": "",
+  "default_username": "",
+  "default_auth_port": 5555,
+  "default_quic_port": 4433,
+  "default_kcp_port": 6666,
+  "default_mtu": 1200
+}

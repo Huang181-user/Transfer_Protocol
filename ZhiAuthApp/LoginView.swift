@@ -27,18 +27,19 @@ func getDeviceIPs() -> (lan: String, ts: String) {
 
 struct LoginView: View {
     @EnvironmentObject var state: AppState
-    @AppStorage("savedLanIP") private var lanIP: String = "192.168.1.83"
-    @AppStorage("savedTsIP") private var tsIP: String = ""
-    @AppStorage("savedUser") private var username: String = "huang"
+    @AppStorage("savedLanIP") private var lanIP: String = AppConfig.shared.defaultLanIp
+    @AppStorage("savedTsIP") private var tsIP: String = AppConfig.shared.defaultTsIp
+    @AppStorage("savedUser") private var username: String = AppConfig.shared.defaultUsername
     @AppStorage("savedPass") private var password: String = ""
+    @AppStorage("savedSymKey") private var customSymKey: String = AppConfig.shared.kcpSymmetricKey
     
     var body: some View {
-        VStack(spacing: 16) {
-            Text("ZhiAuth v6.0").font(.largeTitle).bold().padding(.top, 24)
+        VStack(spacing: 14) {
+            Text("ZhiAuth v6.0").font(.largeTitle).bold().padding(.top, 20)
             Text("Dual-Tunnel: KCP (Primary) + QUIC (Fallback)")
                 .font(.caption).foregroundColor(.secondary)
             
-            VStack(spacing: 12) {
+            VStack(spacing: 10) {
                 TextField("LAN IP Server", text: $lanIP)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .keyboardType(.numbersAndPunctuation)
@@ -52,6 +53,9 @@ struct LoginView: View {
                     .autocapitalization(.none)
                 SecureField("Password", text: $password)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
+                SecureField("KCP Master Key (Tự nạp từ ZhiConfig.json)", text: $customSymKey)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .autocapitalization(.none)
             }
             .padding(.horizontal, 24)
             
@@ -81,13 +85,26 @@ struct LoginView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
         }
+        .onAppear {
+            if customSymKey.isEmpty && !AppConfig.shared.kcpSymmetricKey.isEmpty {
+                customSymKey = AppConfig.shared.kcpSymmetricKey
+            }
+        }
     }
     
     private func performLogin() {
         let safeLanIP = lanIP.trimmingCharacters(in: .whitespacesAndNewlines)
         let safeTsIP = tsIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        let activeSymKey = customSymKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? AppConfig.shared.kcpSymmetricKey
+            : customSymKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        
         if safeLanIP.isEmpty && safeTsIP.isEmpty {
             state.log("❌ Lỗi: Phải nhập ít nhất 1 địa chỉ IP Server!")
+            return
+        }
+        if activeSymKey.count != 32 {
+            state.log("❌ Lỗi: KCP Master Key phải đủ 32 ký tự (trong ZhiConfig.json hoặc ô nhập)!")
             return
         }
         
@@ -135,7 +152,7 @@ struct LoginView: View {
                 let kcpOk = ZhiKcpEngine.initCore(
                     ip: winningIP,
                     port: Int32(auth.kcpPort),
-                    symKey: AppConfig.shared.kcpSymmetricKey,
+                    symKey: activeSymKey,
                     mtu: AppConfig.shared.defaultMtu,
                     tuning: auth.tuning
                 )

@@ -16,12 +16,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Khởi tạo ZhiConfig.json bảo mật trước khi chạy XcodeGen
+        env:
+          ZHI_CONFIG_SECRET: ${{ secrets.ZHI_CONFIG_JSON }}
+        run: |
+          if [ -n "$ZHI_CONFIG_SECRET" ]; then
+            echo "🔐 Đang nạp ZhiConfig.json từ GitHub Actions Secret..."
+            echo "$ZHI_CONFIG_SECRET" > ZhiConfig.json
+          elif [ ! -f ZhiConfig.json ]; then
+            echo "⚠️ Chưa cài GitHub Secret ZHI_CONFIG_JSON, dùng bản mẫu ZhiConfig.json.example để build..."
+            cp ZhiConfig.json.example ZhiConfig.json
+          fi
+
       - name: Cài đặt XcodeGen & ASIO
         run: |
           brew install xcodegen asio
           xcodegen generate
 
-      - name: Biên dịch Xcode Project (Sử dụng Xcode mặc định của macos-latest)
+      - name: Biên dịch Xcode Project
         run: |
           set -o pipefail
           xcodebuild clean build \
@@ -37,13 +49,12 @@ jobs:
 
       - name: Đóng gói thành file .ipa chuẩn
         run: |
-          echo "==== ĐANG ĐÓNG GÓI THÀNH IPA CHUẨN APPLE ===="
           mkdir -p Payload
           cp -R build/Release-iphoneos/ZhiAuthApp.app Payload/
           ditto -c -k --sequesterRsrc --keepParent Payload ZhiAuthApp.ipa
           echo "✅ Đóng gói hoàn tất!"
 
-      - name: Xuất file IPA cho Ný tải
+      - name: Xuất file IPA
         uses: actions/upload-artifact@v4
         with:
           name: ZhiAuthApp-iOS
