@@ -13,10 +13,20 @@ class AppState: ObservableObject {
     @Published var isCutOperation: Bool = false
     @Published var activeTunnel: ActiveTunnel = .none
     
-    // Danh sách các file được Share từ ứng dụng khác đang chờ người dùng chọn thư mục để lưu
     @Published var pendingSharedURLs: [URL] = []
     
+    var sharedRoot: String = ""
+    var baseIP: String = ""
+    var kcpPort: Int = 6666
+    var quicPort: UInt16 = 4433
+    let quicTunnel = ZhiQuicTunnel()
+    
     private var watchdogTimer: Timer?
+    var lastLanIP: String = ""
+    var lastTsIP: String = ""
+    var sessionToken: String = ""
+    var hardwareMac: String = UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN"
+    
     func startWatchdog() {
         watchdogTimer?.invalidate()
         watchdogTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
@@ -27,17 +37,15 @@ class AppState: ObservableObject {
                 let curLan = currentIPs.lan.isEmpty ? "N/A" : currentIPs.lan
                 let curTs = currentIPs.ts.isEmpty ? "N/A" : currentIPs.ts
                 if curLan != self.lastLanIP || curTs != self.lastTsIP {
-                    self.lastLanIP = curLan; self.lastTsIP = curTs
+                    self.lastLanIP = curLan
+                    self.lastTsIP = curTs
                     self.log("⚡ [ROAMING] Đổi mạng! Khôi phục phiên...")
                     await self.triggerEmergencyReauth(lanIP: curLan, tsIP: curTs)
                 }
             }
         }
     }
-    var lastLanIP: String = ""
-    var lastTsIP: String = ""
-    var sessionToken: String = ""
-    var hardwareMac: String = UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN"
+    
     private func triggerEmergencyReauth(lanIP: String, tsIP: String) async {
         let authCmd = "ROAM_REQ|TOKEN:\(sessionToken)|LAN:\(lanIP)|TS:\(tsIP)|HWID:\(hardwareMac)"
         do {
@@ -59,25 +67,6 @@ class AppState: ObservableObject {
             }
         } catch { self.log("❌ [RE-AUTH] Rớt mạng...") }
     }
-    var sharedRoot: String = "" }
-            }
-            if resp == nil && tsIP != "N/A" {
-                let ipToKnock = AppConfig.shared.defaultTsIp
-                if !ipToKnock.isEmpty { resp = try? await ZhiNetworkAuth.executePortKnockingAuth(ip: ipToKnock, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd); if resp?.isSuccess == true { newBaseIP = ipToKnock } }
-            }
-            if let auth = resp, auth.isSuccess {
-                self.baseIP = newBaseIP; self.kcpPort = auth.kcpPort; self.quicPort = UInt16(auth.quicPort)
-                _ = ZhiKcpEngine.initCore(ip: self.baseIP, port: Int32(self.kcpPort), symKey: auth.symKey, mtu: AppConfig.shared.defaultMtu, tuning: auth.tuning)
-                self.quicTunnel.configure(ip: self.baseIP, port: self.quicPort)
-                self.log("✅ [RE-AUTH] Khôi phục phiên qua \(self.baseIP)")
-            }
-        } catch { self.log("❌ [RE-AUTH] Rớt mạng...") }
-    }
-
-    var baseIP: String = ""
-    var kcpPort: Int = 6666
-    var quicPort: UInt16 = 4433
-    let quicTunnel = ZhiQuicTunnel()
     
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -109,7 +98,6 @@ class AppState: ObservableObject {
         }
     }
     
-    // Tiêu đề thanh điều hướng không bao giờ làm lộ tên thư mục vật lý trên Server
     var currentFolderTitle: String {
         if currentPath == "/" { return "ZhiAuth Explorer" }
         let prefix = activeTunnel == .kcp ? "ZhiAuth_KCP" : "ZhiAuth_QUIC"
@@ -128,7 +116,6 @@ class AppState: ObservableObject {
         return prefix
     }
     
-    // Nhận file được Share từ ứng dụng khác (Photos, Files, Zalo...) và lưu vào bộ nhớ đệm chờ chọn đường dẫn
     func enqueueSharedFile(url: URL) {
         let hasScope = url.startAccessingSecurityScopedResource()
         defer { if hasScope { url.stopAccessingSecurityScopedResource() } }

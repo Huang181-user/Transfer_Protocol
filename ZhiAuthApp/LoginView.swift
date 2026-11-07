@@ -132,9 +132,9 @@ struct LoginView: View {
                 
                 guard let (winningIP, auth) = winner else {
                     state.log("❌ Xác thực thất bại hoặc Timeout cả LAN & Tailscale!")
-                    await MainActor.run { state.isLoading = false
-                    state.startWatchdog()
-}
+                    await MainActor.run { 
+                        state.isLoading = false 
+                    }
                     return
                 }
                 
@@ -168,12 +168,12 @@ struct LoginView: View {
                     state.isLoggedIn = true
                     state.isLoading = false
                     state.startWatchdog()
-}
+                }
             } catch {
                 state.log("❌ Lỗi đăng nhập: \(error.localizedDescription)")
-                await MainActor.run { state.isLoading = false
-                    state.startWatchdog()
-}
+                await MainActor.run { 
+                    state.isLoading = false 
+                }
             }
         }
     }

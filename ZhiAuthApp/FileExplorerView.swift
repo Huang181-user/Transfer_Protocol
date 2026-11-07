@@ -70,8 +70,6 @@ struct FileExplorerView: View {
         }
     }
     
-    // MARK: - Thanh điều hướng nhỏ gọn (Không bị đóng khung viên thuốc khổng lồ trên iOS 26)
-    
     private var compactHeaderBar: some View {
         HStack(spacing: 12) {
             if state.currentPath != "/" {
@@ -157,8 +155,6 @@ struct FileExplorerView: View {
         .padding(.vertical, 6)
         .background(Color(UIColor.secondarySystemBackground))
     }
-    
-    // MARK: - Thanh chọn thư mục đích khi Share file từ ngoài vào (Giống Google Drive / Owlfiles)
     
     private var sharedFilesDestinationBar: some View {
         VStack(spacing: 8) {
@@ -281,8 +277,6 @@ struct FileExplorerView: View {
             }
         }
     }
-    
-    // MARK: - Xử lý thao tác
     
     private func handleItemTap(_ item: ZhiFileItem) {
         if state.currentPath == "/" {

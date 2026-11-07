@@ -56,7 +56,6 @@ public class ZhiNetworkAuth {
             
             let state = AuthState()
             
-            // HẸN GIỜ NỔ: Sau đúng 3 giây nếu chưa kết nối xong thì cắt cầu dao báo lỗi thẳng lên màn hình!
             serialQueue.asyncAfter(deadline: .now() + 3.0) {
                 if state.claimResponse() {
                     connection.cancel()
@@ -112,7 +111,6 @@ public class ZhiNetworkAuth {
                         continuation.resume(throwing: NSError(domain: "ZhiAuth.Network", code: -402, userInfo: [NSLocalizedDescriptionKey: "Đã huỷ kết nối"]))
                     }
                 case .waiting(let err):
-                    // Bắt chặt case ngắt mạng hoặc sai IP
                     connection.cancel()
                     if state.claimResponse() {
                         continuation.resume(throwing: err)
