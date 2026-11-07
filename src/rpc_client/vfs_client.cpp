@@ -64,7 +64,7 @@ bool VfsClient::start() {
     ikcp_wndsize(kcp_cb_, snd_wnd_, rcv_wnd_); 
     kcp_cb_->stream = 0; ikcp_setmtu(kcp_cb_, safe_mtu); kcp_cb_->rx_minrto = 10;
 
-    io_thread_ = std::thread([this]() { asio::io_context::work work(io_context_); receive_loop(); io_context_.run(); });
+    io_thread_ = std::thread([this]() { auto work = asio::make_work_guard(io_context_); receive_loop(); io_context_.run(); });
     timer_thread_ = std::thread(&VfsClient::kcp_update_loop, this);
     return true;
 }
