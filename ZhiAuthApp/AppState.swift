@@ -16,6 +16,49 @@ class AppState: ObservableObject {
     // Danh sách các file được Share từ ứng dụng khác đang chờ người dùng chọn thư mục để lưu
     @Published var pendingSharedURLs: [URL] = []
     
+    private var watchdogTimer: Timer?
+    func startWatchdog() {
+        watchdogTimer?.invalidate()
+        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.isLoggedIn else { return }
+            Task {
+                do { _ = try await self.dispatchRpc(opcode: .OP_PING, path: "", offset: 0, reqLen: 0, payloadData: nil) } catch { self.log("⚠️ [WATCHDOG] Lỗi Ping") }
+                let currentIPs = getDeviceIPs()
+                let curLan = currentIPs.lan.isEmpty ? "N/A" : currentIPs.lan
+                let curTs = currentIPs.ts.isEmpty ? "N/A" : currentIPs.ts
+                if curLan != self.lastLanIP || curTs != self.lastTsIP {
+                    self.lastLanIP = curLan; self.lastTsIP = curTs
+                    self.log("⚡ [ROAMING] Đổi mạng! Khôi phục phiên...")
+                    await self.triggerEmergencyReauth(lanIP: curLan, tsIP: curTs)
+                }
+            }
+        }
+    }
+    var lastLanIP: String = ""
+    var lastTsIP: String = ""
+    var sessionToken: String = ""
+    var hardwareMac: String = UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN"
+    private func triggerEmergencyReauth(lanIP: String, tsIP: String) async {
+        let authCmd = "ROAM_REQ|TOKEN:\(sessionToken)|LAN:\(lanIP)|TS:\(tsIP)|HWID:\(hardwareMac)"
+        do {
+            var newBaseIP = ""
+            var resp: AuthResponse? = nil
+            if lanIP != "N/A" {
+                let ipToKnock = AppConfig.shared.defaultLanIp
+                if !ipToKnock.isEmpty { resp = try? await ZhiNetworkAuth.executePortKnockingAuth(ip: ipToKnock, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd); if resp?.isSuccess == true { newBaseIP = ipToKnock } }
+            }
+            if resp == nil && tsIP != "N/A" {
+                let ipToKnock = AppConfig.shared.defaultTsIp
+                if !ipToKnock.isEmpty { resp = try? await ZhiNetworkAuth.executePortKnockingAuth(ip: ipToKnock, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd); if resp?.isSuccess == true { newBaseIP = ipToKnock } }
+            }
+            if let auth = resp, auth.isSuccess {
+                self.baseIP = newBaseIP; self.kcpPort = auth.kcpPort; self.quicPort = UInt16(auth.quicPort)
+                _ = ZhiKcpEngine.initCore(ip: self.baseIP, port: Int32(self.kcpPort), symKey: auth.symKey, mtu: AppConfig.shared.defaultMtu, tuning: auth.tuning)
+                self.quicTunnel.configure(ip: self.baseIP, port: self.quicPort)
+                self.log("✅ [RE-AUTH] Khôi phục phiên qua \(self.baseIP)")
+            }
+        } catch { self.log("❌ [RE-AUTH] Rớt mạng...") }
+    }
     var sharedRoot: String = ""
     private var watchdogTimer: Timer?
     func startWatchdog() {

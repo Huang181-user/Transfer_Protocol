@@ -35,7 +35,7 @@ struct FileExplorerView: View {
             .toolbar(.hidden, for: .navigationBar)
             .task {
                 if state.fileList.isEmpty {
-                    loadDirectory(path: state.currentPath)
+                    loadDirectory(path: state.currentPath) }
                 }
             }
             .sheet(isPresented: $showFileImporter) {
@@ -369,7 +369,7 @@ struct FileExplorerView: View {
     }
     
     func refreshList() async {
-        loadDirectory(path: state.currentPath)
+        loadDirectory(path: state.currentPath) }
     }
     
     func createFolder() {

@@ -134,6 +134,7 @@ struct LoginView: View {
                     state.log("❌ Xác thực thất bại hoặc Timeout cả LAN & Tailscale!")
                     await MainActor.run { state.isLoading = false
                     state.startWatchdog()
+                    state.startWatchdog()
                     state.startWatchdog() }
                     return
                 }
@@ -161,6 +162,7 @@ struct LoginView: View {
                     state.sharedRoot = auth.sharedPath.isEmpty ? "/tmp" : auth.sharedPath
                     state.sessionToken = authCmd.components(separatedBy: "|").first(where: { $0.hasPrefix("TOKEN:") })?.replacingOccurrences(of: "TOKEN:", with: "") ?? ""
                     state.sessionToken = authCmd.components(separatedBy: "|").first(where: { $0.hasPrefix("TOKEN:") })?.replacingOccurrences(of: "TOKEN:", with: "") ?? ""
+                    state.sessionToken = authCmd.components(separatedBy: "|").first(where: { $0.hasPrefix("TOKEN:") })?.replacingOccurrences(of: "TOKEN:", with: "") ?? ""
                     state.baseIP = winningIP
                     state.kcpPort = auth.kcpPort
                     state.quicPort = UInt16(auth.quicPort)
@@ -170,10 +172,12 @@ struct LoginView: View {
                     state.isLoading = false
                     state.startWatchdog()
                     state.startWatchdog()
+                    state.startWatchdog()
                 }
             } catch {
                 state.log("❌ Lỗi đăng nhập: \(error.localizedDescription)")
                 await MainActor.run { state.isLoading = false
+                    state.startWatchdog()
                     state.startWatchdog()
                     state.startWatchdog() }
             }
