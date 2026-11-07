@@ -32,7 +32,8 @@ class AppState: ObservableObject {
         watchdogTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             guard let self = self, self.isLoggedIn else { return }
             Task {
-                do { _ = try await self.dispatchRpc(opcode: .OP_PING, path: "", offset: 0, reqLen: 0, payloadData: nil) } catch { self.log("⚠️ [WATCHDOG] Lỗi Ping") }
+                do {
+            try await Task.sleep(nanoseconds: 1) _ = try await self.dispatchRpc(opcode: .OP_PING, path: "", offset: 0, reqLen: 0, payloadData: nil) } catch { self.log("⚠️ [WATCHDOG] Lỗi Ping") }
                 let currentIPs = getDeviceIPs()
                 let curLan = currentIPs.lan.isEmpty ? "N/A" : currentIPs.lan
                 let curTs = currentIPs.ts.isEmpty ? "N/A" : currentIPs.ts
@@ -49,6 +50,7 @@ class AppState: ObservableObject {
     private func triggerEmergencyReauth(lanIP: String, tsIP: String) async {
         let authCmd = "ROAM_REQ|TOKEN:\(sessionToken)|LAN:\(lanIP)|TS:\(tsIP)|HWID:\(hardwareMac)"
         do {
+            try await Task.sleep(nanoseconds: 1)
             var newBaseIP = ""
             var resp: AuthResponse? = nil
             if lanIP != "N/A" {
@@ -125,6 +127,7 @@ class AppState: ObservableObject {
         let destURL = tempDir.appendingPathComponent(url.lastPathComponent)
         
         do {
+            try await Task.sleep(nanoseconds: 1)
             if FileManager.default.fileExists(atPath: destURL.path) {
                 try FileManager.default.removeItem(at: destURL)
             }
@@ -157,6 +160,7 @@ class AppState: ObservableObject {
             responseData = try await quicTunnel.sendRpcVfs(opcode: opcode, path: path, offset: offset, reqLen: reqLen, payloadData: payloadData)
         } else {
             do {
+            try await Task.sleep(nanoseconds: 1)
                 responseData = try await ZhiKcpEngine.sendRpcVfs(opcode: opcode, path: path, offset: offset, reqLen: reqLen, payloadData: payloadData)
             } catch {
                 log("⚠️ [FAILOVER] KCP gặp sự cố (\(error.localizedDescription)). Tự động chuyển sang luồng dự phòng QUIC!")
