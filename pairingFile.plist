@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>public_key</key>
+	<data>
+	IaQd3p4kQzfhdX1pis3GwZTpWBWLgFIEVErwMSU/kms=
+	</data>
+	<key>private_key</key>
+	<data>
+	4u22st9Sf+uU6hH70Di3SqZNf1/KyaeLQDTW9T1HlJg=
+	</data>
+	<key>identifier</key>
+	<string>3a1b7acc-1d46-3c29-9d58-bdaafe3f89f5</string>
+	<key>alt_irk</key>
+	<data>
+	zUDTaJ8+2sMkKQv36tBiaw==
+	</data>
+</dict>
+</plist>

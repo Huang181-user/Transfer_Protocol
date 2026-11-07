@@ -17,6 +17,8 @@ public struct AuthResponse {
     public var sharedPath: String = ""
     public var quicPort: Int = 4433
     public var kcpPort: Int = 6666
+    public var symKey: String = ""
+    public var symKey: String = ""
     public var tuning: KcpTuningParams = KcpTuningParams()
     public init() {}
 }
@@ -87,6 +89,8 @@ public class ZhiNetworkAuth {
                                     resp.sharedPath = String(parts[1])
                                     resp.quicPort = Int(parts[2]) ?? 4433
                                     resp.kcpPort = Int(parts[3]) ?? 6666
+                                    resp.symKey = AppConfig.shared.kcpSymmetricKey
+                                    resp.symKey = AppConfig.shared.kcpSymmetricKey
                                 }
                                 if parts.count >= 10 {
                                     resp.tuning.noDelay = Int32(parts[4]) ?? 1

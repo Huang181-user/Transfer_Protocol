@@ -1,5 +1,4 @@
---- START FILE PATH: server_1.txt ---
---- START FILE PATH: src/rpc_vfs/ikcp.c ---
+--- START FILE PATH: src/rpc_client/ikcp.c ---
 //=====================================================================
 //
 // KCP - A Better ARQ Protocol Implementation
@@ -11,7 +10,7 @@
 // + Lightweight, distributed as a single source file.
 //
 //=====================================================================
-#include "rpc_vfs/ikcp.h"
+#include "ikcp.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -35,7 +34,10 @@ const IUINT32 IKCP_CMD_WINS = 84;		// cmd: window size (tell)
 const IUINT32 IKCP_ASK_SEND = 1;		// need to send IKCP_CMD_WASK
 const IUINT32 IKCP_ASK_TELL = 2;		// need to send IKCP_CMD_WINS
 const IUINT32 IKCP_WND_SND = 32;
+
+// 🔥 NÂNG TỪ 128 LÊN 4096 ĐỂ KCP CHO PHÉP GỬI FILE VƯỢT QUÁ 128KB!
 const IUINT32 IKCP_WND_RCV = 4096;       // must >= max fragment size
+
 const IUINT32 IKCP_MTU_DEF = 1400;
 const IUINT32 IKCP_ACK_FAST	= 3;
 const IUINT32 IKCP_INTERVAL	= 100;
@@ -1332,7 +1334,7 @@ int ikcp_setmtu(ikcpcb *kcp, int mtu)
 int ikcp_interval(ikcpcb *kcp, int interval)
 {
 	if (interval > 5000) interval = 5000;
-	else if (interval < 1) interval = 1;
+	else if (interval < 10) interval = 10;
 	kcp->interval = interval;
 	return 0;
 }
@@ -1350,7 +1352,7 @@ int ikcp_nodelay(ikcpcb *kcp, int nodelay, int interval, int resend, int nc)
 	}
 	if (interval >= 0) {
 		if (interval > 5000) interval = 5000;
-		else if (interval < 1) interval = 1;
+		else if (interval < 10) interval = 10;
 		kcp->interval = interval;
 	}
 	if (resend >= 0) {
@@ -1424,1564 +1426,843 @@ int ikcp_setcc(ikcpcb *kcp, const struct IKCPOPS *ops)
 
 
 
---- END OF FILE: src/rpc_vfs/ikcp.c ---
+--- END OF FILE: src/rpc_client/ikcp.c ---
 
---- START FILE PATH: src/rpc_vfs/kcp_worker_main.cpp ---
-#include "rpc_vfs/vfs_packet.h"
-#include "rpc_vfs/vfs_io_worker.h"
-#include "common/logger.h"
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
-#include <iostream>
-#include <cstring>
-#include <vector>
-#include <filesystem>
-#include <thread>
-#include <fstream>
-#include <sys/stat.h>
-#include <algorithm>
-#include <cctype>
-#include <unordered_map>
-#include <mutex>
-#include <chrono>
-
-static bool send_all(int fd, const void* buf, size_t len) {
-    const char* p = (const char*)buf;
-    while (len > 0) { ssize_t n = send(fd, p, len, MSG_NOSIGNAL); if (n <= 0) return false; p += n; len -= n; }
-    return true;
-}
-
-static bool recv_all(int fd, void* buf, size_t len) {
-    char* p = (char*)buf;
-    while (len > 0) { ssize_t n = recv(fd, p, len, MSG_WAITALL); if (n <= 0) return false; p += n; len -= n; }
-    return true;
-}
-
-static void trim_path(std::string &s) {
-    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return ch != '\0' && !std::isspace(ch); }).base(), s.end());
-}
-
-static std::unordered_map<std::string, std::pair<uint32_t, uint64_t>> g_file_locks;
-static std::mutex g_lock_mutex;
-
-bool check_and_lock(const std::string& path, uint32_t client_id) {
-    std::lock_guard<std::mutex> lock(g_lock_mutex);
-    uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    auto it = g_file_locks.find(path);
-    if (it != g_file_locks.end()) {
-        if (it->second.first != client_id && (now - it->second.second < 15000)) return false; 
-    }
-    g_file_locks[path] = {client_id, now};
-    return true;
-}
-
-void unlock_file(const std::string& path, uint32_t client_id) {
-    std::lock_guard<std::mutex> lock(g_lock_mutex);
-    auto it = g_file_locks.find(path);
-    if (it != g_file_locks.end() && it->second.first == client_id) g_file_locks.erase(it);
-}
-
-void handle_client_connection(int client_fd) {
-    ZHI_LOG_INFO("[KCP-WORKER] 🔗 UDS connection established. Awaiting I/O commands...");
-
-    while (true) {
-        uint32_t req_sz = 0;
-        if (!recv_all(client_fd, &req_sz, 4)) break;
-
-        std::vector<uint8_t> payload(req_sz);
-        if (!recv_all(client_fd, payload.data(), req_sz)) break;
-        if (payload.size() < sizeof(VfsPacketHeader)) break;
-
-        VfsPacketHeader* header = reinterpret_cast<VfsPacketHeader*>(payload.data());
-        if (payload.size() < sizeof(VfsPacketHeader) + header->path_len) break;
-
-        std::string target_path(reinterpret_cast<char*>(payload.data() + sizeof(VfsPacketHeader)), header->path_len);
-        trim_path(target_path);
-
-        uint32_t client_id = (uint32_t)(header->session_id >> 32);
-
-        std::vector<uint8_t> file_data;
-        VfsOpcode resp_opcode = header->opcode;
-
-        bool requires_lock = (header->opcode == VfsOpcode::OP_READ || header->opcode == VfsOpcode::OP_WRITE || header->opcode == VfsOpcode::OP_TRUNCATE);
-                              
-        if (requires_lock && !check_and_lock(target_path, client_id)) {
-            ZHI_LOG_WARN("[FILE-LOCK] 🛑 File '" + target_path + "' is currently locked. Client [" + std::to_string(client_id) + "] access denied!");
-            resp_opcode = VfsOpcode::OP_ERROR; 
-        } else {
-            auto start_time = std::chrono::high_resolution_clock::now();
-
-            if (header->opcode == VfsOpcode::OP_STAT) {
-                struct stat st;
-                if (stat(target_path.c_str(), &st) == 0) {
-                    uint64_t size = st.st_size;
-                    uint8_t is_dir = S_ISDIR(st.st_mode) ? 1 : 0;
-                    uint64_t mtime = st.st_mtime;
-                    uint64_t ctime = st.st_ctime;
-                    uint64_t atime = st.st_atime;
-                    uint32_t mode = st.st_mode;
-
-                    // Dội bom đủ 37 bytes: [Size:8] [IsDir:1] [Mtime:8] [Ctime:8] [Atime:8] [Mode:4]
-                    file_data.resize(37); 
-                    std::memcpy(file_data.data(), &size, 8); 
-                    file_data[8] = is_dir; 
-                    std::memcpy(file_data.data() + 9, &mtime, 8); 
-                    std::memcpy(file_data.data() + 17, &ctime, 8);
-                    std::memcpy(file_data.data() + 25, &atime, 8);
-                    std::memcpy(file_data.data() + 33, &mode, 4);
-                } else { 
-                    resp_opcode = VfsOpcode::OP_ERROR; 
-                }
-                ZHI_LOG_DEBUG("[OP_STAT] Path: " + target_path + " | Success: " + (resp_opcode == VfsOpcode::OP_ERROR ? "NO" : "YES"));
-
-            } else if (header->opcode == VfsOpcode::OP_LIST) {
-                std::string list_res;
-                if (VfsIoWorker::list_directory(target_path, list_res)) { file_data.assign(list_res.begin(), list_res.end()); } else { resp_opcode = VfsOpcode::OP_ERROR; }
-                ZHI_LOG_DEBUG("[OP_LIST] Path: " + target_path + " | Items length: " + std::to_string(list_res.length()));
-
-            } else if (header->opcode == VfsOpcode::OP_READ) {
-                ZHI_LOG_DEBUG("[OP_READ] REQUEST: Path=" + target_path + " | Offset=" + std::to_string(header->offset) + " | ReqSize=" + std::to_string(header->data_len));
-                if (!VfsIoWorker::read_block(target_path, header->offset, header->data_len, file_data)) {
-                     resp_opcode = VfsOpcode::OP_ERROR;
-                     ZHI_LOG_ERR("[OP_READ] FAILED to read data from filesystem.");
-                } else {
-                     ZHI_LOG_DEBUG("[OP_READ] SUCCESS: Read " + std::to_string(file_data.size()) + " bytes.");
-                }
-
-            } else if (header->opcode == VfsOpcode::OP_WRITE) {
-                size_t data_offset = sizeof(VfsPacketHeader) + header->path_len;
-                std::vector<uint8_t> write_payload;
-                if (payload.size() > data_offset) write_payload.assign(payload.begin() + data_offset, payload.end());
-                ZHI_LOG_DEBUG("[OP_WRITE] Path: " + target_path + " | Offset: " + std::to_string(header->offset) + " | Size: " + std::to_string(write_payload.size()));
-                if (!std::filesystem::exists(target_path)) { std::ofstream touch_file(target_path, std::ios::app | std::ios::binary); touch_file.close(); }
-                if (!write_payload.empty()) { if (!VfsIoWorker::write_block(target_path, header->offset, write_payload)) resp_opcode = VfsOpcode::OP_ERROR; }
-
-            } else if (header->opcode == VfsOpcode::OP_RENAME) {
-                size_t data_offset = sizeof(VfsPacketHeader) + header->path_len;
-                if (payload.size() >= data_offset + header->data_len) {
-                    std::string new_path(reinterpret_cast<char*>(payload.data() + data_offset), header->data_len);
-                    trim_path(new_path); 
-                    if (!check_and_lock(target_path, client_id) || !check_and_lock(new_path, client_id)) {
-                        resp_opcode = VfsOpcode::OP_ERROR;
-                    } else {
-                        try { if (std::filesystem::exists(new_path)) std::filesystem::remove_all(new_path); std::filesystem::rename(target_path, new_path); } catch (...) { resp_opcode = VfsOpcode::OP_ERROR; }
-                        unlock_file(target_path, client_id); unlock_file(new_path, client_id);
-                    }
-                    ZHI_LOG_INFO("[OP_RENAME] " + target_path + " -> " + new_path);
-                } else { resp_opcode = VfsOpcode::OP_ERROR; }
-
-            } else if (header->opcode == VfsOpcode::OP_TRUNCATE) {
-                ZHI_LOG_DEBUG("[OP_TRUNCATE] Path: " + target_path + " | New Size: " + std::to_string(header->offset));
-                try { if (!std::filesystem::exists(target_path)) { std::ofstream touch_file(target_path, std::ios::out | std::ios::binary); touch_file.close(); } std::filesystem::resize_file(target_path, header->offset); } catch (...) { resp_opcode = VfsOpcode::OP_ERROR; }
-
-            } else if (header->opcode == VfsOpcode::OP_MKDIR) {
-                ZHI_LOG_INFO("[OP_MKDIR] Path: " + target_path);
-                try { std::filesystem::create_directories(target_path); } catch (...) { resp_opcode = VfsOpcode::OP_ERROR; }
-
-            } else if (header->opcode == VfsOpcode::OP_DELETE) {
-                ZHI_LOG_INFO("[OP_DELETE] Path: " + target_path);
-                if (!check_and_lock(target_path, client_id)) { resp_opcode = VfsOpcode::OP_ERROR; } 
-                else { try { std::filesystem::remove_all(target_path); unlock_file(target_path, client_id); } catch (...) { resp_opcode = VfsOpcode::OP_ERROR; } }
-            }
-
-            auto end_time = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-            ZHI_LOG_DEBUG("[IO-PERF] Opcode 0x" + std::to_string((int)header->opcode) + " completed in " + std::to_string(duration.count()) + " us");
-        }
-
-        VfsPacketHeader res_hdr = *header;
-        res_hdr.opcode = resp_opcode;
-        res_hdr.data_len = file_data.size();
-
-        uint32_t resp_sz = sizeof(res_hdr) + file_data.size();
-        if (!send_all(client_fd, &resp_sz, 4)) break;
-        if (!send_all(client_fd, &res_hdr, sizeof(res_hdr))) break;
-        if (!file_data.empty()) { if (!send_all(client_fd, file_data.data(), file_data.size())) break; }
-    }
-    close(client_fd);
-    ZHI_LOG_INFO("[KCP-WORKER] UDS connection closed.");
-}
-
-int main(int argc, char* argv[]) {
-    if (argc < 2) return 1;
-    std::string uds_path = argv[1];
-    int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX; strncpy(addr.sun_path, uds_path.c_str(), sizeof(addr.sun_path)-1);
-    unlink(uds_path.c_str());
-    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) return 1;
-    chmod(uds_path.c_str(), 0777); 
-    listen(server_fd, SOMAXCONN);
-    while (true) {
-        int client_fd = accept(server_fd, NULL, NULL);
-        if (client_fd < 0) continue;
-        std::thread(handle_client_connection, client_fd).detach();
-    }
-    close(server_fd); unlink(uds_path.c_str());
-    return 0;
-}
-
---- END OF FILE: src/rpc_vfs/kcp_worker_main.cpp ---
-
---- START FILE PATH: src/rpc_quic/msquic_server.cpp ---
-#include "rpc_quic/msquic_server.h"
-#include "common/logger.h"
-#include <cstring>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
-#include <filesystem>
-#include <arpa/inet.h>
-
-extern "C" const char* go_on_msquic_auth(const char* payload, const char* remote_ip);
-extern "C" const char* go_get_username_by_ip(const char* ip);
-
-const QUIC_BUFFER ALPN_BUFFER = { sizeof("zhiauth-rpc") - 1, (uint8_t*)"zhiauth-rpc" };
-static const QUIC_API_TABLE* MsQuic = nullptr;
-static HQUIC Registration = nullptr;
-static HQUIC Configuration = nullptr;
-static HQUIC AuthListener = nullptr;
-static HQUIC DataListener = nullptr;
-
-static std::string g_absolute_cert_path;
-static std::string g_absolute_key_path;
-
-struct StreamContext { std::vector<uint8_t> buffer; std::string remote_ip; };
-
-bool MsQuicServer::initialize(uint16_t auth_port, uint16_t data_port, const std::string& cert_path, const std::string& key_path) {
-    std::error_code ec;
-    g_absolute_cert_path = std::filesystem::absolute(cert_path, ec).string();
-    g_absolute_key_path = std::filesystem::absolute(key_path, ec).string();
-
-    if (QUIC_FAILED(MsQuicOpen2(&MsQuic))) return false;
-    const QUIC_REGISTRATION_CONFIG RegConfig = { "ZhiAuthServer", QUIC_EXECUTION_PROFILE_LOW_LATENCY };
-    MsQuic->RegistrationOpen(&RegConfig, &Registration);
-
-    QUIC_SETTINGS Settings;
-    memset(&Settings, 0, sizeof(Settings));
-    Settings.PeerBidiStreamCount = 1000; Settings.IsSet.PeerBidiStreamCount = 1;
-    Settings.IdleTimeoutMs = 120000; Settings.IsSet.IdleTimeoutMs = 1;
-    // 🔥 THUỐC CHỐNG NGỦ GẬT NẰM Ở ĐÂY: Ép MsQUIC tự bắn Ping mỗi 15 giây giữ mạng luôn thông!
-    Settings.KeepAliveIntervalMs = 15000; Settings.IsSet.KeepAliveIntervalMs = 1; 
-    MsQuic->ConfigurationOpen(Registration, &ALPN_BUFFER, 1, &Settings, sizeof(Settings), nullptr, &Configuration);
-
-    QUIC_CERTIFICATE_FILE CertFile;
-    memset(&CertFile, 0, sizeof(CertFile));
-    CertFile.PrivateKeyFile = g_absolute_key_path.c_str(); 
-    CertFile.CertificateFile = g_absolute_cert_path.c_str();
-
-    QUIC_CREDENTIAL_CONFIG CredConfig;
-    memset(&CredConfig, 0, sizeof(CredConfig));
-    CredConfig.Type = QUIC_CREDENTIAL_TYPE_CERTIFICATE_FILE;
-    CredConfig.CertificateFile = &CertFile;
-    CredConfig.Flags = QUIC_CREDENTIAL_FLAG_NONE;
-
-    MsQuic->ConfigurationLoadCredential(Configuration, &CredConfig);
-
-    QUIC_ADDR AuthAddr; memset(&AuthAddr, 0, sizeof(AuthAddr));
-    AuthAddr.Ipv4.sin_family = AF_INET; AuthAddr.Ipv4.sin_port = htons(auth_port); AuthAddr.Ipv4.sin_addr.s_addr = INADDR_ANY;
-    MsQuic->ListenerOpen(Registration, AuthListenerCallback, nullptr, &AuthListener);
-    MsQuic->ListenerStart(AuthListener, &ALPN_BUFFER, 1, &AuthAddr);
-
-    QUIC_ADDR DataAddr; memset(&DataAddr, 0, sizeof(DataAddr));
-    DataAddr.Ipv4.sin_family = AF_INET; DataAddr.Ipv4.sin_port = htons(data_port); DataAddr.Ipv4.sin_addr.s_addr = INADDR_ANY;
-    MsQuic->ListenerOpen(Registration, DataListenerCallback, nullptr, &DataListener);
-    MsQuic->ListenerStart(DataListener, &ALPN_BUFFER, 1, &DataAddr);
-
-    return true;
-}
-
-void MsQuicServer::shutdown() {
-    if (AuthListener) MsQuic->ListenerClose(AuthListener);
-    if (DataListener) MsQuic->ListenerClose(DataListener);
-    if (Configuration) MsQuic->ConfigurationClose(Configuration);
-    if (Registration) MsQuic->RegistrationClose(Registration);
-    if (MsQuic) MsQuicClose(MsQuic);
-}
-
-QUIC_STATUS QUIC_API MsQuicServer::AuthStreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVENT* Event) {
-    auto ctx = static_cast<StreamContext*>(Context);
-    if (Event->Type == QUIC_STREAM_EVENT_RECEIVE) {
-        for (uint32_t i = 0; i < Event->RECEIVE.BufferCount; ++i) ctx->buffer.insert(ctx->buffer.end(), Event->RECEIVE.Buffers[i].Buffer, Event->RECEIVE.Buffers[i].Buffer + Event->RECEIVE.Buffers[i].Length);
-        std::string payload_str(ctx->buffer.begin(), ctx->buffer.end());
-        const char* go_res = go_on_msquic_auth(payload_str.c_str(), ctx->remote_ip.c_str());
-        if (go_res) {
-            std::string res_str = go_res; free((void*)go_res);
-            QUIC_BUFFER* qb = new QUIC_BUFFER; qb->Buffer = new uint8_t[res_str.length()]; memcpy(qb->Buffer, res_str.data(), res_str.length()); qb->Length = res_str.length();
-            MsQuic->StreamSend(Stream, qb, 1, QUIC_SEND_FLAG_FIN, qb);
-        }
-    } else if (Event->Type == QUIC_STREAM_EVENT_SEND_COMPLETE) {
-        QUIC_BUFFER* qb = static_cast<QUIC_BUFFER*>(Event->SEND_COMPLETE.ClientContext);
-        if (qb) { delete[] qb->Buffer; delete qb; }
-    } else if (Event->Type == QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE) {
-        delete ctx; MsQuic->StreamClose(Stream);
-    }
-    return QUIC_STATUS_SUCCESS;
-}
-
-QUIC_STATUS QUIC_API MsQuicServer::AuthConnCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT* Event) {
-    if (Event->Type == QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED) {
-        QUIC_ADDR RemoteAddr;
-        uint32_t AddrLen = sizeof(RemoteAddr);
-        MsQuic->GetParam(Connection, QUIC_PARAM_CONN_REMOTE_ADDRESS, &AddrLen, &RemoteAddr);
-        
-        char ip_str[INET6_ADDRSTRLEN] = {0};
-        if (RemoteAddr.Ipv4.sin_family == AF_INET) inet_ntop(AF_INET, &(RemoteAddr.Ipv4.sin_addr), ip_str, INET_ADDRSTRLEN);
-        else inet_ntop(AF_INET6, &(RemoteAddr.Ipv6.sin6_addr), ip_str, INET6_ADDRSTRLEN);
-        
-        std::string ip(ip_str);
-        if (ip.find("::ffff:") == 0) ip = ip.substr(7); 
-
-        auto ctx = new StreamContext{{}, ip};
-        MsQuic->SetCallbackHandler(Event->PEER_STREAM_STARTED.Stream, (void*)AuthStreamCallback, ctx);
-    } else if (Event->Type == QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE) {
-        MsQuic->ConnectionClose(Connection);
-    }
-    return QUIC_STATUS_SUCCESS;
-}
-
-void MsQuicServer::ProxyUdsTask(HQUIC Stream, std::string uds_path, std::vector<uint8_t> payload) {
-    int uds_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    struct sockaddr_un addr; memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX; strncpy(addr.sun_path, uds_path.c_str(), sizeof(addr.sun_path) - 1);
-    struct timeval tv{10, 0};
-    setsockopt(uds_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)); setsockopt(uds_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    if (connect(uds_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { MsQuic->StreamShutdown(Stream, QUIC_STREAM_SHUTDOWN_FLAG_ABORT, 0); close(uds_fd); return; }
-    uint32_t req_sz = payload.size();
-    send(uds_fd, &req_sz, 4, MSG_NOSIGNAL); send(uds_fd, payload.data(), payload.size(), MSG_NOSIGNAL);
-    uint32_t resp_sz = 0;
-    if (recv(uds_fd, &resp_sz, 4, MSG_WAITALL) <= 0) { MsQuic->StreamShutdown(Stream, QUIC_STREAM_SHUTDOWN_FLAG_ABORT, 0); close(uds_fd); return; }
-    std::vector<uint8_t> resp(resp_sz);
-    recv(uds_fd, resp.data(), resp_sz, MSG_WAITALL); close(uds_fd);
-    QUIC_BUFFER* qb = new QUIC_BUFFER; qb->Buffer = new uint8_t[resp_sz]; memcpy(qb->Buffer, resp.data(), resp_sz); qb->Length = resp_sz;
-    MsQuic->StreamSend(Stream, qb, 1, QUIC_SEND_FLAG_FIN, qb);
-}
-
-QUIC_STATUS QUIC_API MsQuicServer::DataStreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVENT* Event) {
-    auto ctx = static_cast<StreamContext*>(Context);
-    if (Event->Type == QUIC_STREAM_EVENT_RECEIVE) {
-        for (uint32_t i = 0; i < Event->RECEIVE.BufferCount; ++i) {
-            ctx->buffer.insert(ctx->buffer.end(), Event->RECEIVE.Buffers[i].Buffer, Event->RECEIVE.Buffers[i].Buffer + Event->RECEIVE.Buffers[i].Length);
-        }
-        
-        // 🔥 ÉP CHỜ NHẬN ĐỦ 100% GÓI TIN MỚI ĐƯỢC XỬ LÝ
-        if (Event->RECEIVE.Flags & QUIC_RECEIVE_FLAG_FIN) {
-            if (ctx->buffer.size() > 7 && memcmp(ctx->buffer.data(), "FS_CMD|", 7) == 0) {
-                ctx->buffer.erase(ctx->buffer.begin(), ctx->buffer.begin() + 7);
-            }
-            const char* go_usr = go_get_username_by_ip(ctx->remote_ip.c_str());
-            if (!go_usr) { 
-                MsQuic->StreamShutdown(Stream, QUIC_STREAM_SHUTDOWN_FLAG_ABORT, 0); 
-                return QUIC_STATUS_SUCCESS; 
-            }
-            std::string uds_path = "/tmp/zhiauth_kcp_" + std::string(go_usr) + ".sock";
-            free((void*)go_usr);
-            std::thread(&MsQuicServer::ProxyUdsTask, Stream, uds_path, ctx->buffer).detach();
-        }
-    } else if (Event->Type == QUIC_STREAM_EVENT_SEND_COMPLETE) {
-        QUIC_BUFFER* qb = static_cast<QUIC_BUFFER*>(Event->SEND_COMPLETE.ClientContext);
-        if (qb) { delete[] qb->Buffer; delete qb; }
-    } else if (Event->Type == QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE) {
-        delete ctx; MsQuic->StreamClose(Stream);
-    }
-    return QUIC_STATUS_SUCCESS;
-}
-
-QUIC_STATUS QUIC_API MsQuicServer::DataConnCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT* Event) {
-    if (Event->Type == QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED) {
-        QUIC_ADDR RemoteAddr;
-        uint32_t AddrLen = sizeof(RemoteAddr);
-        MsQuic->GetParam(Connection, QUIC_PARAM_CONN_REMOTE_ADDRESS, &AddrLen, &RemoteAddr);
-        char ip_str[INET6_ADDRSTRLEN] = {0};
-        if (RemoteAddr.Ipv4.sin_family == AF_INET) inet_ntop(AF_INET, &(RemoteAddr.Ipv4.sin_addr), ip_str, INET_ADDRSTRLEN);
-        else inet_ntop(AF_INET6, &(RemoteAddr.Ipv6.sin6_addr), ip_str, INET6_ADDRSTRLEN);
-        
-        std::string ip(ip_str);
-        if (ip.find("::ffff:") == 0) ip = ip.substr(7);
-
-        auto ctx = new StreamContext{{}, ip};
-        MsQuic->SetCallbackHandler(Event->PEER_STREAM_STARTED.Stream, (void*)DataStreamCallback, ctx);
-    } else if (Event->Type == QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE) {
-        MsQuic->ConnectionClose(Connection);
-    }
-    return QUIC_STATUS_SUCCESS;
-}
-
-QUIC_STATUS QUIC_API MsQuicServer::DataListenerCallback(HQUIC Listener, void* Context, QUIC_LISTENER_EVENT* Event) {
-    if (Event->Type == QUIC_LISTENER_EVENT_NEW_CONNECTION) {
-        MsQuic->SetCallbackHandler(Event->NEW_CONNECTION.Connection, (void*)DataConnCallback, nullptr);
-        MsQuic->ConnectionSetConfiguration(Event->NEW_CONNECTION.Connection, Configuration);
-    }
-    return QUIC_STATUS_SUCCESS;
-}
-
-QUIC_STATUS QUIC_API MsQuicServer::AuthListenerCallback(HQUIC Listener, void* Context, QUIC_LISTENER_EVENT* Event) {
-    if (Event->Type == QUIC_LISTENER_EVENT_NEW_CONNECTION) {
-        MsQuic->SetCallbackHandler(Event->NEW_CONNECTION.Connection, (void*)AuthConnCallback, nullptr);
-        MsQuic->ConnectionSetConfiguration(Event->NEW_CONNECTION.Connection, Configuration);
-    }
-    return QUIC_STATUS_SUCCESS;
-}
-
---- END OF FILE: src/rpc_quic/msquic_server.cpp ---
-
---- START FILE PATH: src/common/logger_blueprint.txt ---
-================================================================================
-             ĐẶC TẢ THIẾT KẾ KỸ THUẬT: MODULE VERBOSE LOGGER (TỐI GIẢN)
-================================================================================
-
-1. MỤC TIÊU THIẾT KẾ:
-   - Cung cấp cơ chế ghi nhật ký (Log) thời gian thực hệ thống bằng 100% Tiếng Anh.
-   - Loại bỏ hoàn toàn cơ chế đa ngôn ngữ (locale/@lang) để tối ưu dung lượng và RAM.
-   - Định dạng log kéo dài, hiển thị chi tiết ngóc ngách phục vụ debug tối đa.
-
-2. CẤU TRÚC HEADER FILE (Dự kiến cho src/common/logger.h):
-   - Enum class `LogLevel`: DEBUG, INFO, WARNING, ERROR.
-   - Hệ thống Macro tự động bắt File/Hàm để xuất dòng log kéo dài:
-     #define ZHI_LOG_DEBUG(msg) Logger::log(LogLevel::DEBUG, __FILE__, __LINE__, __FUNCTION__, msg)
-     #define ZHI_LOG_INFO(msg)  Logger::log(LogLevel::INFO,  __FILE__, __LINE__, __FUNCTION__, msg)
-
-3. ĐỊNH DẠNG DÒNG LOG XUẤT RA MÀN HÌNH (Dự kiến thực thi trong logger.cpp):
-   [YYYY-MM-DD HH:MM:SS.ms] [LEVEL] [FILE_NAME:LINE_NUMBER::FUNCTION_NAME] -> Chi tiết thông điệp kỹ thuật.
-
-4. CHUẨN HÓA CHUỖI THÔNG BÁO TRẢ VỀ CLIENT (HARDCODED ENGLISH STRINGS):
-   Khi Server đá session hoặc gửi phản hồi về Client, sử dụng trực tiếp các chuỗi văn bản Tiếng Anh cố định:
-   
-   - Khi đăng xuất thành công: "signed out"
-   - Khi hết hạn timeout: "timed out"
-   - Khi không có IP Tailscale: "LAN-only restriction: WAN access denied"
-   - Khi phát hiện giả mạo server/sai mã phần cứng: "Security alert: Hardware fingerprint mismatch"
-
-================================================================================
-
---- END OF FILE: src/common/logger_blueprint.txt ---
-
---- START FILE PATH: src/common/logger.cpp ---
-#include "common/logger.h"
+--- START FILE PATH: src/rpc_client/vfs_client.cpp ---
+#include "bridge/client_bridge.h"
+#include "rpc_client/vfs_client.h"
+#include "rpc_client/crypto_box.h"
+#include "rpc_client/vfs_packet.h"
 #include <iostream>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <cstring>
 
-// Khởi tạo mutex tĩnh để chống xung đột luồng khi in log
-std::mutex Logger::log_mutex;
+using asio::ip::udp;
 
-std::string Logger::level_to_string(LogLevel level) {
-    switch (level) {
-        case LogLevel::DEBUG:   return "DEBUG";
-        case LogLevel::INFO:    return "INFO";
-        case LogLevel::WARNING: return "WARNING";
-        case LogLevel::ERROR:   return "ERROR";
-        default:                return "UNKNOWN";
-    }
+extern "C" void zhiauth_swift_on_response(uint32_t reqId, const uint8_t* payload, uint32_t len);
+extern "C" void zhiauth_swift_log(const char* msg);
+
+static void logToSwift(const std::string& msg) {
+    zhiauth_swift_log(msg.c_str());
 }
 
-std::string Logger::get_current_timestamp() {
+static std::string getRealtimeLog() {
     auto now = std::chrono::system_clock::now();
     auto time_t_now = std::chrono::system_clock::to_time_t(now);
     auto duration = now.time_since_epoch();
-    auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count() % 1000;
-
-    std::tm bt{};
-    localtime_r(&time_t_now, &bt); // Sử dụng thread-safe version của localtime
-
+    auto micros = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() % 1000000;
+    std::tm bt{}; localtime_r(&time_t_now, &bt);
     std::ostringstream oss;
-    oss << std::put_time(&bt, "%Y-%m-%d %H:%M:%S") << "." << std::setfill('0') << std::setw(3) << millis;
+    oss << std::put_time(&bt, "%H:%M:%S") << "." << std::setfill('0') << std::setw(6) << micros;
     return oss.str();
 }
 
-void Logger::log(LogLevel level, const std::string& file, int line, const std::string& func, const std::string& message) {
-    // Khóa mutex lại, ông nào vào sau phải xếp hàng để tránh log bị ghi đè lộn xộn
-    std::lock_guard<std::mutex> lock(log_mutex);
-
-    // Chỉ lấy tên file gốc thay vì lấy toàn bộ đường dẫn tuyệt đối cho log bớt dài dòng rác mắt
-    std::string filename = file;
-    size_t last_slash = filename.find_last_of("\\/");
-    if (last_slash != std::string::npos) {
-        filename = filename.substr(last_slash + 1);
-    }
-
-    // In thẳng ra màn hình Terminal theo định dạng chuẩn đã quy hoạch
-    std::cout << "[" << get_current_timestamp() << "] "
-              << "[" << level_to_string(level) << "] "
-              << "[" << filename << ":" << line << "::" << func << "] -> "
-              << message << std::endl;
-}
-
---- END OF FILE: src/common/logger.cpp ---
-
---- START FILE PATH: src/common/sqlite_handler_blueprint.txt ---
-================================================================================
-             ĐẶC TẢ THIẾT KẾ KỸ THUẬT: MODULE SQLITE HANDLER BẢO MẬT
-================================================================================
-
-1. MỤC TIÊU THIẾT KẾ:
-   - Quản lý vòng đời kết nối tới file database cục bộ (~/zhiauth/database/zhiauth.db).
-   - Thực thi các truy vấn xác thực tài khoản và phiên làm việc thời gian thực.
-   - Khóa chết lỗ hổng SQL Injection bằng cơ chế binding tham số của thư viện <sqlite3.h>.
-   - Bắn log chi tiết kéo dài ra màn hình cho mỗi thao tác chạm vào DB để phục vụ debug.
-
-2. CẤU TRÚC ĐỐI TƯỢNG DỮ LIỆU (STRUCT DEFINITIONS):
-   Để trả dữ liệu về cho luồng C++ chính xử lý mà không cần parse chuỗi phức tạp,
-   định nghĩa các struct cấu trúc sạch trong file Header:
-
-   struct UserRecord {
-       int id;
-       std::string username;
-       std::string password_hash;
-       int system_uid;
-       std::string shared_path;
-       std::string permission;
-   };
-
-   struct SessionRecord {
-       int id;
-       int user_id;
-       std::string token_hash;
-       std::string local_ip;
-       std::string tailscale_ip;
-       std::string hardware_hash;
-       std::string last_seen;
-   };
-
-3. ĐỊNH NGHĨA CÁC GIAO DIỆN HÀM CỐT LÕI (Dự kiến cho src/common/sqlite_handler.h):
-   Lớp `SQLiteHandler` sẽ được thiết kế theo dạng Singleton hoặc đối tượng quản lý đóng gói:
-
-   - bool initialize_database();
-     + Nhiệm vụ: Mở file DB, kiểm tra kết nối, ép cấu hình `PRAGMA journal_mode = WAL;` và `PRAGMA foreign_keys = ON;`.
-
-   - bool authenticate_user(const std::string& username, const std::string& raw_password, UserRecord& out_user);
-     + Nhiệm vụ: Thực hiện băm `raw_password` kèm chuỗi muối "ZhiAuth_Secret_Salt_2026_", truy vấn so sánh bảng `users`.
-
-   - bool add_active_session(int user_id, const std::string& token_raw, const std::string& local_ip, const std::string& tailscale_ip, const std::string& hardware_hash);
-     + Nhiệm vụ: Băm SHA-256 chuỗi `token_raw`, bind toàn bộ tham số vào câu lệnh INSERT để lưu vào bảng `active_sessions`.
-
-   - bool verify_session_token(const std::string& token_raw, const std::string& hardware_hash, UserRecord& out_user);
-     + Nhiệm vụ: Đối chiếu Token băm và vân tay phần cứng xem có khớp không để chặn đứng nguy cơ trộm thẻ bài Token.
-
-   - bool update_session_roaming(const std::string& token_raw, const std::string& new_ip, bool is_local_ip);
-     + Nhiệm vụ: Cập nhật động cột `local_ip` hoặc `tailscale_ip` khi Client đổi mạng, đồng thời làm mới mốc thời gian `last_seen`.
-
-   - bool terminate_session(const std::string& token_raw);
-     + Nhiệm vụ: Xóa Session khỏi bảng khi Client bấm Logout hoặc bị Server đá do Idle Timeout.
-
-4. QUY TRÌNH THỰC THI CHỐNG SQL INJECTION (MINH HỌA LOGIC KHÔNG DÙNG REGEX):
-   Mọi hàm truy vấn bắt buộc phải tuân thủ nghiêm ngặt quy trình 4 bước của SQLite API:
-   - Bước 1: `sqlite3_prepare_v2` nạp câu lệnh mẫu chứa dấu hỏi chấm đại diện (Ví dụ: WHERE username = ?).
-   - Bước 2: `sqlite3_bind_text` hoặc `sqlite3_bind_int` để nhét dữ liệu thô từ Client vào các vị trí đại diện.
-   - Bước 3: `sqlite3_step` thực thi lệnh và kiểm tra trạng thái trả về (SQLITE_ROW hoặc SQLITE_DONE).
-   - Bước 4: `sqlite3_finalize` để giải phóng bộ nhớ của câu lệnh lập tức, tránh rò rỉ RAM.
-
-5. TIÊU CHUẨN IN LOG VERBOSE CHI TIẾT (VERBOSE LOGGING SPECIFICATION):
-   Tất cả các hành động chạm vào DB đều phải nã log tiếng Anh kéo dài theo đúng chuẩn:
-   
-   * Khi khởi động DB thành công:
-     [TIMESTAMP] [INFO] [sqlite_handler.cpp::initialize_database] -> Successfully opened database file at '~/zhiauth/database/zhiauth.db'. WAL mode enabled. Foreign keys enforced.
-   
-   * Khi kiểm tra tài khoản:
-     [TIMESTAMP] [DEBUG] [sqlite_handler.cpp::authenticate_user] -> Executing prepared statement: 'SELECT * FROM users WHERE username = ?'. Binding text parameter: username='huang'.
-     [TIMESTAMP] [INFO] [sqlite_handler.cpp::authenticate_user] -> User 'huang' successfully authenticated. Password hash matched. Retrieved System UID: 1001.
-   
-   * Khi phát hiện sai mã phần cứng thiết bị (Token Theft):
-     [TIMESTAMP] [WARNING] [sqlite_handler.cpp::verify_session_token] -> Security Alert! Valid session token found but hardware fingerprint mismatch. Database record expected 'b4a1...', Client sent 'c8f2...'. Access denied.
-   
-   * Khi xóa session do timeout:
-     [TIMESTAMP] [INFO] [sqlite_handler.cpp::terminate_session] -> Successfully deleted token hash 'e3b0c442...' from 'active_sessions' table. Session resources reallocated.
-
-================================================================================
-
---- END OF FILE: src/common/sqlite_handler_blueprint.txt ---
-
---- START FILE PATH: src/common/sqlite_handler.cpp ---
-#include "common/sqlite_handler.h"
-#include "common/logger.h"
-#include <sstream>
-
-SQLiteHandler::SQLiteHandler() : db(nullptr) {}
-SQLiteHandler::~SQLiteHandler() { if (db) sqlite3_close(db); }
-
-bool SQLiteHandler::initialize_database(const std::string& db_path) {
-    db_file_path = db_path;
-    int rc = sqlite3_open_v2(db_path.c_str(), &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
-    if (rc != SQLITE_OK) return false;
-    sqlite3_exec(db, "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;", nullptr, nullptr, nullptr);
-    return true;
-}
-
-// KHÔNG BĂM NỮA! BÊN GO ĐÃ BĂM SẴN RỒI, CHỈ VIỆC SO SÁNH CHUỖI
-bool SQLiteHandler::authenticate_user(const std::string& username, const std::string& pre_hashed_password, UserRecord& out_user) {
-    sqlite3_stmt* stmt = nullptr;
-    std::string query = "SELECT id, username, password_hash, system_uid, shared_path, permission FROM users WHERE username = ?;";
-    if (sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) return false;
-    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
-
-    bool auth_success = false;
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        std::string db_hash = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        if (db_hash == pre_hashed_password) {
-            out_user.id = sqlite3_column_int(stmt, 0);
-            out_user.username = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            out_user.system_uid = sqlite3_column_int(stmt, 3);
-            out_user.shared_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
-            auth_success = true;
-        }
-    }
-    sqlite3_finalize(stmt);
-    return auth_success;
-}
-
-bool SQLiteHandler::add_active_session(int user_id, const std::string& token_hash, const std::string& local_ip, const std::string& tailscale_ip, const std::string& hardware_hash) {
-    sqlite3_stmt* stmt = nullptr;
-    std::string query = "INSERT INTO active_sessions (user_id, token_hash, local_ip, tailscale_ip, hardware_hash) VALUES (?, ?, ?, ?, ?);";
-    if (sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) return false;
-    sqlite3_bind_int(stmt, 1, user_id);
-    sqlite3_bind_text(stmt, 2, token_hash.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, local_ip.empty() ? nullptr : local_ip.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 4, tailscale_ip.empty() ? nullptr : tailscale_ip.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 5, hardware_hash.c_str(), -1, SQLITE_TRANSIENT);
-    bool success = (sqlite3_step(stmt) == SQLITE_DONE);
-    sqlite3_finalize(stmt);
-    return success;
-}
-
-// Bỏ các hàm râu ria khác cho gọn
-bool SQLiteHandler::verify_session_token(const std::string& t, const std::string& h, UserRecord& u) { return false; }
-bool SQLiteHandler::update_session_roaming(const std::string& t, const std::string& n, bool i) { return false; }
-bool SQLiteHandler::terminate_session(const std::string& t) { return false; }
-
---- END OF FILE: src/common/sqlite_handler.cpp ---
-
---- START FILE PATH: src/system/ufw_manager_blueprint.txt ---
-================================================================================
-             ĐẶC TẢ THIẾT KẾ KỸ THUẬT: MODULE UFW MANAGER ĐỘNG
-================================================================================
-
-1. MỤC TIÊU THIẾT KẾ:
-   - Điều khiển tường lửa UFW để đóng/mở Port đích danh cho từng IP Client.
-   - Triển khai cấu trúc Task Queue tuyến tính để triệt tiêu lỗ hổng Race Condition.
-   - Gọi lệnh hệ thống thông qua đặc quyền mượn từ sudoers của 'ubuntu_admin'.
-   - Ép ghi log tiếng Anh kéo dài từng hành động của hàng đợi để dễ dàng soi lỗi.
-
-2. CẤU TRÚC LỆNH HỆ THỐNG MỤC TIÊU (UFW COMMAND TEMPLATES):
-   Để đảm bảo an toàn tuyệt đối và đúng giao thức, UFW sẽ được nã lệnh chính xác:
-   
-   - Lệnh mở cổng (Khi session hợp lệ):
-     sudo ufw allow from <CLIENT_IP> to any port <PORT> proto <udp/tcp>
-     
-   - Lệnh đóng cổng (Khi xả trạm / Timeout / Logout):
-     sudo ufw delete allow from <CLIENT_IP> to any port <PORT> proto <udp/tcp>
-
-3. CẤU TRÚC MÁY TRẠNG THÁI HÀNG ĐỢI (TASK QUEUE & WORKER THREAD STRUCTURE):
-   Lớp `UFWManager` trong ufw_manager.h/.cpp sẽ vận hành theo mô hình Nhà sản xuất - Người tiêu thụ:
-
-   - Cấu trúc một tác vụ (Task Struct):
-     struct UFWTask {
-         std::string ip_address;
-         int port;
-         std::string protocol; // "udp" hoặc "tcp"
-         bool is_allow_action; // true = OPEN, false = CLOSE
-     };
-
-   - Các thành phần điều phối luồng an toàn:
-     + `std::queue<UFWTask> task_queue;` -> Thư mục xếp hàng chứa các lệnh UFW đang chờ.
-     + `std::mutex queue_mutex;`        -> Khóa bảo vệ hàng đợi, không cho 2 thread ghi đè lên nhau.
-     + `std::condition_variable cv;`    -> Tín hiệu đánh thức Worker Thread khi có công việc mới.
-     + `std::thread worker_thread;`     -> Công nhân chạy ngầm chuyên gắp lệnh ra để thực thi tuần tự.
-
-4. CÁC PHƯƠNG THỨC API NỘI BỘ (MÃ NGUỒN DỰ KIẾN):
-   - void start_worker();
-     + Nhiệm vụ: Kích hoạt `worker_thread` chạy ngầm một vòng lặp vô tận `while(running)`. Luồng này sẽ ngủ đông cho đến khi được `cv.notify_one()` đánh thức.
-   
-   - void stop_worker();
-     + Nhiệm vụ: Đánh thức công nhân lần cuối, dọn dẹp hàng đợi và join luồng an toàn khi tắt Daemon.
-
-   - void push_task(const std::string& ip, int port, const std::string& proto, bool allow);
-     + Nhiệm vụ: Cho luồng mạng gọi hàm này để đẩy một tác vụ UFW mới vào hàng đợi, khóa mutex lại rồi nhét vào queue, sau đó phát tín hiệu cv để đánh thức công nhân.
-
-   - void execute_system_command(const UFWTask& task);
-     + Nhiệm vụ: Hàm duy nhất được quyền gọi `std::system()` hoặc `popen()`. Nó sẽ ráp chuỗi lệnh thô (ví dụ: `sudo ufw allow...`) và ném vào nhân Linux để thực thi.
-
-5. TIÊU CHUẨN GHI LOG VERBOSE KÉO DÀI (VERBOSE LOGGING SPECIFICATION):
-   Worker Thread xử lý đến đâu, log tiếng Anh phải nã ra màn hình kéo dài đến đó:
-
-   * Khi có luồng mạng đẩy một yêu cầu mở cổng vào hàng đợi:
-     [TIMESTAMP] [DEBUG] [ufw_manager.cpp::push_task] -> New UFW task pushed to queue. Action: ALLOW, IP: '192.168.1.50', Port: 4433, Protocol: UDP. Current queue size: 1.
-   
-   * Khi Worker Thread thức giấc và gắp lệnh ra xử lý:
-     [TIMESTAMP] [INFO] [ufw_manager.cpp::worker_loop] -> Worker thread woke up. Popped task from queue. Executing raw system command via mượn quyền sudo...
-   
-   * Khi lệnh hệ thống thực thi thành công:
-     [TIMESTAMP] [INFO] [ufw_manager.cpp::execute_system_command] -> System command executed successfully. Output: 'Rule added'. Applied rule: 'sudo ufw allow from 192.168.1.50 to any port 4433 proto udp'.
-   
-   * Khi thực thi lệnh xóa cổng do Client Logout hoặc Timeout:
-     [TIMESTAMP] [INFO] [ufw_manager.cpp::execute_system_command] -> Session closed/timed out. Removing firewall rule. Command: 'sudo ufw delete allow from 100.64.0.5 to any port 4433 proto udp'. Output: 'Rule deleted'.
-
-================================================================================
-
---- END OF FILE: src/system/ufw_manager_blueprint.txt ---
-
---- START FILE PATH: src/system/sys_control.cpp ---
-#include "system/sys_control.h"
-#include "common/logger.h"
-#include <filesystem>
-
-namespace fs = std::filesystem;
-
-bool SysControl::verify_system_storage_paths(const std::string& storage_path) {
-    ZHI_LOG_DEBUG("Initiating integrity checks for targeted system mount path: '" + storage_path + "'");
-    
+VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
+                     int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd)
+    : socket_(io_context_, udp::endpoint(udp::v4(), 0)), is_running_(false), 
+      recv_buffer_(65536), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu),
+      nodelay_(nodelay), interval_(interval), resend_(resend), nc_(nc), snd_wnd_(snd_wnd), rcv_wnd_(rcv_wnd)
+{
+    asio::ip::udp::resolver resolver(io_context_);
+    server_endpoint_ = *resolver.resolve(udp::v4(), server_ip, std::to_string(port)).begin();
     try {
-        // Sử dụng C++17 filesystem để check sự tồn tại của ổ đĩa gộp, triệt tiêu thư viện Regex
-        if (fs::exists(storage_path) && fs::is_directory(storage_path)) {
-            ZHI_LOG_INFO("Target storage infrastructure storage pool directory validated successfully: " + storage_path);
-            return true;
-        } else {
-            ZHI_LOG_WARN("Target mount path exists but is either corrupted or not recognized as a directory: " + storage_path);
-            return false;
-        }
-    } catch (const fs::filesystem_error& e) {
-        ZHI_LOG_ERR("OS Filesystem subsystem subsystem returned a critical access error: " + std::string(e.what()));
-        return false;
-    }
+        socket_.set_option(asio::socket_base::receive_buffer_size(16777216));
+        socket_.set_option(asio::socket_base::send_buffer_size(16777216));
+    } catch(...) {}
 }
 
-bool SysControl::drop_process_privileges(uid_t target_uid, gid_t target_gid) {
-    ZHI_LOG_INFO("Request received to drop process execution privileges to Target UID: " + 
-                 std::to_string(target_uid) + " | Target GID: " + std::to_string(target_gid));
+VfsClient::~VfsClient() { stop(); }
 
-    // 1. Hạ quyền Group ID trước
-    if (setgid(target_gid) != 0) {
-        ZHI_LOG_ERR("Security isolation failure: Unable to drop process Group ID privileges (setgid failed).");
-        return false;
-    }
-    ZHI_LOG_DEBUG("Process Group ID (GID) successfully restricted to system target identity zone.");
-
-    // 2. Hạ quyền User ID sau
-    if (setuid(target_uid) != 0) {
-        ZHI_LOG_ERR("Security isolation failure: Unable to drop process User ID privileges (setuid failed).");
-        return false;
-    }
-    ZHI_LOG_INFO("Process security context successfully downgraded. Process sandbox isolation operational.");
+bool VfsClient::start() {
+    if (is_running_) return true;
+    is_running_ = true;
     
-    // In ra danh tính mới sau khi thiến quyền để kiểm chứng debug
-    log_current_execution_identity();
+    std::error_code ec;
+    socket_.connect(server_endpoint_, ec);
+    if (ec) {
+        logToSwift("[" + getRealtimeLog() + "] ❌ [SYS-ERR] LỖI BIND SOCKET UDP: " + ec.message());
+    } else {
+        logToSwift("[" + getRealtimeLog() + "] 🟢 [SYS-NET] Mở Socket UDP trói IP: " + server_endpoint_.address().to_string() + ":" + std::to_string(server_endpoint_.port()));
+    }
+
+    kcp_cb_ = ikcp_create(0x11223344, this);
+    kcp_cb_->output = kcp_output_callback;
+    
+    ikcp_nodelay(kcp_cb_, nodelay_, interval_, resend_, nc_);
+    int safe_mtu = (mtu_ > 100) ? (mtu_ - 56) : 1200; 
+    ikcp_wndsize(kcp_cb_, snd_wnd_, rcv_wnd_); 
+    kcp_cb_->stream = 0; ikcp_setmtu(kcp_cb_, safe_mtu); kcp_cb_->rx_minrto = 10;
+
+    io_thread_ = std::thread(&VfsClient::receive_loop, this);
+    timer_thread_ = std::thread(&VfsClient::kcp_update_loop, this);
     return true;
 }
 
-void SysControl::log_current_execution_identity() {
-    uid_t current_uid = getuid();
-    gid_t current_gid = getgid();
-    
-    ZHI_LOG_DEBUG("Current Active Process Execution Identity State -> Real UID: " + 
-                 std::to_string(current_uid) + " | Real GID: " + std::to_string(current_gid));
+void VfsClient::stop() {
+    if (!is_running_) return;
+    is_running_ = false; socket_.close();
+    if (io_thread_.joinable()) io_thread_.join();
+    if (timer_thread_.joinable()) timer_thread_.join();
+    if (kcp_cb_) { ikcp_release(kcp_cb_); kcp_cb_ = nullptr; }
 }
 
---- END OF FILE: src/system/sys_control.cpp ---
-
---- START FILE PATH: src/system/ufw_manager.cpp ---
-#include "system/ufw_manager.h"
-#include "common/logger.h"
-#include <cstdlib>
-#include <sstream>
-#include <cstdio>
-#include <array>
-#include <memory>
-
-UFWManager::UFWManager() : is_running(false) {}
-
-UFWManager::~UFWManager() {
-    stop_worker();
+int VfsClient::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user) {
+    VfsClient* client = static_cast<VfsClient*>(user);
+    std::error_code ec;
+    size_t sent = client->socket_.send(asio::buffer(buf, len), 0, ec);
+    if (ec) {
+        logToSwift("[" + getRealtimeLog() + "] ❌ [TX-ERR] Gửi UDP THẤT BẠI: " + ec.message());
+    } else {
+        logToSwift("[" + getRealtimeLog() + "] 📤 [TX-UDP] Bắn gói KCP ra mạng: " + std::to_string(sent) + " Bytes");
+    }
+    return 0;
 }
 
-// 🛡️ HÀM BẮT LOG THỜI GIAN THỰC (BẮT SẠCH STDOUT + STDERR + RETURN CODE)
-static void run_cmd_verbose(const std::string& cmd) {
-    std::string full_cmd = cmd + " 2>/dev/null"; // Gom cả luồng lỗi stderr về stdout
-    std::array<char, 256> buffer;
-    std::string output = "";
+void VfsClient::receive_loop() {
+    while (is_running_) {
+        std::error_code ec;
+        size_t bytes_recvd = socket_.receive(asio::buffer(recv_buffer_), 0, ec);
+        
+        if (ec) {
+            if (ec != asio::error::would_block && ec != asio::error::try_again && ec != asio::error::eof) {
+                logToSwift("[" + getRealtimeLog() + "] ❌ [RX-ERR] Kẹt Socket UDP: " + ec.message());
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            continue; 
+        }
+        
+        if (bytes_recvd > 0) {
+            logToSwift("[" + getRealtimeLog() + "] 📥 [RX-UDP] Hứng được gói UDP: " + std::to_string(bytes_recvd) + " Bytes");
+            std::lock_guard<std::mutex> lock(kcp_mutex_);
+            ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), static_cast<long>(bytes_recvd));
+            
+            int len;
+            while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
+                std::vector<uint8_t> encrypted_payload(len);
+                ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
+                std::vector<uint8_t> plaintext;
+                
+                if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
+                    if (plaintext.size() >= sizeof(VfsPacketHeader)) {
+                        VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
+                        uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
+                        
+                        std::ostringstream oss;
+                        oss << "[" << getRealtimeLog() << "] 🔓 [RX-KCP] GIẢI MÃ OK | Opcode: 0x" << std::hex << (int)hdr->opcode << std::dec 
+                            << " | ReqID: " << req_id << " | DataLen: " << hdr->data_len << " | SizeThô: " << plaintext.size() << "B";
+                        logToSwift(oss.str());
+                        
+                        zhiauth_swift_on_response(req_id, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
+                    } else {
+                        logToSwift("[" + getRealtimeLog() + "] ⚠️ [RX-ERR] Lỗi cấu trúc: Gói tin sau giải mã bị cụt ngọn!");
+                    }
+                } else {
+                    logToSwift("[" + getRealtimeLog() + "] 💀 [RX-ERR] Libsodium giải mã THẤT BẠI!");
+                }
+            }
+        }
+    }
+}
+
+void VfsClient::kcp_update_loop() {
+    while (is_running_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        uint32_t current_clock = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+        std::lock_guard<std::mutex> lock(kcp_mutex_);
+        if (kcp_cb_) ikcp_update(kcp_cb_, current_clock);
+    }
+}
+
+void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
+    if (request_payload.size() < sizeof(VfsPacketHeader)) return;
+    VfsPacketHeader* hdr = (VfsPacketHeader*)request_payload.data();
+    uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
     
-    FILE* pipe = popen(full_cmd.c_str(), "r");
-    if (!pipe) {
-        ZHI_LOG_ERR("[NFT-EXEC-FAIL] Failed to open system pipe for command: " + cmd);
+    std::ostringstream oss;
+    oss << "[" << getRealtimeLog() << "] 📦 [TX-KCP] GÓI LỆNH RPC | Opcode: 0x" << std::hex << (int)hdr->opcode << std::dec 
+        << " | ReqID: " << req_id << " | PathLen: " << hdr->path_len << " | DataLen: " << hdr->data_len << " | Tổng: " << request_payload.size() << "B";
+    logToSwift(oss.str());
+
+    std::vector<uint8_t> encrypted_payload;
+    if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) {
+        logToSwift("[" + getRealtimeLog() + "] ❌ [TX-ERR] Ép giáp Libsodium thất bại!");
         return;
     }
-    
-    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-        output += buffer.data();
-    }
-    
-    int status = pclose(pipe);
-    int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-    
-    // Trim bớt ký tự xuống dòng ở cuối
-    while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) {
-        output.pop_back();
-    }
-
-    if (exit_code == 0) {
-        ZHI_LOG_INFO("[NFT-SUCCESS] Executed: '" + cmd + "' | Output: " + (output.empty() ? "OK" : output));
-    } else {
-        ZHI_LOG_ERR("[NFT-ERROR] Exit Code [" + std::to_string(exit_code) + "] for: '" + cmd + "' | Error Output: " + output);
-    }
-}
-
-void UFWManager::start_worker() {
-    if (is_running) return;
-
-    ZHI_LOG_INFO("=== INITIALIZING NFTABLES SET INFRASTRUCTURE ===");
-
-    // 1. Tạo table/chain cơ bản
-    run_cmd_verbose("sudo /usr/sbin/nft add table inet filter");
-    run_cmd_verbose("sudo /usr/sbin/nft add chain inet filter input '{ type filter hook input priority 0; policy drop; }'");
-    run_cmd_verbose("sudo /usr/sbin/nft add chain inet filter zhiauth_dynamic");
-    run_cmd_verbose("sudo /usr/sbin/nft add rule inet filter input jump zhiauth_dynamic");
-
-    // 2. TẠO CÁC SET CHỐNG TRÙNG LẶP (Dùng double-quotes bọc nguyên câu lệnh để shell không nuốt ngoặc nhọn)
-    run_cmd_verbose("sudo /usr/sbin/nft \"add set inet filter zhiauth_quic_ips { type ipv4_addr; }\"");
-    run_cmd_verbose("sudo /usr/sbin/nft \"add set inet filter zhiauth_kcp_ips { type ipv4_addr; }\"");
-    run_cmd_verbose("sudo /usr/sbin/nft \"add set inet filter zhiauth_icmp_ips { type ipv4_addr; }\"");
-
-    // 3. DỌN SẠCH SETS & CHAIN CON MỖI LẦN BOOT DAEMON
-    run_cmd_verbose("sudo /usr/sbin/nft flush set inet filter zhiauth_quic_ips");
-    run_cmd_verbose("sudo /usr/sbin/nft flush set inet filter zhiauth_kcp_ips");
-    run_cmd_verbose("sudo /usr/sbin/nft flush set inet filter zhiauth_icmp_ips");
-    run_cmd_verbose("sudo /usr/sbin/nft flush chain inet filter zhiauth_dynamic");
-
-    // 4. NẠP 3 RULE KHUNG CỐ ĐỊNH DUYỆT THEO SET
-    run_cmd_verbose("sudo /usr/sbin/nft add rule inet filter zhiauth_dynamic ip saddr @zhiauth_quic_ips udp dport 4433 accept");
-    run_cmd_verbose("sudo /usr/sbin/nft add rule inet filter zhiauth_dynamic ip saddr @zhiauth_kcp_ips udp dport 6666 accept");
-    run_cmd_verbose("sudo /usr/sbin/nft add rule inet filter zhiauth_dynamic ip saddr @zhiauth_icmp_ips ip protocol icmp accept");
-
-    is_running = true;
-    worker_thread = std::thread(&UFWManager::worker_loop, this);
-    ZHI_LOG_INFO("UFW Task Worker Thread initialized with Verbose NFTables Set Architecture.");
-}
-
-void UFWManager::stop_worker() {
-    if (!is_running) return;
-    is_running = false;
-    cv.notify_one();
-    
-    if (worker_thread.joinable()) {
-        worker_thread.join();
-    }
-    ZHI_LOG_INFO("UFW Task Worker Thread stopped cleanly.");
-}
-
-void UFWManager::push_task(const std::string& ip, int port, const std::string& proto, bool allow) {
-    UFWTask task{ip, port, proto, allow};
     {
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        task_queue.push(task);
-    }
-    cv.notify_one();
-}
-
-void UFWManager::worker_loop() {
-    while (is_running) {
-        UFWTask task;
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            cv.wait(lock, [this] { return !task_queue.empty() || !is_running; });
-
-            if (!is_running && task_queue.empty()) break;
-
-            task = task_queue.front();
-            task_queue.pop();
-        }
-
-        execute_system_command(task);
+        std::lock_guard<std::mutex> lock(kcp_mutex_);
+        ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), static_cast<int>(encrypted_payload.size()));
+        ikcp_flush(kcp_cb_);
+        logToSwift("[" + getRealtimeLog() + "] 🛡️ [TX-KCP] Bơm " + std::to_string(encrypted_payload.size()) + "B vô nòng KCP");
     }
 }
 
-void UFWManager::execute_system_command(const UFWTask& task) {
-    std::ostringstream oss;
-    
-    std::string set_name;
-    if (task.protocol == "icmp") {
-        set_name = "zhiauth_icmp_ips";
-    } else if (task.port == 4433) {
-        set_name = "zhiauth_quic_ips";
-    } else {
-        set_name = "zhiauth_kcp_ips";
+extern "C" {
+    void* zhiauth_create_vfs_client(const char* ip, int port, const char* sym_key, int mtu,
+                                    int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
+        return new VfsClient(ip, port, sym_key, mtu, nodelay, interval, resend, nc, snd_wnd, rcv_wnd);
     }
 
-    if (task.is_allow_action) {
-        // CÚ PHÁP THÊM IP VÀO SET
-        oss << "sudo /usr/sbin/nft \"add element inet filter " << set_name << " { " << task.ip_address << " }\"";
-    } else {
-        // CÚ PHÁP XÓA IP KHỎI SET
-        oss << "sudo /usr/sbin/nft \"delete element inet filter " << set_name << " { " << task.ip_address << " }\"";
+    bool zhiauth_start_vfs_client(void* client) {
+        if (!client) return false;
+        return static_cast<VfsClient*>(client)->start();
     }
 
-    run_cmd_verbose(oss.str());
-}
---- END OF FILE: src/system/ufw_manager.cpp ---
-
-
---- END OF FILE: server_1.txt ---
-
---- START FILE PATH: ZhiAuthApp/Info.plist ---
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
-	<key>UILaunchScreen</key>
-	<dict/>
-	<key>NSFileProviderDomainUsageDescription</key>
-	<string>App cần quyền để gắn ổ đĩa ảo ZhiAuth vào ứng dụng Tệp.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Cần quyền mạng nội bộ để kết nối KCP (UDP) tới Server.</string>
-</dict>
-</plist>
-
---- END OF FILE: ZhiAuthApp/Info.plist ---
-
---- START FILE PATH: ZhiAuthApp/ZhiAuthApp.swift ---
-import SwiftUI
-import UIKit
-import Darwin
-import Network
-
-func getDeviceIPs() -> (lan: String, ts: String) {
-    var lan = ""; var ts = ""
-    var ifaddr: UnsafeMutablePointer<ifaddrs>?
-    guard getifaddrs(&ifaddr) == 0 else { return (lan, ts) }
-    var ptr = ifaddr
-    while ptr != nil {
-        defer { ptr = ptr?.pointee.ifa_next }
-        guard let interface = ptr?.pointee else { continue }
-        let addrFamily = interface.ifa_addr.pointee.sa_family
-        if addrFamily == UInt8(AF_INET) {
-            let name = String(cString: interface.ifa_name)
-            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len), &hostname, socklen_t(hostname.count), nil, socklen_t(0), NI_NUMERICHOST)
-            let ip = String(cString: hostname)
-            if ip.hasPrefix("127.") || ip.hasPrefix("169.254.") { continue }
-            if name == "en0" || name == "pdp_ip0" { lan = ip } else if name.hasPrefix("utun") && ip.hasPrefix("100.") { ts = ip }
-        }
+    void zhiauth_stop_vfs_client(void* client) {
+        if (client) static_cast<VfsClient*>(client)->stop();
     }
-    freeifaddrs(ifaddr)
-    return (lan, ts)
-}
 
-class AppState: ObservableObject {
-    @Published var isLoggedIn: Bool = false
-    @Published var currentPath: String = "/"
-    @Published var fileList: [ZhiFileItem] = []
-    @Published var isLoading: Bool = false
-    @Published var logs: String = "💀 Sẵn sàng chọc thủng server...\n"
-    @Published var transferSpeed: String = "0 KB/s"
-    
-    // Clipboard dùng cho tính năng Copy/Cut
-    @Published var clipboardItem: ZhiFileItem?
-    @Published var isCutOperation: Bool = false
-    
-    var sharedRoot: String = ""
-    var baseIP: String = ""
-    
-    func log(_ msg: String) {
-        DispatchQueue.main.async {
-            let timestamp = Date().formatted(date: .omitted, time: .standard)
-            self.logs += "[\(timestamp)] \(msg)\n"
-            if self.logs.count > 4000 { self.logs = String(self.logs.suffix(3000)) }
-        }
+    void zhiauth_destroy_vfs_client(void* client) {
+        if (client) delete static_cast<VfsClient*>(client);
     }
-}
 
-// MARK: - Trình xử lý Xem trước file bằng Native QuickLook của iOS
-class DocumentPresenter: NSObject, UIDocumentInteractionControllerDelegate {
-    static let shared = DocumentPresenter()
-    var documentController: UIDocumentInteractionController?
-
-    func presentPreview(for url: URL) {
-        DispatchQueue.main.async {
-            self.documentController = UIDocumentInteractionController(url: url)
-            self.documentController?.delegate = self
-            
-            let canPreview = self.documentController?.presentPreview(animated: true) ?? false
-            
-            // Nếu iOS KHÔNG hỗ trợ định dạng này -> Tự động rớt xuống mở popup Share mặc định
-            if !canPreview {
-                guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                      let window = scene.windows.first,
-                      let rootVC = window.rootViewController else { return }
-                
-                if UIDevice.current.userInterfaceIdiom == .pad {
-                    self.documentController?.presentOptionsMenu(from: CGRect(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.midY, width: 0, height: 0), in: rootVC.view, animated: true)
-                } else {
-                    self.documentController?.presentOptionsMenu(from: rootVC.view.bounds, in: rootVC.view, animated: true)
-                }
-            }
-        }
-    }
-    
-    func documentInteractionControllerViewControllerForPreview(_ controller: UIDocumentInteractionController) -> UIViewController {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let window = scene.windows.first,
-              let rootVC = window.rootViewController else { return UIViewController() }
-        return rootVC
-    }
-}
-
-@main
-struct ZhiAuthApp: App {
-    @StateObject private var appState = AppState()
-    var body: some Scene {
-        WindowGroup {
-            if appState.isLoggedIn {
-                FileExplorerView().environmentObject(appState)
-            } else {
-                LoginView().environmentObject(appState)
-            }
-        }
-    }
-}
-
-struct LoginView: View {
-    @EnvironmentObject var state: AppState
-    @AppStorage("savedLanIP") private var lanIP: String = "192.168.1.83"
-    @AppStorage("savedTsIP") private var tsIP: String = ""
-    @AppStorage("savedUser") private var username: String = "huang"
-    @AppStorage("savedPass") private var password: String = ""
-    
-    var body: some View {
-        VStack(spacing: 20) {
-            Text("ZhiAuth v6.0").font(.largeTitle).bold().padding(.top, 40)
-            
-            VStack(spacing: 15) {
-                TextField("LAN IP Server", text: $lanIP).textFieldStyle(RoundedBorderTextFieldStyle()).keyboardType(.numbersAndPunctuation).autocapitalization(.none)
-                TextField("Tailscale IP Server", text: $tsIP).textFieldStyle(RoundedBorderTextFieldStyle()).keyboardType(.numbersAndPunctuation).autocapitalization(.none)
-                TextField("Username", text: $username).textFieldStyle(RoundedBorderTextFieldStyle()).autocapitalization(.none)
-                SecureField("Password", text: $password).textFieldStyle(RoundedBorderTextFieldStyle())
-            }.padding(.horizontal, 30)
-            
-            if state.isLoading { ProgressView("Đang khởi động KCP Engine...").padding() }
-            
-            Button(action: performLogin) {
-                Text("KẾT NỐI SERVER")
-                    .font(.headline).foregroundColor(.white).padding()
-                    .frame(maxWidth: .infinity).background(state.isLoading ? Color.gray : Color.blue).cornerRadius(10)
-            }.disabled(state.isLoading).padding(.horizontal, 30)
-            
-            ScrollView {
-                Text(state.logs).font(.system(size: 10, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).padding()
-            }.background(Color.black.opacity(0.8)).foregroundColor(.green).cornerRadius(10).padding()
-        }.onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ZhiAuthLog"))) { note in
-            if let msg = note.object as? String { state.log("C++ | " + msg) }
-        }
-    }
-    
-    func performLogin() {
-        let safeLanIP = lanIP.trimmingCharacters(in: .whitespacesAndNewlines)
-        let safeTsIP = tsIP.trimmingCharacters(in: .whitespacesAndNewlines)
-        if safeLanIP.isEmpty && safeTsIP.isEmpty { state.log("❌ Lỗi: Phải nhập IP Server!"); return }
+    void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
+                              uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len) {
+        if (!client) return;
+        uint16_t path_length = path ? static_cast<uint16_t>(strlen(path)) : 0;
+        std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + path_length + payload_len, 0);
+        VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
         
-        state.isLoading = true
-        state.log("Đang đua tốc độ LAN & Tailscale...")
-        Task {
-            do {
-                let hwid = await MainActor.run { UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS" }
-                let myIPs = getDeviceIPs()
-                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(myIPs.lan.isEmpty ? "N/A" : myIPs.lan)|TS:\(myIPs.ts.isEmpty ? "N/A" : myIPs.ts)|HWID:\(hwid)"
-                
-                let winner: (String, AuthResponse)? = await withTaskGroup(of: Optional<(String, AuthResponse)>.self) { group in
-                    if !safeLanIP.isEmpty { group.addTask { do { return (safeLanIP, try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeLanIP, authPort: 5555, authCmd: authCmd)) } catch { return nil } } }
-                    if !safeTsIP.isEmpty { group.addTask { do { return (safeTsIP, try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeTsIP, authPort: 5555, authCmd: authCmd)) } catch { return nil } } }
-                    for await result in group { if let res = result, res.1.isSuccess { group.cancelAll(); return res } }
-                    return nil
-                }
-                
-                guard let (winningIP, auth) = winner else { state.log("❌ Lỗi mạng: Knocking Timeout!"); state.isLoading = false; return }
-                state.log("✅ Auth OK qua [\(winningIP)]! KCP Port: \(auth.kcpPort)")
-                
-                if ZhiKcpEngine.initCore(ip: winningIP, port: Int32(auth.kcpPort), symKey: "ZhiAuth_Secret_KCP_Key_2026_1234", mtu: 1200, tuning: auth.tuning) {
-                    state.log("🔥 Lõi KCP đã nổ máy!")
-                    try await Task.sleep(nanoseconds: 1_000_000_000)
-                    state.sharedRoot = auth.sharedPath.isEmpty ? "/tmp" : auth.sharedPath
-                    state.baseIP = winningIP
-                    
-                    _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_STAT, path: state.sharedRoot, offset: 0, reqLen: 0, payloadData: nil)
-                    await MainActor.run { state.currentPath = state.sharedRoot; state.isLoggedIn = true; state.isLoading = false }
-                } else { state.log("❌ Khởi động KCP Engine thất bại."); state.isLoading = false }
-            } catch { state.log("❌ Lỗi: \(error.localizedDescription)"); state.isLoading = false }
+        hdr->magic = 0x5A484941;
+        hdr->opcode = static_cast<VfsOpcode>(opcode);
+        hdr->session_id = req_id;
+        hdr->offset = offset;
+        hdr->data_len = (req_len > 0) ? req_len : payload_len; 
+        hdr->path_len = path_length;
+        
+        uint8_t* ptr = req_data.data() + sizeof(VfsPacketHeader);
+        if (path_length > 0) {
+            memcpy(ptr, path, path_length);
+            ptr += path_length;
         }
+        if (payload && payload_len > 0) {
+            memcpy(ptr, payload, payload_len);
+        }
+        
+        static_cast<VfsClient*>(client)->send_rpc_async(req_data);
     }
 }
 
-// 🔥 STYLE BẤM CÓ BÓNG MỜ VÀ ĐỘ NHÚN CHO CÁC DÒNG FILE
-struct FileItemButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(.vertical, 8)
-            .padding(.horizontal, 12)
-            .background(configuration.isPressed ? Color.gray.opacity(0.15) : Color.clear)
-            .cornerRadius(10)
-            .shadow(color: configuration.isPressed ? Color.black.opacity(0.2) : Color.clear, radius: 3, x: 0, y: 2)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
-    }
-}
+--- END OF FILE: src/rpc_client/vfs_client.cpp ---
 
-struct FileExplorerView: View {
-    @EnvironmentObject var state: AppState
-    
-    @State private var showNewFolderAlert = false
-    @State private var newFolderName = ""
-    
-    @State private var showRenameAlert = false
-    @State private var newName = ""
-    @State private var itemToRename: ZhiFileItem?
-    
-    @State private var showDeleteAlert = false
-    @State private var itemToDelete: ZhiFileItem?
-    
-    @State private var showInfoAlert = false
-    @State private var infoMessage = ""
-
-    func displayPath(for rawPath: String) -> String {
-        if rawPath.hasPrefix(state.sharedRoot) {
-            let relative = String(rawPath.dropFirst(state.sharedRoot.count))
-            return relative.isEmpty ? "/" : relative
-        }
-        return rawPath
-    }
-
-    var body: some View {
-        NavigationView {
-            VStack {
-                HStack {
-                    Text("Tốc độ: \(state.transferSpeed)").font(.caption).foregroundColor(.gray)
-                    Spacer()
-                    Text(displayPath(for: state.currentPath)).font(.caption).lineLimit(1).truncationMode(.middle)
-                }.padding(.horizontal)
-                
-                List(state.fileList, id: \.id) { item in
-                    Button(action: {
-                        if item.isDirectory {
-                            let newPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(item.name)" : "\(state.currentPath)/\(item.name)"
-                            loadDirectory(path: newPath)
-                        } else {
-                            downloadAndShareFile(item: item)
-                        }
-                    }) {
-                        HStack(spacing: 15) {
-                            Image(systemName: item.isDirectory ? "folder.fill" : "doc.text.fill")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 26, height: 26)
-                                .foregroundColor(item.isDirectory ? .blue : .gray)
-                            
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.name).font(.body).foregroundColor(.primary)
-                                Text(item.sizeString).font(.caption).foregroundColor(.secondary)
-                            }
-                            Spacer() // 🔥 CĂNG BỀ NGANG FULL DÒNG CHO DỄ BẤM
-                        }
-                        .contentShape(Rectangle()) // Nhận cảm ứng trên toàn bộ diện tích
-                    }
-                    .buttonStyle(FileItemButtonStyle()) // 🔥 ÁP DỤNG HIỆU ỨNG NHÚN VÀ SHADOW KHI BẤM
-                    .contextMenu {
-                        Button(action: { showFileInfo(item) }) { Label("Thông tin", systemImage: "info.circle") }
-                        Button(action: { state.clipboardItem = item; state.isCutOperation = false; state.log("Đã copy '\(item.name)' vào bộ nhớ tạm") }) { Label("Copy", systemImage: "doc.on.doc") }
-                        Button(action: { state.clipboardItem = item; state.isCutOperation = true; state.log("Đã cắt '\(item.name)' vào bộ nhớ tạm") }) { Label("Cut", systemImage: "scissors") }
-                        Button(action: { itemToRename = item; newName = item.name; showRenameAlert = true }) { Label("Đổi tên", systemImage: "pencil") }
-                        Button(role: .destructive, action: { itemToDelete = item; showDeleteAlert = true }) { Label("Xóa", systemImage: "trash") }
-                    }
-                    .listRowSeparator(.hidden) // Giấu gạch dưới để hiển thị block nhìn pro hơn
-                    .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-                }
-                .listStyle(.plain)
-                .refreshable { await refreshList() }
-                .overlay(Group {
-                    if state.isLoading {
-                        ProgressView("Đang tải...").padding().background(Color(UIColor.systemBackground).opacity(0.8)).cornerRadius(10)
-                    } else if state.fileList.isEmpty {
-                        Text("Thư mục rỗng").foregroundColor(.gray)
-                    }
-                })
-            }
-            .navigationTitle("ZhiAuth Explorer")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    if state.currentPath != state.sharedRoot {
-                        Button(action: goUp) { HStack { Image(systemName: "chevron.backward"); Text("Quay lại") } }
-                    }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 15) {
-                        if state.clipboardItem != nil {
-                            Button(action: pasteItem) { Image(systemName: "doc.on.clipboard").foregroundColor(.green) }
-                        }
-                        Button(action: { newFolderName = ""; showNewFolderAlert = true }) { Image(systemName: "folder.badge.plus").foregroundColor(.blue) }
-                        Button(action: logout) { Image(systemName: "power").foregroundColor(.red) }
-                    }
-                }
-            }
-            .onAppear { loadDirectory(path: state.currentPath) }
-            
-            // --- CÁC POPUP THAO TÁC FILE ---
-            .alert("Tạo thư mục mới", isPresented: $showNewFolderAlert) {
-                TextField("Tên thư mục", text: $newFolderName)
-                Button("Tạo", action: createFolder)
-                Button("Hủy", role: .cancel) { }
-            }
-            .alert("Đổi tên", isPresented: $showRenameAlert) {
-                TextField("Tên mới", text: $newName)
-                Button("Lưu", action: renameItem)
-                Button("Hủy", role: .cancel) { }
-            }
-            .alert("Cảnh báo Xóa", isPresented: $showDeleteAlert) {
-                Button("Xóa ngay", role: .destructive, action: deleteItem)
-                Button("Hủy", role: .cancel) { }
-            } message: {
-                Text("Xóa file/thư mục này là vĩnh viễn, không thể phục hồi. Bạn có chắc không?")
-            }
-            .alert("Thông tin", isPresented: $showInfoAlert) {
-                Button("Đóng", role: .cancel) { }
-            } message: { Text(infoMessage) }
-        }
-    }
-    
-    // MARK: - CÁC HÀM THAO TÁC FILE CỐT LÕI
-    
-    func createFolder() {
-        let cleanName = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleanName.isEmpty { return }
-        let targetPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(cleanName)" : "\(state.currentPath)/\(cleanName)"
-        state.log("Đang tạo thư mục: \(cleanName)...")
-        Task {
-            do {
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_MKDIR, path: targetPath, offset: 0, reqLen: 0, payloadData: nil)
-                await refreshList()
-            } catch { state.log("❌ Lỗi tạo thư mục: \(error.localizedDescription)") }
-        }
-    }
-    
-    func deleteItem() {
-        guard let item = itemToDelete else { return }
-        state.log("Đang xóa: \(item.name)...")
-        Task {
-            do {
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_DELETE, path: item.path, offset: 0, reqLen: 0, payloadData: nil)
-                await refreshList()
-                if state.clipboardItem?.id == item.id { await MainActor.run { state.clipboardItem = nil } }
-            } catch { state.log("❌ Lỗi xóa: \(error.localizedDescription)") }
-        }
-    }
-    
-    func renameItem() {
-        guard let item = itemToRename else { return }
-        let cleanName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleanName.isEmpty || cleanName == item.name { return }
-        
-        let url = URL(fileURLWithPath: item.path)
-        let newPath = url.deletingLastPathComponent().appendingPathComponent(cleanName).path
-        
-        state.log("Đang đổi tên thành: \(cleanName)...")
-        Task {
-            do {
-                var newPathData = newPath.data(using: .utf8)!
-                newPathData.append(0)
-                
-                _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_RENAME, path: item.path, offset: 0, reqLen: UInt32(newPathData.count), payloadData: newPathData)
-                await refreshList()
-                if state.clipboardItem?.id == item.id { await MainActor.run { state.clipboardItem = nil } }
-            } catch { state.log("❌ Lỗi đổi tên: \(error.localizedDescription)") }
-        }
-    }
-    
-    func pasteItem() {
-        guard let item = state.clipboardItem else { return }
-        let destPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(item.name)" : "\(state.currentPath)/\(item.name)"
-        
-        if state.isCutOperation {
-            state.log("Đang di chuyển (Cut) file...")
-            Task {
-                do {
-                    var newPathData = destPath.data(using: .utf8)!
-                    newPathData.append(0)
-                    
-                    _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_RENAME, path: item.path, offset: 0, reqLen: UInt32(newPathData.count), payloadData: newPathData)
-                    await MainActor.run { state.clipboardItem = nil; state.isCutOperation = false }
-                    await refreshList()
-                } catch { state.log("❌ Lỗi Cut: \(error.localizedDescription)") }
-            }
-        } else {
-            if item.isDirectory {
-                state.log("❌ Server chưa hỗ trợ Copy cả Thư mục (Bạn có thể Cut hoặc Copy từng file lẻ).")
-                return
-            }
-            state.log("⏳ Đang Copy (Download & Upload tốc độ cao qua KCP)...")
-            state.isLoading = true
-            Task {
-                do {
-                    var offset: UInt64 = 0
-                    let chunkSize: UInt32 = 65536
-                    
-                    _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_WRITE, path: destPath, offset: 0, reqLen: 0, payloadData: Data())
-                    
-                    while offset < item.size {
-                        let remain = UInt32(min(UInt64(chunkSize), item.size - offset))
-                        let readData = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_READ, path: item.path, offset: offset, reqLen: remain, payloadData: nil)
-                        
-                        if readData.count > 27 {
-                            let chunk = readData.subdata(in: 27..<readData.count)
-                            _ = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_WRITE, path: destPath, offset: offset, reqLen: UInt32(chunk.count), payloadData: chunk)
-                            offset += UInt64(chunk.count)
-                        } else { break }
-                    }
-                    state.log("✅ Copy hoàn tất: \(item.name)")
-                    await MainActor.run { state.clipboardItem = nil }
-                    await refreshList()
-                } catch {
-                    state.log("❌ Lỗi Copy: \(error.localizedDescription)")
-                }
-                await MainActor.run { state.isLoading = false }
-            }
-        }
-    }
-    
-    func showFileInfo(_ item: ZhiFileItem) {
-        let date = Date(timeIntervalSince1970: TimeInterval(item.modifiedTime))
-        let formatter = DateFormatter()
-        formatter.dateFormat = "dd/MM/yyyy HH:mm:ss"
-        
-        infoMessage = """
-        Tên: \(item.name)
-        Loại: \(item.isDirectory ? "Thư mục" : "Tập tin")
-        Dung lượng: \(item.isDirectory ? "Không đếm" : item.sizeString)
-        Ngày sửa: \(formatter.string(from: date))
-        Đường dẫn: \(displayPath(for: item.path))
-        """
-        showInfoAlert = true
-    }
-    
-    // MARK: - LOGIC ĐIỀU HƯỚNG VÀ DANH SÁCH
-    
-    func goUp() {
-        var components = state.currentPath.split(separator: "/").map(String.init)
-        if components.count > 1 {
-            components.removeLast()
-            let parentPath = "/" + components.joined(separator: "/")
-            loadDirectory(path: parentPath)
-        } else {
-            loadDirectory(path: "/")
-        }
-    }
-    
-    func loadDirectory(path: String) {
-        state.isLoading = true
-        state.currentPath = path
-        Task {
-            do {
-                let data = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_LIST, path: path, offset: 0, reqLen: 0, payloadData: nil)
-                let parsedList = parseList(data: data, basePath: path)
-                await MainActor.run {
-                    state.fileList = parsedList.sorted {
-                        if $0.isDirectory == $1.isDirectory { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-                        return $0.isDirectory
-                    }
-                    state.isLoading = false
-                }
-            } catch {
-                await MainActor.run { state.log("❌ Lỗi load thư mục: \(error.localizedDescription)"); state.isLoading = false }
-            }
-        }
-    }
-    
-    func downloadAndShareFile(item: ZhiFileItem) {
-        state.isLoading = true
-        state.log("⏳ Đang tải file \(item.name) qua KCP...")
-        Task {
-            do {
-                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(item.name)
-                if FileManager.default.fileExists(atPath: tempURL.path) { try FileManager.default.removeItem(at: tempURL) }
-                FileManager.default.createFile(atPath: tempURL.path, contents: nil)
-                let fileHandle = try FileHandle(forWritingTo: tempURL)
-                defer { try? fileHandle.close() }
-                
-                var offset: UInt64 = 0
-                let chunkSize: UInt32 = 65536
-                
-                while offset < item.size {
-                    let remain = UInt32(min(UInt64(chunkSize), item.size - offset))
-                    let data = try await ZhiKcpEngine.sendRpcVfs(opcode: .OP_READ, path: item.path, offset: offset, reqLen: remain, payloadData: nil)
-                    
-                    if data.count > 27 {
-                        let fileData = data.subdata(in: 27..<data.count)
-                        try fileHandle.seekToEnd()
-                        try fileHandle.write(contentsOf: fileData)
-                        offset += UInt64(fileData.count)
-                    } else { throw NSError(domain: "ZhiAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Dữ liệu rỗng từ server"]) }
-                }
-                
-                await MainActor.run {
-                    state.isLoading = false
-                    state.log("✅ Tải xong! Bật xem trước QuickLook...")
-                    DocumentPresenter.shared.presentPreview(for: tempURL)
-                }
-            } catch {
-                await MainActor.run { state.isLoading = false; state.log("❌ Lỗi tải file: \(error.localizedDescription)") }
-            }
-        }
-    }
-    
-    func refreshList() async { loadDirectory(path: state.currentPath) }
-    
-    func logout() {
-        ZhiKcpEngine.stopCore()
-        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(state.baseIP), port: 5555)
-        let conn = NWConnection(to: endpoint, using: .udp)
-        conn.start(queue: .global())
-        conn.send(content: "AUTH_REQ|LOGOUT".data(using: .utf8)!, completion: .contentProcessed { _ in conn.cancel() })
-        
-        state.isLoggedIn = false
-        state.fileList = []
-        state.currentPath = "/"
-        state.clipboardItem = nil
-        state.log("🛑 Đã đăng xuất và ngắt lõi KCP.")
-    }
-    
-    func parseList(data: Data, basePath: String) -> [ZhiFileItem] {
-        var result: [ZhiFileItem] = []
-        let headerSize = 27
-        if data.count <= headerSize { return result }
-        
-        var cur = headerSize
-        while cur + 39 <= data.count {
-            let nameLen = UInt16(data[cur]) | (UInt16(data[cur+1]) << 8)
-            let isDir = data[cur+2] == 1
-            var size: UInt64 = 0
-            var mtime: UInt64 = 0
-            withUnsafeMutableBytes(of: &size) { _ = data.copyBytes(to: $0, from: cur+3..<cur+11) }
-            withUnsafeMutableBytes(of: &mtime) { _ = data.copyBytes(to: $0, from: cur+11..<cur+19) }
-            
-            cur += 39
-            if cur + Int(nameLen) > data.count { break }
-            
-            if let name = String(data: data[cur..<cur+Int(nameLen)], encoding: .utf8) {
-                if name != "." && name != ".." {
-                    let fullPath = basePath.hasSuffix("/") ? basePath + name : basePath + "/" + name
-                    result.append(ZhiFileItem(name: name, isDirectory: isDir, size: size, modifiedTime: mtime, path: fullPath))
-                }
-            }
-            cur += Int(nameLen)
-        }
-        return result
-    }
-}
-
---- END OF FILE: ZhiAuthApp/ZhiAuthApp.swift ---
-
---- START FILE PATH: ZhiAuthApp/FileModel.swift ---
-import Foundation
-
-struct ZhiFileItem: Identifiable, Hashable {
-    let id = UUID()
-    let name: String
-    let isDirectory: Bool
-    let size: UInt64
-    let modifiedTime: UInt64
-    let path: String
-    
-    var sizeString: String {
-        if isDirectory { return "--" }
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useAll]
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: Int64(size))
-    }
-}
-
---- END OF FILE: ZhiAuthApp/FileModel.swift ---
-
---- START FILE PATH: .github/workflows/build-ios.yml ---
-name: Build ZhiAuth iOS App
-
-on:
-  push:
-    branches: [ "Client_iOS" ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    name: Build unsigned IPA
-    runs-on: macos-latest
-
-    steps:
-      - name: Lấy source code về
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Cài đặt XcodeGen & ASIO
-        run: |
-          brew install xcodegen asio
-          xcodegen generate
-
-      - name: Biên dịch Xcode Project (Sử dụng Xcode mặc định của macos-latest)
-        run: |
-          set -o pipefail
-          xcodebuild clean build \
-            -project ZhiAuth.xcodeproj \
-            -scheme ZhiAuthApp \
-            -sdk iphoneos \
-            -configuration Release \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            SYMROOT=$(PWD)/build \
-            -verbose
-
-      - name: Đóng gói thành file .ipa chuẩn
-        run: |
-          echo "==== ĐANG ĐÓNG GÓI THÀNH IPA CHUẨN APPLE ===="
-          mkdir -p Payload
-          cp -R build/Release-iphoneos/ZhiAuthApp.app Payload/
-          ditto -c -k --sequesterRsrc --keepParent Payload ZhiAuthApp.ipa
-          echo "✅ Đóng gói hoàn tất!"
-
-      - name: Xuất file IPA cho Ný tải
-        uses: actions/upload-artifact@v4
-        with:
-          name: ZhiAuthApp-iOS
-          path: ZhiAuthApp.ipa
-          retention-days: 7
-
---- END OF FILE: .github/workflows/build-ios.yml ---
-
---- START FILE PATH: src/rpc_client/crypto_box.h ---
-#ifndef ZHIAUTH_CRYPTO_BOX_H
-#define ZHIAUTH_CRYPTO_BOX_H
-
+--- START FILE PATH: src/rpc_client/vfs_client.h ---
+#ifndef ZHIAUTH_VFS_CLIENT_H
+#define ZHIAUTH_VFS_CLIENT_H
+#include <asio.hpp>
+#include <thread>
+#include <mutex>
 #include <vector>
 #include <string>
-#include <cstdint>
+#include <condition_variable>
+#include <unordered_map>
+#include <memory>
+#include "rpc_client/ikcp.h"
 
-class CryptoBox {
-public:
-    static bool initialize();
-    static bool encrypt_payload(const std::vector<uint8_t>& plaintext, const std::string& symmetric_key, std::vector<uint8_t>& ciphertext);
-    static bool decrypt_payload(const std::vector<uint8_t>& ciphertext, const std::string& symmetric_key, std::vector<uint8_t>& plaintext);
+struct RpcContext {
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::vector<uint8_t> response;
+    bool done = false;
 };
-#endif // ZHIAUTH_CRYPTO_BOX_H
 
---- END OF FILE: src/rpc_client/crypto_box.h ---
+class VfsClient {
+public:
+    VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
+              int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
+    ~VfsClient();
+    bool start();
+    void stop();
+    void send_rpc_async(const std::vector<uint8_t>& request_payload);
+    static int kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user);
+private:
+    void receive_loop();
+    void kcp_update_loop();
+    void kcp_adaptive_tuner_loop();
+    asio::io_context io_context_;
+    asio::ip::udp::socket socket_;
+    asio::ip::udp::endpoint server_endpoint_;
+    std::vector<uint8_t> recv_buffer_;
+    std::thread io_thread_;
+    std::thread timer_thread_;
+    std::thread tuner_thread_;
+    std::atomic<bool> is_running_;
+    ikcpcb* kcp_cb_;
+    std::mutex kcp_mutex_;
+    std::string sym_key_;
+    int mtu_; 
+    int nodelay_, interval_, resend_, nc_, snd_wnd_, rcv_wnd_;
+
+    std::unordered_map<uint64_t, std::shared_ptr<RpcContext>> rpc_map_;
+    std::mutex rpc_map_mutex_;
+};
+#endif
+
+--- END OF FILE: src/rpc_client/vfs_client.h ---
+
+--- START FILE PATH: src/bridge/client_bridge.cpp ---
+#include "bridge/client_bridge.h"
+#include "rpc_client/crypto_box.h"
+#include "rpc_client/vfs_client.h"
+
+static VfsClient* g_vfs_client = nullptr;
+
+extern "C" {
+int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, int mtu,
+                        int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
+    if (!CryptoBox::initialize()) return -1;
+    if (g_vfs_client != nullptr) delete g_vfs_client;
+    
+    g_vfs_client = new VfsClient(server_ip, port, sym_key, mtu, nodelay, interval, resend, nc, snd_wnd, rcv_wnd);
+    g_vfs_client->start();
+    return 0;
+}
+
+void zhiauth_send_vfs_command_async(const uint8_t* payload, size_t payload_len) {
+    if (g_vfs_client) {
+        std::vector<uint8_t> req(payload, payload + payload_len);
+        g_vfs_client->send_rpc_async(req); // Đổi thành Async!
+    }
+}
+
+void zhiauth_client_shutdown() {
+    if (g_vfs_client) { g_vfs_client->stop(); delete g_vfs_client; g_vfs_client = nullptr; }
+}
+}
+
+--- END OF FILE: src/bridge/client_bridge.cpp ---
+
+--- START FILE PATH: src/bridge/client_bridge.h ---
+#ifndef CLIENT_BRIDGE_H
+#define CLIENT_BRIDGE_H
+#include <stdint.h>
+#include <stddef.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, int mtu,
+                        int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
+// Gọi cái này là trả lời qua hàm callback, siêu mượt!
+void zhiauth_send_vfs_command_async(const uint8_t* payload, size_t payload_len);
+void zhiauth_client_shutdown();
+
+// Khai báo hàm Go để gọi ngược lên
+extern void zhiauth_cgo_on_response(uint64_t reqId, uint8_t* data, size_t length);
+#ifdef __cplusplus
+}
+#endif
+#endif
+
+--- END OF FILE: src/bridge/client_bridge.h ---
+
+--- START FILE PATH: ZhiAuth/ZhiLogger.swift ---
+import Foundation
+
+enum LogLevel: String {
+    case DEBUG = "DEBUG"
+    case INFO = "INFO"
+    case WARNING = "WARNING"
+    case ERROR = "ERROR"
+}
+
+class ZhiLogger {
+    private static let lock = NSLock()
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+    
+    static func log(level: LogLevel, file: String = #file, line: Int = #line, function: String = #function, message: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        
+        let timestamp = dateFormatter.string(from: Date())
+        let fileName = (file as NSString).lastPathComponent
+        NSLog("%@", "[\(timestamp)] [\(level.rawValue)] [\(fileName):\(line)::\(function)] -> \(message)")
+    }
+    
+    static func debug(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .DEBUG, file: file, line: line, function: function, message: message)
+    }
+    
+    static func info(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .INFO, file: file, line: line, function: function, message: message)
+    }
+    
+    static func warning(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .WARNING, file: file, line: line, function: function, message: message)
+    }
+    
+    static func error(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .ERROR, file: file, line: line, function: function, message: message)
+    }
+}
+--- END OF FILE: ZhiAuth/ZhiLogger.swift ---
+
+--- START FILE PATH: ZhiAuth/ZhiKcpEngine.swift ---
+import Foundation
+
+@_cdecl("zhiauth_swift_log")
+public func zhiauth_swift_log(msg: UnsafePointer<CChar>) {
+    let str = String(cString: msg)
+    DispatchQueue.main.async {
+        NotificationCenter.default.post(name: NSNotification.Name("ZhiAuthLog"), object: str)
+    }
+}
+
+actor KcpRequestManager {
+    private var pendingRequests: [UInt32: CheckedContinuation<Data, Error>] = [:]
+    
+    func addRequest(id: UInt32, continuation: CheckedContinuation<Data, Error>) {
+        pendingRequests[id] = continuation
+    }
+    
+    func completeRequest(id: UInt32, data: Data) {
+        if let continuation = pendingRequests.removeValue(forKey: id) {
+            continuation.resume(returning: data)
+        }
+    }
+    
+    func removeRequest(id: UInt32) {
+        pendingRequests.removeValue(forKey: id)
+    }
+    
+    func failAll(error: Error) {
+        for (_, continuation) in pendingRequests {
+            continuation.resume(throwing: error)
+        }
+        pendingRequests.removeAll()
+    }
+}
+
+public enum VfsOpcode: UInt8 {
+    case OP_PING     = 0x00
+    case OP_STAT     = 0x01
+    case OP_LIST     = 0x02
+    case OP_READ     = 0x03
+    case OP_WRITE    = 0x04
+    case OP_MKDIR    = 0x05
+    case OP_DELETE   = 0x06
+    case OP_RENAME   = 0x07
+    case OP_TRUNCATE = 0x08
+    case OP_ERROR    = 0xFF
+}
+
+public class ZhiKcpEngine {
+    private static var vfsClient: UnsafeMutableRawPointer? = nil
+    fileprivate static let requestManager = KcpRequestManager()
+    private static var currentSessionId: UInt32 = 0
+    
+    public static func initCore(ip: String, port: Int32, symKey: String, mtu: Int32, tuning: KcpTuningParams) -> Bool {
+        stopCore()
+        vfsClient = zhiauth_create_vfs_client(
+            ip, port, symKey, mtu,
+            tuning.noDelay, tuning.interval, tuning.resend, tuning.nc,
+            tuning.sndWnd, tuning.rcvWnd
+        )
+        guard let client = vfsClient else { return false }
+        return zhiauth_start_vfs_client(client)
+    }
+    
+    public static func stopCore() {
+        guard let client = vfsClient else { return }
+        zhiauth_stop_vfs_client(client)
+        zhiauth_destroy_vfs_client(client)
+        vfsClient = nil
+        Task {
+            await requestManager.failAll(error: NSError(domain: "ZhiAuth.KCP", code: -500, userInfo: [NSLocalizedDescriptionKey: "KCP Engine Stopped"]))
+        }
+    }
+    
+    public static func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
+        guard let client = vfsClient else {
+            throw NSError(domain: "ZhiAuth.KCP", code: -501, userInfo: [NSLocalizedDescriptionKey: "Lõi KCP chưa khởi động"])
+        }
+        
+        currentSessionId &+= 1
+        let reqId = currentSessionId
+        
+        return try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask {
+                return try await withCheckedThrowingContinuation { continuation in
+                    Task {
+                        await requestManager.addRequest(id: reqId, continuation: continuation)
+                        path.withCString { cPath in
+                            if let data = payloadData, !data.isEmpty {
+                                data.withUnsafeBytes { rawPtr in
+                                    let basePtr = rawPtr.bindMemory(to: UInt8.self).baseAddress
+                                    zhiauth_vfs_send_rpc(client, reqId, opcode.rawValue, cPath, offset, reqLen, basePtr, UInt32(data.count))
+                                }
+                            } else {
+                                zhiauth_vfs_send_rpc(client, reqId, opcode.rawValue, cPath, offset, reqLen, nil, 0)
+                            }
+                        }
+                    }
+                }
+            }
+            
+            group.addTask {
+                try await Task.sleep(nanoseconds: 6_000_000_000)
+                await requestManager.removeRequest(id: reqId)
+                let errMsg = "[TIMEOUT] KCP quá hạn 6s (ReqID: \(reqId))"
+                NotificationCenter.default.post(name: NSNotification.Name("ZhiAuthLog"), object: "❌ " + errMsg)
+                throw NSError(domain: "ZhiAuth.KCP", code: -408, userInfo: [NSLocalizedDescriptionKey: errMsg])
+            }
+            
+            let result = try await group.next()!
+            group.cancelAll()
+            
+            if result.count >= 5 && result[4] == VfsOpcode.OP_ERROR.rawValue {
+                throw NSError(domain: "ZhiAuth.KCP", code: -502, userInfo: [NSLocalizedDescriptionKey: "Server trả về OP_ERROR (0xFF) cho lệnh \(opcode)"])
+            }
+            return result
+        }
+    }
+}
+
+@_cdecl("zhiauth_swift_on_response")
+public func zhiauth_swift_on_response(reqId: UInt32, payload: UnsafePointer<UInt8>?, len: UInt32) {
+    let data = payload != nil ? Data(bytes: payload!, count: Int(len)) : Data()
+    Task { await ZhiKcpEngine.requestManager.completeRequest(id: reqId, data: data) }
+}
+
+--- END OF FILE: ZhiAuth/ZhiKcpEngine.swift ---
+
+--- START FILE PATH: ZhiAuth/ZhiNetworkAuth.swift ---
+import Foundation
+import Network
+
+public struct KcpTuningParams {
+    public var noDelay: Int32 = 1
+    public var interval: Int32 = 10
+    public var resend: Int32 = 2
+    public var nc: Int32 = 0
+    public var sndWnd: Int32 = 512
+    public var rcvWnd: Int32 = 512
+    public var isDynamic: Bool = false
+    public init() {}
+}
+
+public struct AuthResponse {
+    public var isSuccess: Bool = false
+    public var sharedPath: String = ""
+    public var quicPort: Int = 4433
+    public var kcpPort: Int = 6666
+    public var tuning: KcpTuningParams = KcpTuningParams()
+    public init() {}
+}
+
+final class AuthState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _isResponded = false
+    
+    func claimResponse() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if _isResponded { return false }
+        _isResponded = true
+        return true
+    }
+}
+
+public class ZhiNetworkAuth {
+    public static func executePortKnockingAuth(ip: String, authPort: UInt16, authCmd: String) async throws -> AuthResponse {
+        return try await withCheckedThrowingContinuation { continuation in
+            let host = NWEndpoint.Host(ip)
+            guard let port = NWEndpoint.Port(rawValue: authPort) else {
+                continuation.resume(throwing: NSError(domain: "ZhiAuth.Network", code: -400, userInfo: [NSLocalizedDescriptionKey: "Cổng mạng không hợp lệ"]))
+                return
+            }
+            
+            let options = NWProtocolQUIC.Options(alpn: ["zhiauth-rpc"])
+            let secOptions = options.securityProtocolOptions
+            sec_protocol_options_set_verify_block(secOptions, { _, _, sec_protocol_verify_complete in
+                sec_protocol_verify_complete(true) 
+            }, .main)
+            
+            let parameters = NWParameters(quic: options)
+            let connection = NWConnection(host: host, port: port, using: parameters)
+            let serialQueue = DispatchQueue(label: "com.zhiauth.quic_auth")
+            
+            let state = AuthState()
+            
+            // HẸN GIỜ NỔ: Sau đúng 3 giây nếu chưa kết nối xong thì cắt cầu dao báo lỗi thẳng lên màn hình!
+            serialQueue.asyncAfter(deadline: .now() + 3.0) {
+                if state.claimResponse() {
+                    connection.cancel()
+                    let err = NSError(domain: "ZhiAuth.Network", code: -408, userInfo: [NSLocalizedDescriptionKey: "Timeout 3s: Không kết nối được tới \(ip)"])
+                    continuation.resume(throwing: err)
+                }
+            }
+            
+            connection.stateUpdateHandler = { connState in
+                switch connState {
+                case .ready:
+                    guard let cmdData = authCmd.data(using: .utf8) else { return }
+                    connection.send(content: cmdData, completion: .contentProcessed { sendError in
+                        if let sendError = sendError {
+                            connection.cancel()
+                            if state.claimResponse() { continuation.resume(throwing: sendError) }
+                            return
+                        }
+                        
+                        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, _, _ in
+                            connection.cancel()
+                            guard state.claimResponse() else { return }
+                            
+                            if let data = data, let respStr = String(data: data, encoding: .utf8), respStr.hasPrefix("AUTH_SUCCESS") {
+                                var resp = AuthResponse()
+                                resp.isSuccess = true
+                                let parts = respStr.split(separator: "|")
+                                if parts.count >= 4 {
+                                    resp.sharedPath = String(parts[1])
+                                    resp.quicPort = Int(parts[2]) ?? 4433
+                                    resp.kcpPort = Int(parts[3]) ?? 6666
+                                }
+                                if parts.count >= 10 {
+                                    resp.tuning.noDelay = Int32(parts[4]) ?? 1
+                                    resp.tuning.interval = Int32(parts[5]) ?? 10
+                                    resp.tuning.resend = Int32(parts[6]) ?? 2
+                                    resp.tuning.nc = Int32(parts[7]) ?? 0
+                                    resp.tuning.sndWnd = Int32(parts[8]) ?? 512
+                                    resp.tuning.rcvWnd = Int32(parts[9]) ?? 512
+                                    resp.tuning.isDynamic = true
+                                }
+                                continuation.resume(returning: resp)
+                            } else {
+                                continuation.resume(throwing: NSError(domain: "ZhiAuth.Network", code: -401, userInfo: [NSLocalizedDescriptionKey: "Server từ chối xác thực"]))
+                            }
+                        }
+                    })
+                case .failed(let err):
+                    if state.claimResponse() { continuation.resume(throwing: err) }
+                case .cancelled:
+                    if state.claimResponse() {
+                        continuation.resume(throwing: NSError(domain: "ZhiAuth.Network", code: -402, userInfo: [NSLocalizedDescriptionKey: "Đã huỷ kết nối"]))
+                    }
+                case .waiting(let err):
+                    // Bắt chặt case ngắt mạng hoặc sai IP
+                    connection.cancel()
+                    if state.claimResponse() {
+                        continuation.resume(throwing: err)
+                    }
+                default: break
+                }
+            }
+            connection.start(queue: serialQueue)
+        }
+    }
+}
+
+--- END OF FILE: ZhiAuth/ZhiNetworkAuth.swift ---
+
+--- START FILE PATH: ZhiAuth/ZhiQuicTunnel.swift ---
+import Foundation
+import Network
+
+final class QuicRpcState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _isCompleted = false
+    var buffer = Data()
+    
+    func tryComplete() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if _isCompleted { return false }
+        _isCompleted = true
+        return true
+    }
+    
+    func appendData(_ data: Data) {
+        lock.lock()
+        buffer.append(data)
+        lock.unlock()
+    }
+    
+    func getData() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return buffer
+    }
+}
+
+public class ZhiQuicTunnel: @unchecked Sendable {
+    private var serverIP: String = ""
+    private var serverPort: UInt16 = 4433
+    private var reqCounter: UInt32 = 10000
+    public private(set) var isConfigured: Bool = false
+    
+    public init() {}
+    
+    private func logRealtime(_ msg: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSSSSS"
+        let ts = formatter.string(from: Date())
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: NSNotification.Name("ZhiAuthLog"), object: "QUIC | [\(ts)] \(msg)")
+        }
+    }
+    
+    public func configure(ip: String, port: UInt16) {
+        self.serverIP = ip
+        self.serverPort = port
+        self.isConfigured = true
+        logRealtime("⚡️ [QUIC-READY] Đã cấu hình đường hầm QUIC tại \(ip):\(port)")
+    }
+    
+    public func disconnect() {
+        self.isConfigured = false
+        logRealtime("🛑 [QUIC-STOP] Đã ngắt đường hầm QUIC")
+    }
+    
+    private func buildVfsPacket(reqId: UInt32, opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) -> Data {
+        let pathData = Data(path.utf8)
+        let payloadCount = UInt32(payloadData?.count ?? 0)
+        let finalDataLen = (reqLen > 0) ? reqLen : payloadCount
+        
+        var packet = Data()
+        packet.reserveCapacity(7 + 27 + pathData.count + Int(payloadCount))
+        
+        // Tiền tố FS_CMD| khớp với MsQuicServer::DataStreamCallback trên Server
+        packet.append(contentsOf: "FS_CMD|".utf8)
+        
+        var magic: UInt32 = UInt32(0x5A484941).littleEndian
+        var op: UInt8 = opcode.rawValue
+        var sessionId: UInt64 = UInt64(reqId).littleEndian
+        var off: UInt64 = offset.littleEndian
+        var dLen: UInt32 = finalDataLen.littleEndian
+        var pLen: UInt16 = UInt16(pathData.count).littleEndian
+        
+        withUnsafeBytes(of: &magic) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &op) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &sessionId) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &off) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &dLen) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &pLen) { packet.append(contentsOf: $0) }
+        
+        packet.append(pathData)
+        if let payloadData = payloadData, !payloadData.isEmpty {
+            packet.append(payloadData)
+        }
+        return packet
+    }
+    
+    public func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
+        guard isConfigured, !serverIP.isEmpty, let port = NWEndpoint.Port(rawValue: serverPort) else {
+            throw NSError(domain: "ZhiAuth.QUIC", code: -601, userInfo: [NSLocalizedDescriptionKey: "Luồng QUIC chưa được cấu hình"])
+        }
+        
+        reqCounter &+= 1
+        let reqId = reqCounter
+        let packet = buildVfsPacket(reqId: reqId, opcode: opcode, path: path, offset: offset, reqLen: reqLen, payloadData: payloadData)
+        
+        logRealtime("📤 [TX-QUIC] Bắn gói RPC | Opcode: 0x\(String(format: "%02X", opcode.rawValue)) | ReqID: \(reqId) | Size: \(packet.count)B")
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            let host = NWEndpoint.Host(serverIP)
+            let options = NWProtocolQUIC.Options(alpn: ["zhiauth-rpc"])
+            let secOptions = options.securityProtocolOptions
+            sec_protocol_options_set_verify_block(secOptions, { _, _, complete in
+                complete(true)
+            }, .main)
+            
+            let params = NWParameters(quic: options)
+            let conn = NWConnection(host: host, port: port, using: params)
+            let queue = DispatchQueue(label: "com.zhiauth.quic.rpc.\(reqId)")
+            let rpcState = QuicRpcState()
+            
+            queue.asyncAfter(deadline: .now() + 8.0) {
+                if rpcState.tryComplete() {
+                    conn.cancel()
+                    self.logRealtime("❌ [TIMEOUT-QUIC] Quá hạn 8s cho ReqID: \(reqId)")
+                    continuation.resume(throwing: NSError(domain: "ZhiAuth.QUIC", code: -408, userInfo: [NSLocalizedDescriptionKey: "QUIC Timeout 8s (ReqID: \(reqId))"]))
+                }
+            }
+            
+            @Sendable func receiveNextChunk() {
+                conn.receive(minimumIncompleteLength: 1, maximumLength: 131072) { content, _, isComplete, error in
+                    if let content = content, !content.isEmpty {
+                        rpcState.appendData(content)
+                    }
+                    if let error = error {
+                        conn.cancel()
+                        if rpcState.tryComplete() {
+                            continuation.resume(throwing: error)
+                        }
+                        return
+                    }
+                    if isComplete {
+                        conn.cancel()
+                        if rpcState.tryComplete() {
+                            let finalData = rpcState.getData()
+                            self.logRealtime("📥 [RX-QUIC] Nhận đủ gói QUIC | ReqID: \(reqId) | Tổng: \(finalData.count)B")
+                            if finalData.count >= 5 && finalData[4] == VfsOpcode.OP_ERROR.rawValue {
+                                continuation.resume(throwing: NSError(domain: "ZhiAuth.QUIC", code: -502, userInfo: [NSLocalizedDescriptionKey: "Server QUIC trả về OP_ERROR (0xFF)"]))
+                            } else {
+                                continuation.resume(returning: finalData)
+                            }
+                        }
+                    } else {
+                        receiveNextChunk()
+                    }
+                }
+            }
+            
+            conn.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    // Gửi kèm cờ isComplete: true để kích hoạt QUIC_RECEIVE_FLAG_FIN trên MsQuicServer
+                    conn.send(content: packet, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { sendErr in
+                        if let sendErr = sendErr {
+                            conn.cancel()
+                            if rpcState.tryComplete() {
+                                continuation.resume(throwing: sendErr)
+                            }
+                            return
+                        }
+                        receiveNextChunk()
+                    })
+                case .failed(let err):
+                    conn.cancel()
+                    if rpcState.tryComplete() {
+                        continuation.resume(throwing: err)
+                    }
+                case .waiting(let err):
+                    conn.cancel()
+                    if rpcState.tryComplete() {
+                        continuation.resume(throwing: err)
+                    }
+                default:
+                    break
+                }
+            }
+            
+            conn.start(queue: queue)
+        }
+    }
+}
+
+--- END OF FILE: ZhiAuth/ZhiQuicTunnel.swift ---
+
+--- START FILE PATH: ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h ---
+#ifndef ZhiAuth_Bridging_Header_h
+#define ZhiAuth_Bridging_Header_h
+
+#include <stdint.h>
+#include <stdbool.h>
+
+// Bắt buộc phải khai báo lại đống hàm này để Swift nhìn thấy C++
+void* zhiauth_create_vfs_client(const char* ip, int port, const char* sym_key, int mtu,
+                                int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
+bool zhiauth_start_vfs_client(void* client);
+void zhiauth_stop_vfs_client(void* client);
+void zhiauth_destroy_vfs_client(void* client);
+void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
+                          uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len);
+
+#endif /* ZhiAuth_Bridging_Header_h */
+
+--- END OF FILE: ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h ---
 

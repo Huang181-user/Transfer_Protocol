@@ -33,8 +33,10 @@ struct FileExplorerView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .onAppear {
-                loadDirectory(path: state.currentPath)
+            .task {
+                if state.fileList.isEmpty {
+                    loadDirectory(path: state.currentPath)
+                }
             }
             .sheet(isPresented: $showFileImporter) {
                 LocalFilePicker { pickedURLs in
