@@ -151,6 +151,7 @@ public class ZhiQuicTunnel: @unchecked Sendable {
             conn.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
+                    // Đã xoá các tham số thừa antecedent và metadata gây lỗi
                     let context = NWConnection.ContentContext(identifier: "ZhiAuthRPC", expiration: 0, priority: 0.5, isFinal: true)
                     conn.send(content: packet, contentContext: context, isComplete: true, completion: .contentProcessed { sendErr in
                         if let sendErr = sendErr {
