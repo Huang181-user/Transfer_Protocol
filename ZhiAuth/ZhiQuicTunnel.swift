@@ -153,7 +153,7 @@ public class ZhiQuicTunnel: @unchecked Sendable {
                 switch state {
                 case .ready:
                     // Gửi kèm cờ isComplete: true để kích hoạt QUIC_RECEIVE_FLAG_FIN trên MsQuicServer
-                    let context = NWConnection.ContentContext(identifier: "ZhiAuthRPC", expiration: 0, priority: 0.5, isFinal: true, tracer: nil, message: nil)
+                    let context = NWConnection.ContentContext(identifier: "ZhiAuthRPC", expiration: 0, priority: 0.5, isFinal: true)
                     conn.send(content: packet, contentContext: context, isComplete: true, completion: .contentProcessed { sendErr in
                         if let sendErr = sendErr {
                             conn.cancel()

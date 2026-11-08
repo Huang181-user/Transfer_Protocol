@@ -33,7 +33,8 @@ class AppState: ObservableObject {
             guard let self = self, self.isLoggedIn else { return }
             Task {
                 do {
-            try await Task.sleep(nanoseconds: 1) _ = try await self.dispatchRpc(opcode: .OP_PING, path: "", offset: 0, reqLen: 0, payloadData: nil) } catch { self.log("⚠️ [WATCHDOG] Lỗi Ping") }
+            try await Task.sleep(nanoseconds: 1)
+                    _ = try await self.dispatchRpc(opcode: .OP_PING, path: "", offset: 0, reqLen: 0, payloadData: nil) } catch { self.log("⚠️ [WATCHDOG] Lỗi Ping") }
                 let currentIPs = getDeviceIPs()
                 let curLan = currentIPs.lan.isEmpty ? "N/A" : currentIPs.lan
                 let curTs = currentIPs.ts.isEmpty ? "N/A" : currentIPs.ts
