@@ -1,0 +1,1950 @@
+--- START FILE PATH: ZhiAuthApp/FileExplorerView.swift ---
+import SwiftUI
+import Network
+
+struct FileExplorerView: View {
+    @EnvironmentObject var state: AppState
+    
+    @State private var showNewFolderAlert = false
+    @State private var newFolderName = ""
+    
+    @State private var showRenameAlert = false
+    @State private var newName = ""
+    @State private var itemToRename: ZhiFileItem?
+    
+    @State private var showDeleteAlert = false
+    @State private var itemToDelete: ZhiFileItem?
+    
+    @State private var showInfoAlert = false
+    @State private var infoMessage = ""
+    
+    @State private var showFileImporter = false
+    @State private var showLogSheet = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                compactHeaderBar
+                statusBarView
+                Divider()
+                fileListContentView
+                if !state.pendingSharedURLs.isEmpty {
+                    Divider()
+                    sharedFilesDestinationBar
+                }
+            }
+            .toolbar(.hidden, for: .navigationBar)
+            .task {
+                if state.fileList.isEmpty {
+                    loadDirectory(path: state.currentPath) }
+                }
+            }
+            .sheet(isPresented: $showFileImporter) {
+                LocalFilePicker { pickedURLs in
+                    uploadFilesFromDevice(urls: pickedURLs)
+                }
+            }
+            .sheet(isPresented: $showLogSheet) {
+                logConsoleSheetView
+            }
+            .alert("Tạo thư mục mới", isPresented: $showNewFolderAlert) {
+                TextField("Tên thư mục", text: $newFolderName)
+                Button("Tạo", action: createFolder)
+                Button("Hủy", role: .cancel) {}
+            }
+            .alert("Đổi tên", isPresented: $showRenameAlert) {
+                TextField("Tên mới", text: $newName)
+                Button("Lưu", action: renameItem)
+                Button("Hủy", role: .cancel) {}
+            }
+            .alert("Xác nhận Xóa", isPresented: $showDeleteAlert) {
+                Button("Xóa vĩnh viễn", role: .destructive, action: deleteItem)
+                Button("Hủy", role: .cancel) {}
+            } message: {
+                Text("Bạn có chắc chắn muốn xóa vĩnh viễn mục này không?")
+            }
+            .alert("Thông tin Tập tin", isPresented: $showInfoAlert) {
+                Button("Đóng", role: .cancel) {}
+            } message: {
+                Text(infoMessage)
+            }
+        }
+    }
+    
+    private var compactHeaderBar: some View {
+        HStack(spacing: 12) {
+            if state.currentPath != "/" {
+                Button(action: goUp) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.backward")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text("Lùi lại")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .foregroundColor(.blue)
+                }
+            } else {
+                Image(systemName: "externaldrive.fill.badge.wifi")
+                    .font(.system(size: 16))
+                    .foregroundColor(.blue)
+            }
+            
+            Spacer()
+            
+            Text(state.currentFolderTitle)
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+            
+            Spacer()
+            
+            HStack(spacing: 14) {
+                if state.currentPath != "/" {
+                    if state.clipboardItem != nil {
+                        Button(action: pasteItem) {
+                            Image(systemName: "doc.on.clipboard.fill")
+                                .font(.system(size: 15))
+                                .foregroundColor(.green)
+                        }
+                    }
+                    Button(action: { showFileImporter = true }) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 15))
+                            .foregroundColor(.blue)
+                    }
+                    Button(action: { newFolderName = ""; showNewFolderAlert = true }) {
+                        Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 15))
+                            .foregroundColor(.blue)
+                    }
+                }
+                Button(action: { showLogSheet = true }) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 15))
+                        .foregroundColor(.primary)
+                }
+                Button(action: logout) {
+                    Image(systemName: "power")
+                        .font(.system(size: 15))
+                        .foregroundColor(.red)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(UIColor.systemBackground))
+    }
+    
+    private var statusBarView: some View {
+        HStack {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(state.activeTunnel == .kcp ? Color.blue : (state.activeTunnel == .quic ? Color.orange : Color.gray))
+                    .frame(width: 6, height: 6)
+                Text("\(state.activeTunnel.rawValue) | \(state.transferSpeed)")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(state.activeTunnel == .kcp ? .blue : (state.activeTunnel == .quic ? .orange : .secondary))
+            }
+            Spacer()
+            Text(state.displayPath(for: state.currentPath))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.head)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(Color(UIColor.secondarySystemBackground))
+    }
+    
+    private var sharedFilesDestinationBar: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Image(systemName: "tray.and.arrow.down.fill")
+                    .foregroundColor(.blue)
+                Text(state.pendingSharedURLs.count == 1
+                     ? "Tệp chờ lưu: \(state.pendingSharedURLs[0].lastPathComponent)"
+                     : "Đang chờ lưu \(state.pendingSharedURLs.count) tệp")
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Spacer()
+            }
+            
+            HStack(spacing: 10) {
+                Button(role: .destructive, action: {
+                    state.clearPendingSharedFiles()
+                }) {
+                    Text("Hủy bỏ")
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.red.opacity(0.15))
+                        .foregroundColor(.red)
+                        .cornerRadius(8)
+                }
+                
+                Button(action: {
+                    let urls = state.pendingSharedURLs
+                    uploadFilesFromDevice(urls: urls, clearPendingWhenDone: true)
+                }) {
+                    Text(state.currentPath == "/"
+                         ? "Hãy mở KCP/QUIC để chọn nơi lưu"
+                         : "Lưu vào \(state.displayPath(for: state.currentPath))")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(state.currentPath == "/" ? Color.gray.opacity(0.3) : Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                }
+                .disabled(state.currentPath == "/" || state.isLoading)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(UIColor.secondarySystemBackground))
+    }
+    
+    private var fileListContentView: some View {
+        List(state.fileList, id: \.id) { item in
+            FileRowView(
+                item: item,
+                isRootTunnelMenu: state.currentPath == "/",
+                onTap: { handleItemTap(item) },
+                onInfo: { showFileInfo(item) },
+                onCopy: { handleCopy(item) },
+                onCut: { handleCut(item) },
+                onRename: {
+                    itemToRename = item
+                    newName = item.name
+                    showRenameAlert = true
+                },
+                onSaveToDevice: { downloadFile(item: item, openNativePreview: false) },
+                onDelete: {
+                    itemToDelete = item
+                    showDeleteAlert = true
+                }
+            )
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
+        }
+        .listStyle(.plain)
+        .refreshable {
+            await refreshList()
+        }
+        .overlay(loadingOverlayView)
+    }
+    
+    @ViewBuilder
+    private var loadingOverlayView: some View {
+        if state.isLoading {
+            VStack(spacing: 10) {
+                ProgressView()
+                Text("Đang xử lý (\(state.transferSpeed))...")
+                    .font(.caption.bold())
+            }
+            .padding(14)
+            .background(.ultraThinMaterial)
+            .cornerRadius(10)
+        } else if state.fileList.isEmpty {
+            VStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.title2)
+                    .foregroundColor(.secondary)
+                Text("Thư mục trống")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+    
+    private var logConsoleSheetView: some View {
+        NavigationStack {
+            ScrollView {
+                Text(state.logs)
+                    .font(.system(size: 11, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+            .background(Color.black)
+            .foregroundColor(.green)
+            .navigationTitle("Real-time Debug Logs")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Đóng") { showLogSheet = false }
+                }
+            }
+        }
+    }
+    
+    private func handleItemTap(_ item: ZhiFileItem) {
+        if state.currentPath == "/" {
+            if item.name == "ZhiAuth_KCP" {
+                state.activeTunnel = .kcp
+                state.log("🔵 Chuyển sang duyệt file qua luồng chính ZhiAuth_KCP")
+                loadDirectory(path: state.sharedRoot)
+            } else if item.name == "ZhiAuth_QUIC" {
+                state.activeTunnel = .quic
+                state.log("🟠 Chuyển sang duyệt file qua luồng dự phòng ZhiAuth_QUIC")
+                loadDirectory(path: state.sharedRoot)
+            }
+        } else {
+            if item.isDirectory {
+                let nextPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(item.name)" : "\(state.currentPath)/\(item.name)"
+                loadDirectory(path: nextPath)
+            } else {
+                downloadFile(item: item, openNativePreview: true)
+            }
+        }
+    }
+    
+    private func handleCopy(_ item: ZhiFileItem) {
+        state.clipboardItem = item
+        state.isCutOperation = false
+        state.log("📋 Đã Copy '\(item.name)' vào bộ nhớ tạm (\(state.activeTunnel.rawValue))")
+    }
+    
+    private func handleCut(_ item: ZhiFileItem) {
+        state.clipboardItem = item
+        state.isCutOperation = true
+        state.log("✂️ Đã Cut '\(item.name)' vào bộ nhớ tạm (\(state.activeTunnel.rawValue))")
+    }
+    
+    func goUp() {
+        if state.currentPath == state.sharedRoot {
+            loadDirectory(path: "/")
+        } else {
+            let parentURL = URL(fileURLWithPath: state.currentPath).deletingLastPathComponent()
+            let parentPath = parentURL.path
+            if parentPath.count < state.sharedRoot.count || !parentPath.hasPrefix(state.sharedRoot) {
+                loadDirectory(path: state.sharedRoot)
+            } else {
+                loadDirectory(path: parentPath)
+            }
+        }
+    }
+    
+    func loadDirectory(path: String) {
+        state.isLoading = true
+        state.currentPath = path
+        Task {
+            if path == "/" {
+                await MainActor.run {
+                    state.fileList = [
+                        ZhiFileItem(name: "ZhiAuth_KCP", isDirectory: true, size: 0, modifiedTime: 0, path: state.sharedRoot),
+                        ZhiFileItem(name: "ZhiAuth_QUIC", isDirectory: true, size: 0, modifiedTime: 0, path: state.sharedRoot)
+                    ]
+                    state.activeTunnel = .none
+                    state.isLoading = false
+                }
+                return
+            }
+            
+            do {
+                let data = try await state.dispatchRpc(opcode: .OP_LIST, path: path, offset: 0, reqLen: 0, payloadData: nil)
+                let parsedList = parseList(data: data, basePath: path)
+                await MainActor.run {
+                    state.fileList = parsedList.sorted {
+                        if $0.isDirectory == $1.isDirectory {
+                            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+                        }
+                        return $0.isDirectory
+                    }
+                    state.isLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    state.log("❌ Lỗi đọc thư mục: \(error.localizedDescription)")
+                    state.isLoading = false
+                }
+            }
+        }
+    }
+    
+    func refreshList() async {
+        loadDirectory(path: state.currentPath) }
+    }
+    
+    func createFolder() {
+        let cleanName = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty else { return }
+        let targetPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(cleanName)" : "\(state.currentPath)/\(cleanName)"
+        state.log("📁 Đang tạo thư mục: \(cleanName)")
+        Task {
+            do {
+                _ = try await state.dispatchRpc(opcode: .OP_MKDIR, path: targetPath, offset: 0, reqLen: 0, payloadData: nil)
+                state.log("✅ Tạo thư mục '\(cleanName)' thành công!")
+                await refreshList()
+            } catch {
+                state.log("❌ Lỗi tạo thư mục: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    func deleteItem() {
+        guard let item = itemToDelete else { return }
+        state.log("🗑️ Đang xóa: \(item.name)")
+        Task {
+            do {
+                _ = try await state.dispatchRpc(opcode: .OP_DELETE, path: item.path, offset: 0, reqLen: 0, payloadData: nil)
+                state.log("✅ Đã xóa '\(item.name)'")
+                if state.clipboardItem?.path == item.path {
+                    await MainActor.run { state.clipboardItem = nil }
+                }
+                await refreshList()
+            } catch {
+                state.log("❌ Lỗi xóa: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    func renameItem() {
+        guard let item = itemToRename else { return }
+        let cleanName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty, cleanName != item.name else { return }
+        
+        let parentPath = URL(fileURLWithPath: item.path).deletingLastPathComponent().path
+        let newPath = parentPath.hasSuffix("/") ? "\(parentPath)\(cleanName)" : "\(parentPath)/\(cleanName)"
+        let newPathData = Data(newPath.utf8)
+        
+        state.log("✏️ Đang đổi tên '\(item.name)' -> '\(cleanName)'")
+        Task {
+            do {
+                _ = try await state.dispatchRpc(
+                    opcode: .OP_RENAME,
+                    path: item.path,
+                    offset: 0,
+                    reqLen: UInt32(newPathData.count),
+                    payloadData: newPathData
+                )
+                state.log("✅ Đổi tên thành công: \(cleanName)")
+                if state.clipboardItem?.path == item.path {
+                    await MainActor.run { state.clipboardItem = nil }
+                }
+                await refreshList()
+            } catch {
+                state.log("❌ Lỗi đổi tên: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    func pasteItem() {
+        guard let item = state.clipboardItem else { return }
+        let destPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(item.name)" : "\(state.currentPath)/\(item.name)"
+        
+        if state.isCutOperation {
+            let newPathData = Data(destPath.utf8)
+            state.log("✂️ Đang di chuyển '\(item.name)'...")
+            Task {
+                do {
+                    _ = try await state.dispatchRpc(
+                        opcode: .OP_RENAME,
+                        path: item.path,
+                        offset: 0,
+                        reqLen: UInt32(newPathData.count),
+                        payloadData: newPathData
+                    )
+                    state.log("✅ Di chuyển hoàn tất: \(item.name)")
+                    await MainActor.run {
+                        state.clipboardItem = nil
+                        state.isCutOperation = false
+                    }
+                    await refreshList()
+                } catch {
+                    state.log("❌ Lỗi di chuyển: \(error.localizedDescription)")
+                }
+            }
+        } else {
+            if item.isDirectory {
+                state.log("⚠️ Để di chuyển cả thư mục, vui lòng dùng tính năng Cut.")
+                return
+            }
+            state.isLoading = true
+            state.log("📋 Đang sao chép '\(item.name)' qua luồng \(state.activeTunnel.rawValue)...")
+            Task {
+                do {
+                    let startTotal = CFAbsoluteTimeGetCurrent()
+                    _ = try await state.dispatchRpc(opcode: .OP_TRUNCATE, path: destPath, offset: 0, reqLen: 0, payloadData: nil)
+                    
+                    var offset: UInt64 = 0
+                    let chunkSize: UInt32 = 32768
+                    while offset < item.size {
+                        let remain = UInt32(min(UInt64(chunkSize), item.size - offset))
+                        let readResp = try await state.dispatchRpc(opcode: .OP_READ, path: item.path, offset: offset, reqLen: remain, payloadData: nil)
+                        guard readResp.count > 27 else { break }
+                        let chunk = readResp.subdata(in: 27..<readResp.count)
+                        _ = try await state.dispatchRpc(opcode: .OP_WRITE, path: destPath, offset: offset, reqLen: UInt32(chunk.count), payloadData: chunk)
+                        offset += UInt64(chunk.count)
+                    }
+                    let totalElapsed = CFAbsoluteTimeGetCurrent() - startTotal
+                    state.updateSpeed(bytes: Int(item.size) * 2, durationSeconds: totalElapsed)
+                    state.log("✅ Sao chép hoàn tất: \(item.name)")
+                    await MainActor.run {
+                        state.clipboardItem = nil
+                        state.isLoading = false
+                    }
+                    await refreshList()
+                } catch {
+                    state.log("❌ Lỗi sao chép: \(error.localizedDescription)")
+                    await MainActor.run { state.isLoading = false }
+                }
+            }
+        }
+    }
+    
+    func downloadFile(item: ZhiFileItem, openNativePreview: Bool) {
+        state.isLoading = true
+        state.log("⬇️ Đang tải '\(item.name)' (\(item.sizeString)) qua \(state.activeTunnel.rawValue)...")
+        Task {
+            do {
+                let startTotal = CFAbsoluteTimeGetCurrent()
+                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(item.name)
+                if FileManager.default.fileExists(atPath: tempURL.path) {
+                    try FileManager.default.removeItem(at: tempURL)
+                }
+                FileManager.default.createFile(atPath: tempURL.path, contents: nil)
+                let fileHandle = try FileHandle(forWritingTo: tempURL)
+                defer { try? fileHandle.close() }
+                
+                var offset: UInt64 = 0
+                let chunkSize: UInt32 = 32768
+                
+                while offset < item.size {
+                    let remain = UInt32(min(UInt64(chunkSize), item.size - offset))
+                    let data = try await state.dispatchRpc(opcode: .OP_READ, path: item.path, offset: offset, reqLen: remain, payloadData: nil)
+                    if data.count > 27 {
+                        let chunk = data.subdata(in: 27..<data.count)
+                        try fileHandle.seekToEnd()
+                        try fileHandle.write(contentsOf: chunk)
+                        offset += UInt64(chunk.count)
+                    } else {
+                        break
+                    }
+                }
+                
+                let totalElapsed = CFAbsoluteTimeGetCurrent() - startTotal
+                state.updateSpeed(bytes: Int(offset), durationSeconds: totalElapsed)
+                
+                await MainActor.run {
+                    state.isLoading = false
+                    state.log("✅ Tải xong '\(item.name)'! Tốc độ TB: \(state.transferSpeed)")
+                    if openNativePreview {
+                        DocumentPresenter.shared.presentNativeOrShare(for: tempURL)
+                    } else {
+                        DocumentPresenter.shared.presentShareSheet(for: tempURL)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    state.isLoading = false
+                    state.log("❌ Lỗi tải file: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    func uploadFilesFromDevice(urls: [URL], clearPendingWhenDone: Bool = false) {
+        guard !urls.isEmpty, state.currentPath != "/" else { return }
+        state.isLoading = true
+        
+        Task {
+            for url in urls {
+                let fileName = url.lastPathComponent
+                let destPath = state.currentPath.hasSuffix("/") ? "\(state.currentPath)\(fileName)" : "\(state.currentPath)/\(fileName)"
+                state.log("⬆️ Đang tải '\(fileName)' lên \(state.displayPath(for: state.currentPath)) qua \(state.activeTunnel.rawValue)...")
+                
+                do {
+                    let startTotal = CFAbsoluteTimeGetCurrent()
+                    let hasSecurityScope = url.startAccessingSecurityScopedResource()
+                    defer { if hasSecurityScope { url.stopAccessingSecurityScopedResource() } }
+                    
+                    let fileData = try Data(contentsOf: url)
+                    let totalSize = fileData.count
+                    
+                    _ = try await state.dispatchRpc(opcode: .OP_TRUNCATE, path: destPath, offset: 0, reqLen: 0, payloadData: nil)
+                    
+                    var offset = 0
+                    let chunkSize = 32768
+                    while offset < totalSize {
+                        let end = min(offset + chunkSize, totalSize)
+                        let chunk = fileData.subdata(in: offset..<end)
+                        _ = try await state.dispatchRpc(
+                            opcode: .OP_WRITE,
+                            path: destPath,
+                            offset: UInt64(offset),
+                            reqLen: UInt32(chunk.count),
+                            payloadData: chunk
+                        )
+                        offset = end
+                    }
+                    
+                    let totalElapsed = CFAbsoluteTimeGetCurrent() - startTotal
+                    state.updateSpeed(bytes: totalSize, durationSeconds: totalElapsed)
+                    state.log("✅ Đã tải lên '\(fileName)' (\(totalSize) Bytes) thành công!")
+                } catch {
+                    state.log("❌ Lỗi tải file '\(fileName)': \(error.localizedDescription)")
+                }
+            }
+            
+            if clearPendingWhenDone {
+                state.clearPendingSharedFiles()
+            }
+            await MainActor.run { state.isLoading = false }
+            await refreshList()
+        }
+    }
+    
+    func showFileInfo(_ item: ZhiFileItem) {
+        let date = Date(timeIntervalSince1970: TimeInterval(item.modifiedTime))
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd/MM/yyyy HH:mm:ss"
+        let virtualItemPath = state.displayPath(for: item.path)
+        
+        infoMessage = """
+        Tên: \(item.name)
+        Phân loại: \(item.isDirectory ? "Thư mục" : "Tập tin")
+        Dung lượng: \(item.isDirectory ? "--" : "\(item.sizeString) (\(item.size) Bytes)")
+        Cập nhật: \(formatter.string(from: date))
+        Đường dẫn Mount: \(virtualItemPath)
+        Giao thức: \(state.activeTunnel.rawValue)
+        """
+        showInfoAlert = true
+    }
+    
+    func logout() {
+        ZhiKcpEngine.stopCore()
+        state.quicTunnel.disconnect()
+        
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(state.baseIP), port: 5555)
+        let conn = NWConnection(to: endpoint, using: .udp)
+        conn.start(queue: .global())
+        conn.send(content: "AUTH_REQ|LOGOUT".data(using: .utf8)!, completion: .contentProcessed { _ in
+            conn.cancel()
+        })
+        
+        state.isLoggedIn = false
+        state.fileList = []
+        state.currentPath = "/"
+        state.clipboardItem = nil
+        state.activeTunnel = .none
+        state.transferSpeed = "0 KB/s"
+        state.log("🛑 Đã đăng xuất và giải phóng toàn bộ tài nguyên KCP & QUIC.")
+    }
+    
+    func parseList(data: Data, basePath: String) -> [ZhiFileItem] {
+        var result: [ZhiFileItem] = []
+        let headerSize = 27
+        guard data.count > headerSize else { return result }
+        
+        var cur = headerSize
+        while cur + 39 <= data.count {
+            let nameLen = UInt16(data[cur]) | (UInt16(data[cur + 1]) << 8)
+            let isDir = data[cur + 2] == 1
+            var size: UInt64 = 0
+            var mtime: UInt64 = 0
+            withUnsafeMutableBytes(of: &size) { _ = data.copyBytes(to: $0, from: (cur + 3)..<(cur + 11)) }
+            withUnsafeMutableBytes(of: &mtime) { _ = data.copyBytes(to: $0, from: (cur + 11)..<(cur + 19)) }
+            
+            cur += 39
+            if cur + Int(nameLen) > data.count { break }
+            
+            if let name = String(data: data[cur..<(cur + Int(nameLen))], encoding: .utf8) {
+                if name != "." && name != ".." {
+                    let fullPath = basePath.hasSuffix("/") ? (basePath + name) : (basePath + "/" + name)
+                    result.append(ZhiFileItem(name: name, isDirectory: isDir, size: size, modifiedTime: mtime, path: fullPath))
+                }
+            }
+            cur += Int(nameLen)
+        }
+        return result
+    }
+}
+
+--- END OF FILE: ZhiAuthApp/FileExplorerView.swift ---
+
+--- START FILE PATH: ZhiAuthApp/LoginView.swift ---
+import SwiftUI
+import UIKit
+import Darwin
+import Network
+
+func getDeviceIPs() -> (lan: String, ts: String) {
+    var lan = ""; var ts = ""
+    var ifaddr: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&ifaddr) == 0 else { return (lan, ts) }
+    var ptr = ifaddr
+    while ptr != nil {
+        defer { ptr = ptr?.pointee.ifa_next }
+        guard let interface = ptr?.pointee else { continue }
+        let addrFamily = interface.ifa_addr.pointee.sa_family
+        if addrFamily == UInt8(AF_INET) {
+            let name = String(cString: interface.ifa_name)
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len), &hostname, socklen_t(hostname.count), nil, socklen_t(0), NI_NUMERICHOST)
+            let ip = String(cString: hostname)
+            if ip.hasPrefix("127.") || ip.hasPrefix("169.254.") { continue }
+            if name == "en0" || name == "pdp_ip0" { lan = ip } else if name.hasPrefix("utun") && ip.hasPrefix("100.") { ts = ip }
+        }
+    }
+    freeifaddrs(ifaddr)
+    return (lan, ts)
+}
+
+struct LoginView: View {
+    @EnvironmentObject var state: AppState
+    @AppStorage("savedLanIP") private var lanIP: String = AppConfig.shared.defaultLanIp
+    @AppStorage("savedTsIP") private var tsIP: String = AppConfig.shared.defaultTsIp
+    @AppStorage("savedUser") private var username: String = AppConfig.shared.defaultUsername
+    @AppStorage("savedPass") private var password: String = ""
+    
+    var body: some View {
+        VStack(spacing: 14) {
+            Text("ZhiAuth v6.0").font(.largeTitle).bold().padding(.top, 20)
+            Text("Dual-Tunnel: KCP (Primary) + QUIC (Fallback)")
+                .font(.caption).foregroundColor(.secondary)
+            
+            VStack(spacing: 10) {
+                TextField("LAN IP Server", text: $lanIP)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .keyboardType(.numbersAndPunctuation)
+                    .autocapitalization(.none)
+                TextField("Tailscale IP Server", text: $tsIP)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .keyboardType(.numbersAndPunctuation)
+                    .autocapitalization(.none)
+                TextField("Username", text: $username)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .autocapitalization(.none)
+                SecureField("Password", text: $password)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+            }
+            .padding(.horizontal, 24)
+            
+            if state.isLoading {
+                ProgressView("Đang xác thực & mở song song KCP + QUIC...").padding(.vertical, 4)
+            }
+            
+            Button(action: performLogin) {
+                Text("ĐĂNG NHẬP HỆ THỐNG")
+                    .font(.headline).foregroundColor(.white).padding()
+                    .frame(maxWidth: .infinity)
+                    .background(state.isLoading ? Color.gray : Color.blue)
+                    .cornerRadius(10)
+            }
+            .disabled(state.isLoading)
+            .padding(.horizontal, 24)
+            
+            ScrollView {
+                Text(state.logs)
+                    .font(.system(size: 10, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+            }
+            .background(Color.black.opacity(0.88))
+            .foregroundColor(.green)
+            .cornerRadius(10)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
+        }
+    }
+    
+    private func performLogin() {
+        let safeLanIP = lanIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeTsIP = tsIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        let activeSymKey = AppConfig.shared.kcpSymmetricKey
+        
+        if safeLanIP.isEmpty && safeTsIP.isEmpty {
+            state.log("❌ Lỗi: Phải nhập ít nhất 1 địa chỉ IP Server!")
+            return
+        }
+        if activeSymKey.count != 32 {
+            state.log("❌ Lỗi: KCP Master Key trong ZhiConfig.json chưa đúng 32 ký tự!")
+            return
+        }
+        
+        state.isLoading = true
+        state.log("🚀 Bắt đầu Port Knocking (Đua tốc độ LAN & Tailscale)...")
+        
+        Task {
+            do {
+                let hwid = await MainActor.run { UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN_IOS" }
+                let myIPs = getDeviceIPs()
+                let lanStr = myIPs.lan.isEmpty ? "N/A" : myIPs.lan
+                let tsStr = myIPs.ts.isEmpty ? "N/A" : myIPs.ts
+                let authCmd = "AUTH_REQ|USER:\(username)|PASS:\(password)|LAN:\(lanStr)|TS:\(tsStr)|HWID:\(hwid)"
+                
+                let winner: (String, AuthResponse)? = await withTaskGroup(of: Optional<(String, AuthResponse)>.self) { group in
+                    if !safeLanIP.isEmpty {
+                        group.addTask {
+                            do { return (safeLanIP, try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeLanIP, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd)) }
+                            catch { return nil }
+                        }
+                    }
+                    if !safeTsIP.isEmpty {
+                        group.addTask {
+                            do { return (safeTsIP, try await ZhiNetworkAuth.executePortKnockingAuth(ip: safeTsIP, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd)) }
+                            catch { return nil }
+                        }
+                    }
+                    for await result in group {
+                        if let res = result, res.1.isSuccess {
+                            group.cancelAll()
+                            return res
+                        }
+                    }
+                    return nil
+                }
+                
+                guard let (winningIP, auth) = winner else {
+                    state.log("❌ Xác thực thất bại hoặc Timeout cả LAN & Tailscale!")
+                    await MainActor.run { 
+                        state.isLoading = false
+                    state.startWatchdog() 
+                    }
+                    return
+                }
+                
+                state.log("✅ Auth OK qua [\(winningIP)] | KCP Port: \(auth.kcpPort) | QUIC Port: \(auth.quicPort)")
+                
+                let kcpOk = ZhiKcpEngine.initCore(
+                    ip: winningIP,
+                    port: Int32(auth.kcpPort),
+                    symKey: activeSymKey,
+                    mtu: AppConfig.shared.defaultMtu,
+                    tuning: auth.tuning
+                )
+                state.quicTunnel.configure(ip: winningIP, port: UInt16(auth.quicPort))
+                
+                if kcpOk {
+                    state.log("🔥 Lõi C++ KCP Engine đã nổ máy thành công!")
+                } else {
+                    state.log("⚠️ Lõi KCP gặp sự cố, hệ thống vẫn có luồng QUIC sẵn sàng!")
+                }
+                
+                try await Task.sleep(nanoseconds: 400_000_000)
+                
+                await MainActor.run {
+                    state.sharedRoot = auth.sharedPath.isEmpty ? "/tmp" : auth.sharedPath
+                    state.sessionToken = authCmd.components(separatedBy: "|").first(where: { $0.hasPrefix("TOKEN:") })?.replacingOccurrences(of: "TOKEN:", with: "") ?? ""
+                    state.sessionToken = authCmd.components(separatedBy: "|").first(where: { $0.hasPrefix("TOKEN:") })?.replacingOccurrences(of: "TOKEN:", with: "") ?? ""
+                    state.baseIP = winningIP
+                    state.kcpPort = auth.kcpPort
+                    state.quicPort = UInt16(auth.quicPort)
+                    state.currentPath = "/"
+                    state.activeTunnel = .none
+                    state.isLoggedIn = true
+                    state.isLoading = false
+                    state.startWatchdog()
+                    state.startWatchdog()
+                }
+            } catch {
+                state.log("❌ Lỗi đăng nhập: \(error.localizedDescription)")
+                await MainActor.run { 
+                    state.isLoading = false
+                    state.startWatchdog() 
+                }
+            }
+        }
+    }
+}
+
+--- END OF FILE: ZhiAuthApp/LoginView.swift ---
+
+--- START FILE PATH: ZhiAuthApp/Info.plist ---
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Cần quyền mạng nội bộ để kết nối KCP và QUIC tới Server.</string>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>All Files</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.item</string>
+				<string>public.data</string>
+				<string>public.content</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
+
+--- END OF FILE: ZhiAuthApp/Info.plist ---
+
+--- START FILE PATH: ZhiAuthApp/AppState.swift ---
+import SwiftUI
+import Foundation
+
+class AppState: ObservableObject {
+    @Published var isLoggedIn: Bool = false
+    @Published var currentPath: String = "/"
+    @Published var fileList: [ZhiFileItem] = []
+    @Published var isLoading: Bool = false
+    @Published var logs: String = "💀 Sẵn sàng kết nối máy chủ ZhiAuth...\n"
+    @Published var transferSpeed: String = "0 KB/s"
+    
+    @Published var clipboardItem: ZhiFileItem? = nil
+    @Published var isCutOperation: Bool = false
+    @Published var activeTunnel: ActiveTunnel = .none
+    
+    @Published var pendingSharedURLs: [URL] = []
+    
+    var sharedRoot: String = ""
+    var baseIP: String = ""
+    var kcpPort: Int = 6666
+    var quicPort: UInt16 = 4433
+    let quicTunnel = ZhiQuicTunnel()
+    
+    private var watchdogTimer: Timer?
+    var lastLanIP: String = ""
+    var lastTsIP: String = ""
+    var sessionToken: String = ""
+    var hardwareMac: String = UIDevice.current.identifierForVendor?.uuidString ?? "UNKNOWN"
+    
+    func startWatchdog() {
+        watchdogTimer?.invalidate()
+        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.isLoggedIn else { return }
+            Task {
+                do {
+            try await Task.sleep(nanoseconds: 1) _ = try await self.dispatchRpc(opcode: .OP_PING, path: "", offset: 0, reqLen: 0, payloadData: nil) } catch { self.log("⚠️ [WATCHDOG] Lỗi Ping") }
+                let currentIPs = getDeviceIPs()
+                let curLan = currentIPs.lan.isEmpty ? "N/A" : currentIPs.lan
+                let curTs = currentIPs.ts.isEmpty ? "N/A" : currentIPs.ts
+                if curLan != self.lastLanIP || curTs != self.lastTsIP {
+                    self.lastLanIP = curLan
+                    self.lastTsIP = curTs
+                    self.log("⚡ [ROAMING] Đổi mạng! Khôi phục phiên...")
+                    await self.triggerEmergencyReauth(lanIP: curLan, tsIP: curTs)
+                }
+            }
+        }
+    }
+    
+    private func triggerEmergencyReauth(lanIP: String, tsIP: String) async {
+        let authCmd = "ROAM_REQ|TOKEN:\(sessionToken)|LAN:\(lanIP)|TS:\(tsIP)|HWID:\(hardwareMac)"
+        do {
+            try await Task.sleep(nanoseconds: 1)
+            var newBaseIP = ""
+            var resp: AuthResponse? = nil
+            if lanIP != "N/A" {
+                let ipToKnock = AppConfig.shared.defaultLanIp
+                if !ipToKnock.isEmpty { resp = try? await ZhiNetworkAuth.executePortKnockingAuth(ip: ipToKnock, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd); if resp?.isSuccess == true { newBaseIP = ipToKnock } }
+            }
+            if resp == nil && tsIP != "N/A" {
+                let ipToKnock = AppConfig.shared.defaultTsIp
+                if !ipToKnock.isEmpty { resp = try? await ZhiNetworkAuth.executePortKnockingAuth(ip: ipToKnock, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd); if resp?.isSuccess == true { newBaseIP = ipToKnock } }
+            }
+            if let auth = resp, auth.isSuccess {
+                self.baseIP = newBaseIP; self.kcpPort = auth.kcpPort; self.quicPort = UInt16(auth.quicPort)
+                _ = ZhiKcpEngine.initCore(ip: self.baseIP, port: Int32(self.kcpPort), symKey: auth.symKey, mtu: AppConfig.shared.defaultMtu, tuning: auth.tuning)
+                self.quicTunnel.configure(ip: self.baseIP, port: self.quicPort)
+                self.log("✅ [RE-AUTH] Khôi phục phiên qua \(self.baseIP)")
+            }
+        } catch { self.log("❌ [RE-AUTH] Rớt mạng...") }
+    }
+    
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+    
+    func log(_ msg: String) {
+        let ts = Self.timeFormatter.string(from: Date())
+        DispatchQueue.main.async {
+            self.logs += "[\(ts)] \(msg)\n"
+            if self.logs.count > 12000 {
+                self.logs = String(self.logs.suffix(9000))
+            }
+        }
+    }
+    
+    func updateSpeed(bytes: Int, durationSeconds: Double) {
+        guard durationSeconds > 0.0001 else { return }
+        let bytesPerSec = Double(bytes) / durationSeconds
+        let speedText: String
+        if bytesPerSec >= 1024 * 1024 {
+            speedText = String(format: "%.2f MB/s", bytesPerSec / (1024 * 1024))
+        } else {
+            speedText = String(format: "%.1f KB/s", bytesPerSec / 1024)
+        }
+        DispatchQueue.main.async {
+            self.transferSpeed = speedText
+        }
+    }
+    
+    var currentFolderTitle: String {
+        if currentPath == "/" { return "ZhiAuth Explorer" }
+        let prefix = activeTunnel == .kcp ? "ZhiAuth_KCP" : "ZhiAuth_QUIC"
+        if currentPath == sharedRoot { return prefix }
+        return URL(fileURLWithPath: currentPath).lastPathComponent
+    }
+    
+    func displayPath(for rawPath: String) -> String {
+        if rawPath == "/" { return "/ (Chọn Luồng)" }
+        let prefix = activeTunnel == .kcp ? "/ZhiAuth_KCP" : "/ZhiAuth_QUIC"
+        if rawPath.hasPrefix(sharedRoot) {
+            let relative = String(rawPath.dropFirst(sharedRoot.count))
+            if relative.isEmpty { return prefix }
+            return relative.hasPrefix("/") ? (prefix + relative) : (prefix + "/" + relative)
+        }
+        return prefix
+    }
+    
+    func enqueueSharedFile(url: URL) {
+        let hasScope = url.startAccessingSecurityScopedResource()
+        defer { if hasScope { url.stopAccessingSecurityScopedResource() } }
+        
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ZhiSharedInbox", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let destURL = tempDir.appendingPathComponent(url.lastPathComponent)
+        
+        do {
+            try await Task.sleep(nanoseconds: 1)
+            if FileManager.default.fileExists(atPath: destURL.path) {
+                try FileManager.default.removeItem(at: destURL)
+            }
+            try FileManager.default.copyItem(at: url, to: destURL)
+            DispatchQueue.main.async {
+                if !self.pendingSharedURLs.contains(destURL) {
+                    self.pendingSharedURLs.append(destURL)
+                }
+                self.log("📎 Đã nhận tệp '\(destURL.lastPathComponent)' từ Share Sheet. Hãy mở thư mục đích rồi bấm [Lưu vào đây].")
+            }
+        } catch {
+            log("❌ Không thể nhận tệp chia sẻ: \(error.localizedDescription)")
+        }
+    }
+    
+    func clearPendingSharedFiles() {
+        for url in pendingSharedURLs {
+            try? FileManager.default.removeItem(at: url)
+        }
+        DispatchQueue.main.async {
+            self.pendingSharedURLs.removeAll()
+        }
+    }
+    
+    func dispatchRpc(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let responseData: Data
+        
+        if activeTunnel == .quic {
+            responseData = try await quicTunnel.sendRpcVfs(opcode: opcode, path: path, offset: offset, reqLen: reqLen, payloadData: payloadData)
+        } else {
+            do {
+            try await Task.sleep(nanoseconds: 1)
+                responseData = try await ZhiKcpEngine.sendRpcVfs(opcode: opcode, path: path, offset: offset, reqLen: reqLen, payloadData: payloadData)
+            } catch {
+                log("⚠️ [FAILOVER] KCP gặp sự cố (\(error.localizedDescription)). Tự động chuyển sang luồng dự phòng QUIC!")
+                responseData = try await quicTunnel.sendRpcVfs(opcode: opcode, path: path, offset: offset, reqLen: reqLen, payloadData: payloadData)
+            }
+        }
+        
+        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+        let transferredBytes = max(responseData.count, payloadData?.count ?? 0)
+        if transferredBytes > 64 {
+            updateSpeed(bytes: transferredBytes, durationSeconds: elapsed)
+        }
+        return responseData
+    }
+}
+
+--- END OF FILE: ZhiAuthApp/AppState.swift ---
+
+--- START FILE PATH: ZhiAuthApp/ZhiAuthApp.swift ---
+import SwiftUI
+
+@main
+struct ZhiAuthApp: App {
+    @StateObject private var appState = AppState()
+    
+    var body: some Scene {
+        WindowGroup {
+            Group {
+                if appState.isLoggedIn {
+                    FileExplorerView()
+                        .environmentObject(appState)
+                } else {
+                    LoginView()
+                        .environmentObject(appState)
+                }
+            }
+            .onOpenURL { url in
+                appState.enqueueSharedFile(url: url)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ZhiAuthLog"))) { note in
+                if let msg = note.object as? String {
+                    appState.log(msg)
+                }
+            }
+        }
+    }
+}
+
+--- END OF FILE: ZhiAuthApp/ZhiAuthApp.swift ---
+
+--- START FILE PATH: ZhiAuthApp/DocumentPresenter.swift ---
+import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+
+class DocumentPresenter: NSObject, UIDocumentInteractionControllerDelegate {
+    static let shared = DocumentPresenter()
+    private var documentController: UIDocumentInteractionController?
+
+    private func topViewController() -> UIViewController? {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first,
+              var topVC = window.rootViewController else { return nil }
+        while let presented = topVC.presentedViewController {
+            topVC = presented
+        }
+        return topVC
+    }
+
+    func presentNativeOrShare(for url: URL) {
+        DispatchQueue.main.async {
+            let controller = UIDocumentInteractionController(url: url)
+            controller.delegate = self
+            self.documentController = controller
+            
+            let canPreview = controller.presentPreview(animated: true)
+            if !canPreview {
+                self.presentShareSheet(for: url)
+            }
+        }
+    }
+    
+    func presentShareSheet(for url: URL) {
+        DispatchQueue.main.async {
+            guard let topVC = self.topViewController() else { return }
+            let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                activityVC.popoverPresentationController?.sourceView = topVC.view
+                activityVC.popoverPresentationController?.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
+                activityVC.popoverPresentationController?.permittedArrowDirections = []
+            }
+            topVC.present(activityVC, animated: true)
+        }
+    }
+    
+    func documentInteractionControllerViewControllerForPreview(_ controller: UIDocumentInteractionController) -> UIViewController {
+        return topViewController() ?? UIViewController()
+    }
+}
+
+struct LocalFilePicker: UIViewControllerRepresentable {
+    var onPick: ([URL]) -> Void
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick)
+    }
+    
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = true
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+    
+    class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: ([URL]) -> Void
+        init(onPick: @escaping ([URL]) -> Void) { self.onPick = onPick }
+        
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard !urls.isEmpty else { return }
+            onPick(urls)
+        }
+    }
+}
+
+--- END OF FILE: ZhiAuthApp/DocumentPresenter.swift ---
+
+--- START FILE PATH: ZhiAuthApp/FileRowView.swift ---
+import SwiftUI
+
+struct FileRowView: View {
+    let item: ZhiFileItem
+    let isRootTunnelMenu: Bool
+    let onTap: () -> Void
+    let onInfo: () -> Void
+    let onCopy: () -> Void
+    let onCut: () -> Void
+    let onRename: () -> Void
+    let onSaveToDevice: () -> Void
+    let onDelete: () -> Void
+    
+    private var systemIconName: String {
+        if isRootTunnelMenu {
+            return item.name == "ZhiAuth_KCP" ? "network" : "bolt.horizontal.circle.fill"
+        }
+        return item.isDirectory ? "folder.fill" : "doc.text.fill"
+    }
+    
+    private var iconColor: Color {
+        if isRootTunnelMenu {
+            return item.name == "ZhiAuth_KCP" ? .blue : .orange
+        }
+        return item.isDirectory ? .blue : .teal
+    }
+    
+    private var subtitleText: String {
+        if isRootTunnelMenu {
+            return item.name == "ZhiAuth_KCP"
+                ? "Luồng chính: C++ KCP UDP Siêu tốc (Tự động dự phòng QUIC)"
+                : "Luồng dự phòng: MsQUIC TLS 1.3 (Xuyên tường lửa)"
+        }
+        return item.sizeString
+    }
+    
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                Image(systemName: systemIconName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 22, height: 22)
+                    .foregroundColor(iconColor)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    Text(subtitleText)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(FileItemButtonStyle())
+        .contextMenu {
+            if !isRootTunnelMenu {
+                Button(action: onInfo) {
+                    Label("Thông tin chi tiết", systemImage: "info.circle")
+                }
+                if !item.isDirectory {
+                    Button(action: onSaveToDevice) {
+                        Label("Lưu về iPhone / Chia sẻ", systemImage: "square.and.arrow.down")
+                    }
+                }
+                Button(action: onCopy) {
+                    Label("Sao chép (Copy)", systemImage: "doc.on.doc")
+                }
+                Button(action: onCut) {
+                    Label("Di chuyển (Cut)", systemImage: "scissors")
+                }
+                Button(action: onRename) {
+                    Label("Đổi tên (Rename)", systemImage: "pencil")
+                }
+                Button(role: .destructive, action: onDelete) {
+                    Label("Xóa vĩnh viễn", systemImage: "trash")
+                }
+            }
+        }
+    }
+}
+
+--- END OF FILE: ZhiAuthApp/FileRowView.swift ---
+
+--- START FILE PATH: ZhiAuthApp/FileModel.swift ---
+import SwiftUI
+
+enum ActiveTunnel: String {
+    case none = "STANDBY"
+    case kcp = "KCP"
+    case quic = "QUIC"
+}
+
+struct ZhiFileItem: Identifiable, Hashable {
+    let id = UUID()
+    let name: String
+    let isDirectory: Bool
+    let size: UInt64
+    let modifiedTime: UInt64
+    let path: String
+    
+    var sizeString: String {
+        if isDirectory { return "Thư mục" }
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useAll]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(size))
+    }
+}
+
+struct FileItemButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.vertical, 7)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(configuration.isPressed ? Color.blue.opacity(0.15) : Color(UIColor.secondarySystemBackground).opacity(0.4))
+            .cornerRadius(8)
+            .shadow(color: configuration.isPressed ? Color.black.opacity(0.18) : Color.clear, radius: 2, x: 0, y: 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+--- END OF FILE: ZhiAuthApp/FileModel.swift ---
+
+--- START FILE PATH: .github/workflows/build-ios.yml ---
+name: Build ZhiAuth iOS App
+
+on:
+  push:
+    branches: [ "Client_iOS" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: Lấy source code về
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Khởi tạo ZhiConfig.json bảo mật trước khi chạy XcodeGen
+        env:
+          ZHI_CONFIG_SECRET: ${{ secrets.ZHI_CONFIG_JSON }}
+        run: |
+          if [ -n "$ZHI_CONFIG_SECRET" ]; then
+            echo "🔐 Đang nạp ZhiConfig.json từ GitHub Actions Secret..."
+            echo "$ZHI_CONFIG_SECRET" > ZhiConfig.json
+          elif [ ! -f ZhiConfig.json ]; then
+            echo "⚠️ Chưa cài GitHub Secret ZHI_CONFIG_JSON, dùng bản mẫu ZhiConfig.json.example để build..."
+            cp ZhiConfig.json.example ZhiConfig.json
+          fi
+
+      - name: Cài đặt XcodeGen & ASIO
+        run: |
+          brew install xcodegen asio
+          xcodegen generate
+
+      - name: Biên dịch Xcode Project
+        run: |
+          set -o pipefail
+          xcodebuild clean build \
+            -project ZhiAuth.xcodeproj \
+            -scheme ZhiAuthApp \
+            -sdk iphoneos \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            SYMROOT=$(PWD)/build \
+            -verbose
+
+      - name: Đóng gói thành file .ipa chuẩn
+        run: |
+          mkdir -p Payload
+          cp -R build/Release-iphoneos/ZhiAuthApp.app Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload ZhiAuthApp.ipa
+          echo "✅ Đóng gói hoàn tất!"
+
+      - name: Xuất file IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZhiAuthApp-iOS
+          path: ZhiAuthApp.ipa
+          retention-days: 7
+
+--- END OF FILE: .github/workflows/build-ios.yml ---
+
+--- START FILE PATH: src/rpc_client/crypto_box.h ---
+#ifndef ZHIAUTH_CRYPTO_BOX_H
+#define ZHIAUTH_CRYPTO_BOX_H
+
+#include <vector>
+#include <string>
+#include <cstdint>
+
+class CryptoBox {
+public:
+    static bool initialize();
+    static bool encrypt_payload(const std::vector<uint8_t>& plaintext, const std::string& symmetric_key, std::vector<uint8_t>& ciphertext);
+    static bool decrypt_payload(const std::vector<uint8_t>& ciphertext, const std::string& symmetric_key, std::vector<uint8_t>& plaintext);
+};
+#endif // ZHIAUTH_CRYPTO_BOX_H
+
+--- END OF FILE: src/rpc_client/crypto_box.h ---
+
+--- START FILE PATH: src/rpc_client/vfs_packet.h ---
+#ifndef ZHIAUTH_VFS_PACKET_H
+#define ZHIAUTH_VFS_PACKET_H
+
+#include <cstdint>
+
+#pragma pack(push, 1)
+
+enum class VfsOpcode : uint8_t {
+    OP_PING     = 0x00,
+    OP_STAT     = 0x01,
+    OP_LIST     = 0x02,
+    OP_READ     = 0x03,
+    OP_WRITE    = 0x04,
+    OP_MKDIR    = 0x05,
+    OP_DELETE   = 0x06,
+    OP_RENAME   = 0x07,
+    OP_TRUNCATE = 0x08, 
+    OP_ERROR    = 0xFF
+};
+
+struct VfsPacketHeader {
+    uint32_t magic;      // 0x5A484941 ("ZHIA")
+    VfsOpcode opcode;
+    uint64_t session_id; 
+    uint64_t offset;     
+    uint32_t data_len;
+    uint16_t path_len;
+};
+
+#pragma pack(pop)
+
+#endif // ZHIAUTH_VFS_PACKET_H
+
+--- END OF FILE: src/rpc_client/vfs_packet.h ---
+
+--- START FILE PATH: src/rpc_client/crypto_box.cpp ---
+#include "rpc_client/crypto_box.h"
+#include <sodium.h>
+#include <iostream>
+
+bool CryptoBox::initialize() {
+    if (sodium_init() < 0) return false;
+    return true;
+}
+
+bool CryptoBox::encrypt_payload(const std::vector<uint8_t>& plaintext, const std::string& symmetric_key, std::vector<uint8_t>& ciphertext) {
+    if (symmetric_key.size() != crypto_aead_chacha20poly1305_ietf_KEYBYTES) return false;
+    ciphertext.resize(crypto_aead_chacha20poly1305_ietf_NPUBBYTES + plaintext.size() + crypto_aead_chacha20poly1305_ietf_ABYTES);
+    unsigned char* nonce = ciphertext.data();
+    randombytes_buf(nonce, crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
+    unsigned long long ciphertext_len;
+    int result = crypto_aead_chacha20poly1305_ietf_encrypt(
+        ciphertext.data() + crypto_aead_chacha20poly1305_ietf_NPUBBYTES, &ciphertext_len,
+        plaintext.data(), plaintext.size(), nullptr, 0, nullptr, nonce,
+        reinterpret_cast<const unsigned char*>(symmetric_key.data())
+    );
+    if (result != 0) return false;
+    ciphertext.resize(crypto_aead_chacha20poly1305_ietf_NPUBBYTES + ciphertext_len);
+    return true;
+}
+
+bool CryptoBox::decrypt_payload(const std::vector<uint8_t>& ciphertext, const std::string& symmetric_key, std::vector<uint8_t>& plaintext) {
+    if (symmetric_key.size() != crypto_aead_chacha20poly1305_ietf_KEYBYTES) return false;
+    if (ciphertext.size() < crypto_aead_chacha20poly1305_ietf_NPUBBYTES + crypto_aead_chacha20poly1305_ietf_ABYTES) return false;
+    const unsigned char* nonce = ciphertext.data();
+    const unsigned char* actual_cipher = ciphertext.data() + crypto_aead_chacha20poly1305_ietf_NPUBBYTES;
+    unsigned long long actual_cipher_len = ciphertext.size() - crypto_aead_chacha20poly1305_ietf_NPUBBYTES;
+    plaintext.resize(actual_cipher_len - crypto_aead_chacha20poly1305_ietf_ABYTES);
+    unsigned long long plaintext_len;
+    int result = crypto_aead_chacha20poly1305_ietf_decrypt(
+        plaintext.data(), &plaintext_len, nullptr, actual_cipher, actual_cipher_len,
+        nullptr, 0, nonce, reinterpret_cast<const unsigned char*>(symmetric_key.data())
+    );
+    if (result != 0) return false;
+    plaintext.resize(plaintext_len);
+    return true;
+}
+
+--- END OF FILE: src/rpc_client/crypto_box.cpp ---
+
+--- START FILE PATH: src/rpc_client/ikcp.h ---
+//=====================================================================
+//
+// KCP - A Better ARQ Protocol Implementation
+// skywind3000 (at) gmail.com, 2010-2011
+//  
+// Features:
+// + Average RTT reduce 30% - 40% vs traditional ARQ like tcp.
+// + Maximum RTT reduce three times vs tcp.
+// + Lightweight, distributed as a single source file.
+//
+//=====================================================================
+#ifndef _IKCP_H_
+#define _IKCP_H_
+
+#include <stddef.h>
+#include <stdlib.h>
+#include <assert.h>
+
+
+//=====================================================================
+// 32BIT INTEGER DEFINITION 
+//=====================================================================
+#ifndef __INTEGER_32_BITS__
+#define __INTEGER_32_BITS__
+#if defined(_WIN64) || defined(WIN64) || defined(__amd64__) || \
+	defined(__x86_64) || defined(__x86_64__) || defined(_M_IA64) || \
+	defined(_M_AMD64)
+	typedef unsigned int ISTDUINT32;
+	typedef int ISTDINT32;
+#elif defined(_WIN32) || defined(WIN32) || defined(__i386__) || \
+	defined(__i386) || defined(_M_X86)
+	typedef unsigned long ISTDUINT32;
+	typedef long ISTDINT32;
+#elif defined(__MACOS__)
+	typedef UInt32 ISTDUINT32;
+	typedef SInt32 ISTDINT32;
+#elif defined(__APPLE__) && defined(__MACH__)
+	#include <sys/types.h>
+	typedef u_int32_t ISTDUINT32;
+	typedef int32_t ISTDINT32;
+#elif defined(__BEOS__)
+	#include <sys/inttypes.h>
+	typedef u_int32_t ISTDUINT32;
+	typedef int32_t ISTDINT32;
+#elif (defined(_MSC_VER) || defined(__BORLANDC__)) && (!defined(__MSDOS__))
+	typedef unsigned __int32 ISTDUINT32;
+	typedef __int32 ISTDINT32;
+#elif defined(__GNUC__)
+	#include <stdint.h>
+	typedef uint32_t ISTDUINT32;
+	typedef int32_t ISTDINT32;
+#else 
+	typedef unsigned long ISTDUINT32; 
+	typedef long ISTDINT32;
+#endif
+#endif
+
+
+//=====================================================================
+// Integer Definition
+//=====================================================================
+#ifndef __IINT8_DEFINED
+#define __IINT8_DEFINED
+typedef char IINT8;
+#endif
+
+#ifndef __IUINT8_DEFINED
+#define __IUINT8_DEFINED
+typedef unsigned char IUINT8;
+#endif
+
+#ifndef __IUINT16_DEFINED
+#define __IUINT16_DEFINED
+typedef unsigned short IUINT16;
+#endif
+
+#ifndef __IINT16_DEFINED
+#define __IINT16_DEFINED
+typedef short IINT16;
+#endif
+
+#ifndef __IINT32_DEFINED
+#define __IINT32_DEFINED
+typedef ISTDINT32 IINT32;
+#endif
+
+#ifndef __IUINT32_DEFINED
+#define __IUINT32_DEFINED
+typedef ISTDUINT32 IUINT32;
+#endif
+
+#ifndef __IINT64_DEFINED
+#define __IINT64_DEFINED
+#if defined(_MSC_VER) || defined(__BORLANDC__)
+typedef __int64 IINT64;
+#else
+typedef long long IINT64;
+#endif
+#endif
+
+#ifndef __IUINT64_DEFINED
+#define __IUINT64_DEFINED
+#if defined(_MSC_VER) || defined(__BORLANDC__)
+typedef unsigned __int64 IUINT64;
+#else
+typedef unsigned long long IUINT64;
+#endif
+#endif
+
+#ifndef INLINE
+#if defined(__GNUC__)
+
+#if (__GNUC__ > 3) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 1))
+#define INLINE         __inline__ __attribute__((always_inline))
+#else
+#define INLINE         __inline__
+#endif
+
+#elif (defined(_MSC_VER) || defined(__BORLANDC__) || defined(__WATCOMC__))
+#define INLINE __inline
+#else
+#define INLINE 
+#endif
+#endif
+
+#if (!defined(__cplusplus)) && (!defined(inline))
+#define inline INLINE
+#endif
+
+
+//=====================================================================
+// QUEUE DEFINITION                                                  
+//=====================================================================
+#ifndef __IQUEUE_DEF__
+#define __IQUEUE_DEF__
+
+struct IQUEUEHEAD {
+	struct IQUEUEHEAD *next, *prev;
+};
+
+typedef struct IQUEUEHEAD iqueue_head;
+
+
+//---------------------------------------------------------------------
+// queue init                                                         
+//---------------------------------------------------------------------
+#define IQUEUE_HEAD_INIT(name) { &(name), &(name) }
+#define IQUEUE_HEAD(name) \
+	struct IQUEUEHEAD name = IQUEUE_HEAD_INIT(name)
+
+#define IQUEUE_INIT(ptr) ( \
+	(ptr)->next = (ptr), (ptr)->prev = (ptr))
+
+#define IOFFSETOF(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
+
+#define ICONTAINEROF(ptr, type, member) ( \
+		(type*)( ((char*)((type*)ptr)) - IOFFSETOF(type, member)) )
+
+#define IQUEUE_ENTRY(ptr, type, member) ICONTAINEROF(ptr, type, member)
+
+
+//---------------------------------------------------------------------
+// queue operation                     
+//---------------------------------------------------------------------
+#define IQUEUE_ADD(node, head) ( \
+	(node)->prev = (head), (node)->next = (head)->next, \
+	(head)->next->prev = (node), (head)->next = (node))
+
+#define IQUEUE_ADD_TAIL(node, head) ( \
+	(node)->prev = (head)->prev, (node)->next = (head), \
+	(head)->prev->next = (node), (head)->prev = (node))
+
+#define IQUEUE_DEL_BETWEEN(p, n) ((n)->prev = (p), (p)->next = (n))
+
+#define IQUEUE_DEL(entry) (\
+	(entry)->next->prev = (entry)->prev, \
+	(entry)->prev->next = (entry)->next, \
+	(entry)->next = 0, (entry)->prev = 0)
+
+#define IQUEUE_DEL_INIT(entry) do { \
+	IQUEUE_DEL(entry); IQUEUE_INIT(entry); } while (0)
+
+#define IQUEUE_IS_EMPTY(entry) ((entry) == (entry)->next)
+
+#define iqueue_init		IQUEUE_INIT
+#define iqueue_entry	IQUEUE_ENTRY
+#define iqueue_add		IQUEUE_ADD
+#define iqueue_add_tail	IQUEUE_ADD_TAIL
+#define iqueue_del		IQUEUE_DEL
+#define iqueue_del_init	IQUEUE_DEL_INIT
+#define iqueue_is_empty IQUEUE_IS_EMPTY
+
+#define IQUEUE_FOREACH(iterator, head, TYPE, MEMBER) \
+	for ((iterator) = iqueue_entry((head)->next, TYPE, MEMBER); \
+		&((iterator)->MEMBER) != (head); \
+		(iterator) = iqueue_entry((iterator)->MEMBER.next, TYPE, MEMBER))
+
+#define iqueue_foreach(iterator, head, TYPE, MEMBER) \
+	IQUEUE_FOREACH(iterator, head, TYPE, MEMBER)
+
+#define iqueue_foreach_entry(pos, head) \
+	for( (pos) = (head)->next; (pos) != (head) ; (pos) = (pos)->next )
+	
+
+#define __iqueue_splice(list, head) do {	\
+		iqueue_head *first = (list)->next, *last = (list)->prev; \
+		iqueue_head *at = (head)->next; \
+		(first)->prev = (head), (head)->next = (first);		\
+		(last)->next = (at), (at)->prev = (last); }	while (0)
+
+#define iqueue_splice(list, head) do { \
+	if (!iqueue_is_empty(list)) __iqueue_splice(list, head); } while (0)
+
+#define iqueue_splice_init(list, head) do {	\
+	iqueue_splice(list, head);	iqueue_init(list); } while (0)
+
+
+#ifdef _MSC_VER
+#pragma warning(disable:4311)
+#pragma warning(disable:4312)
+#pragma warning(disable:4996)
+#endif
+
+#endif
+
+
+//---------------------------------------------------------------------
+// BYTE ORDER & ALIGNMENT
+//---------------------------------------------------------------------
+#ifndef IWORDS_BIG_ENDIAN
+    #ifdef _BIG_ENDIAN_
+        #if _BIG_ENDIAN_
+            #define IWORDS_BIG_ENDIAN 1
+        #endif
+    #endif
+    #ifndef IWORDS_BIG_ENDIAN
+        #if defined(__hppa__) || \
+            defined(__m68k__) || defined(mc68000) || defined(_M_M68K) || \
+            (defined(__MIPS__) && defined(__MIPSEB__)) || \
+            defined(__ppc__) || defined(__POWERPC__) || defined(_M_PPC) || \
+            defined(__sparc__) || defined(__powerpc__) || \
+            defined(__mc68000__) || defined(__s390x__) || defined(__s390__)
+            #define IWORDS_BIG_ENDIAN 1
+        #endif
+    #endif
+    #ifndef IWORDS_BIG_ENDIAN
+        #define IWORDS_BIG_ENDIAN  0
+    #endif
+#endif
+
+#ifndef IWORDS_MUST_ALIGN
+	#if defined(__i386__) || defined(__i386) || defined(_i386_)
+		#define IWORDS_MUST_ALIGN 0
+	#elif defined(_M_IX86) || defined(_X86_) || defined(__x86_64__)
+		#define IWORDS_MUST_ALIGN 0
+	#elif defined(__amd64) || defined(__amd64__)
+		#define IWORDS_MUST_ALIGN 0
+	#else
+		#define IWORDS_MUST_ALIGN 1
+	#endif
+#endif
+
+
+//=====================================================================
+// Predefine struct
+//=====================================================================
+struct IKCPCB;
+typedef struct IKCPCB ikcpcb;
+
+
+//=====================================================================
+// SEGMENT
+//=====================================================================
+struct IKCPSEG
+{
+	struct IQUEUEHEAD node;
+	IUINT32 conv;
+	IUINT32 cmd;
+	IUINT32 frg;
+	IUINT32 wnd;
+	IUINT32 ts;
+	IUINT32 sn;
+	IUINT32 una;
+	IUINT32 len;
+	IUINT32 resendts;
+	IUINT32 rto;
+	IUINT32 fastack;
+	IUINT32 xmit;
+	char data[1];
+};
+
+
+//---------------------------------------------------------------------
+// IKCPOPS - pluggable congestion control operations
+//---------------------------------------------------------------------
+struct IKCPOPS
+{
+	const char *name;
+	int (*init)(ikcpcb *kcp);
+	void (*release)(ikcpcb *kcp);
+	void (*on_ack)(ikcpcb *kcp, IUINT32 acked_segs, IUINT32 acked_bytes,
+			IUINT32 prior_in_flight);
+	void (*on_fast_retransmit)(ikcpcb *kcp, IUINT32 fast_retrans,
+				IUINT32 inflight, IUINT32 prior_cwnd);
+	void (*on_timeout)(ikcpcb *kcp, IUINT32 prior_cwnd);
+	void (*on_tick)(ikcpcb *kcp);
+	void (*on_app_limited)(ikcpcb *kcp, IUINT32 inflight);
+	void (*on_rtt)(ikcpcb *kcp, IINT32 rtt);
+	void (*on_pkt_sent)(ikcpcb *kcp, IUINT32 sn, IUINT32 ts,
+				IUINT32 len, IUINT32 inflight, IUINT32 xmit);
+	void (*on_pkt_acked)(ikcpcb *kcp, IUINT32 sn, IUINT32 ts,
+				IUINT32 len, IINT32 rtt, IUINT32 xmit);
+	IUINT32 (*get_info)(ikcpcb *kcp, void *buf, IUINT32 bufsize);
+	IUINT32 (*pacing_rate)(ikcpcb *kcp);
+};
+
+
+//---------------------------------------------------------------------
+// IKCPCB
+//---------------------------------------------------------------------
+struct IKCPCB
+{
+	IUINT32 conv, mtu, mss, state;
+	IUINT32 snd_una, snd_nxt, rcv_nxt;
+	IUINT32 ts_recent, ts_lastack, ssthresh;
+	IINT32 rx_rttval, rx_srtt, rx_rto, rx_minrto;
+	IUINT32 snd_wnd, rcv_wnd, rmt_wnd, cwnd, probe;
+	IUINT32 current, interval, ts_flush, xmit;
+	IUINT32 nrcv_buf, nsnd_buf;
+	IUINT32 nrcv_que, nsnd_que;
+	IUINT32 nodelay, updated;
+	IUINT32 ts_probe, probe_wait;
+	IUINT32 dead_link, incr;
+	struct IQUEUEHEAD snd_queue;
+	struct IQUEUEHEAD rcv_queue;
+	struct IQUEUEHEAD snd_buf;
+	struct IQUEUEHEAD rcv_buf;
+	IUINT32 *acklist;
+	IUINT32 ackcount;
+	IUINT32 ackblock;
+	IUINT32 ackedlen;
+	void *user;
+	char *buffer;
+	int fastresend;
+	int fastlimit;
+	int nocwnd, stream;
+	const struct IKCPOPS *ccops;
+	void *congest;
+	int logmask;
+	int (*output)(const char *buf, int len, struct IKCPCB *kcp, void *user);
+	void (*writelog)(const char *log, struct IKCPCB *kcp, void *user);
+};
+
+
+#define IKCP_LOG_OUTPUT			1
+#define IKCP_LOG_INPUT			2
+#define IKCP_LOG_SEND			4
+#define IKCP_LOG_RECV			8
+#define IKCP_LOG_IN_DATA		16
+#define IKCP_LOG_IN_ACK			32
+#define IKCP_LOG_IN_PROBE		64
+#define IKCP_LOG_IN_WINS		128
+#define IKCP_LOG_OUT_DATA		256
+#define IKCP_LOG_OUT_ACK		512
+#define IKCP_LOG_OUT_PROBE		1024
+#define IKCP_LOG_OUT_WINS		2048
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+//---------------------------------------------------------------------
+// interface
+//---------------------------------------------------------------------
+
+// create a new kcp control object, 'conv' must be equal in both endpoints
+// of the same connection. 'user' will be passed to the output callback.
+// output callback can be set up like this: 'kcp->output = my_udp_output'
+ikcpcb* ikcp_create(IUINT32 conv, void *user);
+
+// release kcp control object
+void ikcp_release(ikcpcb *kcp);
+
+// set output callback, which will be invoked by kcp
+void ikcp_setoutput(ikcpcb *kcp, int (*output)(const char *buf, int len, 
+	ikcpcb *kcp, void *user));
+
+// user/upper level recv: returns size, returns below zero for EAGAIN
+int ikcp_recv(ikcpcb *kcp, char *buffer, int len);
+
+// user/upper level send, returns below zero for error
+int ikcp_send(ikcpcb *kcp, const char *buffer, int len);
+
+// update state (call it repeatedly, every 10ms-100ms), or you can ask 
+// ikcp_check when to call it again (without ikcp_input/_send calling).
+// 'current' - current timestamp in millisec. 
+void ikcp_update(ikcpcb *kcp, IUINT32 current);
+
+// Determines when you should invoke ikcp_update next:
+// returns the timestamp (in milliseconds) at which you should call
+// ikcp_update, assuming no ikcp_input/_send calls occur in between.
+// You can call ikcp_update at that time instead of calling it repeatedly.
+// Important for reducing unnecessary ikcp_update invocations. Use it to
+// schedule ikcp_update (e.g., implementing an epoll-like mechanism,
+// or optimizing ikcp_update when handling massive kcp connections).
+IUINT32 ikcp_check(const ikcpcb *kcp, IUINT32 current);
+
+// when you receive a low-level packet (e.g., UDP packet), call this
+int ikcp_input(ikcpcb *kcp, const char *data, long size);
+
+// flush pending data
+void ikcp_flush(ikcpcb *kcp);
+
+// check the size of next message in the recv queue
+int ikcp_peeksize(const ikcpcb *kcp);
+
+// change MTU size, default is 1400
+int ikcp_setmtu(ikcpcb *kcp, int mtu);
+
+// set maximum window size: sndwnd=32, rcvwnd=32 by default
+int ikcp_wndsize(ikcpcb *kcp, int sndwnd, int rcvwnd);
+
+// get how many packets are waiting to be sent
+int ikcp_waitsnd(const ikcpcb *kcp);
+
+// fastest: ikcp_nodelay(kcp, 1, 20, 2, 1)
+// nodelay: 0:disable (default), 1:enable
+// interval: internal update timer interval in ms, default is 100ms
+// resend: 0:disable fast resend (default), 1:enable fast resend
+// nc: 0:normal congestion control (default), 1:disable congestion control
+int ikcp_nodelay(ikcpcb *kcp, int nodelay, int interval, int resend, int nc);
+
+// install congestion control algorithm, NULL restores builtin
+int ikcp_setcc(ikcpcb *kcp, const struct IKCPOPS *ops);
+
+// write log with kcp->writelog
+void ikcp_log(ikcpcb *kcp, int mask, const char *fmt, ...);
+
+// setup allocator
+void ikcp_allocator(void* (*new_malloc)(size_t), void (*new_free)(void*));
+
+// read conv
+IUINT32 ikcp_getconv(const void *ptr);
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+
+
+--- END OF FILE: src/rpc_client/ikcp.h ---
+

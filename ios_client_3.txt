@@ -1,0 +1,2252 @@
+--- START FILE PATH: src/rpc_client/ikcp.c ---
+//=====================================================================
+//
+// KCP - A Better ARQ Protocol Implementation
+// skywind3000 (at) gmail.com, 2010-2011
+//  
+// Features:
+// + Average RTT reduce 30% - 40% vs traditional ARQ like tcp.
+// + Maximum RTT reduce three times vs tcp.
+// + Lightweight, distributed as a single source file.
+//
+//=====================================================================
+#include "ikcp.h"
+
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
+
+#define IKCP_FASTACK_CONSERVE
+
+//=====================================================================
+// KCP BASIC
+//=====================================================================
+const IUINT32 IKCP_RTO_NDL = 30;		// no delay min rto
+const IUINT32 IKCP_RTO_MIN = 100;		// normal min rto
+const IUINT32 IKCP_RTO_DEF = 200;
+const IUINT32 IKCP_RTO_MAX = 60000;
+const IUINT32 IKCP_CMD_PUSH = 81;		// cmd: push data
+const IUINT32 IKCP_CMD_ACK  = 82;		// cmd: ack
+const IUINT32 IKCP_CMD_WASK = 83;		// cmd: window probe (ask)
+const IUINT32 IKCP_CMD_WINS = 84;		// cmd: window size (tell)
+const IUINT32 IKCP_ASK_SEND = 1;		// need to send IKCP_CMD_WASK
+const IUINT32 IKCP_ASK_TELL = 2;		// need to send IKCP_CMD_WINS
+const IUINT32 IKCP_WND_SND = 32;
+
+// 🔥 NÂNG TỪ 128 LÊN 4096 ĐỂ KCP CHO PHÉP GỬI FILE VƯỢT QUÁ 128KB!
+const IUINT32 IKCP_WND_RCV = 4096;       // must >= max fragment size
+
+const IUINT32 IKCP_MTU_DEF = 1400;
+const IUINT32 IKCP_ACK_FAST	= 3;
+const IUINT32 IKCP_INTERVAL	= 100;
+const IUINT32 IKCP_OVERHEAD = 32;
+const IUINT32 IKCP_DEADLINK = 20;
+const IUINT32 IKCP_THRESH_INIT = 2;
+const IUINT32 IKCP_THRESH_MIN = 2;
+const IUINT32 IKCP_PROBE_INIT = 5000;		// 7 secs to probe window size
+const IUINT32 IKCP_PROBE_LIMIT = 120000;	// up to 120 secs to probe window
+const IUINT32 IKCP_FASTACK_LIMIT = 5;		// max times to trigger fastack
+
+
+//---------------------------------------------------------------------
+// encode / decode
+//---------------------------------------------------------------------
+
+/* encode 8 bits unsigned int */
+static inline char *ikcp_encode8u(char *p, unsigned char c)
+{
+	*(unsigned char*)p++ = c;
+	return p;
+}
+
+/* decode 8 bits unsigned int */
+static inline const char *ikcp_decode8u(const char *p, unsigned char *c)
+{
+	*c = *(unsigned char*)p++;
+	return p;
+}
+
+/* encode 16 bits unsigned int (lsb) */
+static inline char *ikcp_encode16u(char *p, unsigned short w)
+{
+#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
+	*(unsigned char*)(p + 0) = (w & 255);
+	*(unsigned char*)(p + 1) = (w >> 8);
+#else
+	memcpy(p, &w, 2);
+#endif
+	p += 2;
+	return p;
+}
+
+/* decode 16 bits unsigned int (lsb) */
+static inline const char *ikcp_decode16u(const char *p, unsigned short *w)
+{
+#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
+	*w = *(const unsigned char*)(p + 1);
+	*w = *(const unsigned char*)(p + 0) + (*w << 8);
+#else
+	memcpy(w, p, 2);
+#endif
+	p += 2;
+	return p;
+}
+
+/* encode 32 bits unsigned int (lsb) */
+static inline char *ikcp_encode32u(char *p, IUINT32 l)
+{
+#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
+	*(unsigned char*)(p + 0) = (unsigned char)((l >>  0) & 0xff);
+	*(unsigned char*)(p + 1) = (unsigned char)((l >>  8) & 0xff);
+	*(unsigned char*)(p + 2) = (unsigned char)((l >> 16) & 0xff);
+	*(unsigned char*)(p + 3) = (unsigned char)((l >> 24) & 0xff);
+#else
+	memcpy(p, &l, 4);
+#endif
+	p += 4;
+	return p;
+}
+
+/* decode 32 bits unsigned int (lsb) */
+static inline const char *ikcp_decode32u(const char *p, IUINT32 *l)
+{
+#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
+	*l = *(const unsigned char*)(p + 3);
+	*l = *(const unsigned char*)(p + 2) + (*l << 8);
+	*l = *(const unsigned char*)(p + 1) + (*l << 8);
+	*l = *(const unsigned char*)(p + 0) + (*l << 8);
+#else 
+	memcpy(l, p, 4);
+#endif
+	p += 4;
+	return p;
+}
+
+static inline IUINT32 _imin_(IUINT32 a, IUINT32 b) {
+	return a <= b ? a : b;
+}
+
+static inline IUINT32 _imax_(IUINT32 a, IUINT32 b) {
+	return a >= b ? a : b;
+}
+
+static inline IUINT32 _ibound_(IUINT32 lower, IUINT32 middle, IUINT32 upper) 
+{
+	return _imin_(_imax_(lower, middle), upper);
+}
+
+static inline long _itimediff(IUINT32 later, IUINT32 earlier) 
+{
+	return ((IINT32)(later - earlier));
+}
+
+//---------------------------------------------------------------------
+// manage segment
+//---------------------------------------------------------------------
+typedef struct IKCPSEG IKCPSEG;
+
+static void* (*ikcp_malloc_hook)(size_t) = NULL;
+static void (*ikcp_free_hook)(void *) = NULL;
+
+// internal malloc
+static void* ikcp_malloc(size_t size) {
+	if (ikcp_malloc_hook) 
+		return ikcp_malloc_hook(size);
+	return malloc(size);
+}
+
+// internal free
+static void ikcp_free(void *ptr) {
+	if (ikcp_free_hook) {
+		ikcp_free_hook(ptr);
+	}	else {
+		free(ptr);
+	}
+}
+
+// redefine allocator
+void ikcp_allocator(void* (*new_malloc)(size_t), void (*new_free)(void*))
+{
+	ikcp_malloc_hook = new_malloc;
+	ikcp_free_hook = new_free;
+}
+
+// allocate a new kcp segment
+static IKCPSEG* ikcp_segment_new(ikcpcb *kcp, int size)
+{
+	return (IKCPSEG*)ikcp_malloc(sizeof(IKCPSEG) + size);
+}
+
+// delete a segment
+static void ikcp_segment_delete(ikcpcb *kcp, IKCPSEG *seg)
+{
+	ikcp_free(seg);
+}
+
+// write log
+void ikcp_log(ikcpcb *kcp, int mask, const char *fmt, ...)
+{
+	char buffer[1024];
+	va_list argptr;
+	if ((mask & kcp->logmask) == 0 || kcp->writelog == 0) return;
+	va_start(argptr, fmt);
+	vsprintf(buffer, fmt, argptr);
+	va_end(argptr);
+	kcp->writelog(buffer, kcp, kcp->user);
+}
+
+// check log mask
+static int ikcp_canlog(const ikcpcb *kcp, int mask)
+{
+	if ((mask & kcp->logmask) == 0 || kcp->writelog == NULL) return 0;
+	return 1;
+}
+
+// output segment
+static int ikcp_output(ikcpcb *kcp, const void *data, int size)
+{
+	assert(kcp);
+	assert(kcp->output);
+	if (ikcp_canlog(kcp, IKCP_LOG_OUTPUT)) {
+		ikcp_log(kcp, IKCP_LOG_OUTPUT, "[RO] %ld bytes", (long)size);
+	}
+	if (size == 0) return 0;
+	return kcp->output((const char*)data, size, kcp, kcp->user);
+}
+
+// output queue
+void ikcp_qprint(const char *name, const struct IQUEUEHEAD *head)
+{
+#if 0
+	const struct IQUEUEHEAD *p;
+	printf("<%s>: [", name);
+	for (p = head->next; p != head; p = p->next) {
+		const IKCPSEG *seg = iqueue_entry(p, const IKCPSEG, node);
+		printf("(%lu %d)", (unsigned long)seg->sn, (int)(seg->ts % 10000));
+		if (p->next != head) printf(",");
+	}
+	printf("]\n");
+#endif
+}
+
+
+//---------------------------------------------------------------------
+// create a new kcpcb
+//---------------------------------------------------------------------
+ikcpcb* ikcp_create(IUINT32 conv, void *user)
+{
+	ikcpcb *kcp = (ikcpcb*)ikcp_malloc(sizeof(struct IKCPCB));
+	if (kcp == NULL) return NULL;
+	kcp->conv = conv;
+	kcp->user = user;
+	kcp->snd_una = 0;
+	kcp->snd_nxt = 0;
+	kcp->rcv_nxt = 0;
+	kcp->ts_recent = 0;
+	kcp->ts_lastack = 0;
+	kcp->ts_probe = 0;
+	kcp->probe_wait = 0;
+	kcp->snd_wnd = IKCP_WND_SND;
+	kcp->rcv_wnd = IKCP_WND_RCV;
+	kcp->rmt_wnd = IKCP_WND_RCV;
+	kcp->cwnd = 0;
+	kcp->incr = 0;
+	kcp->probe = 0;
+	kcp->mtu = IKCP_MTU_DEF;
+	kcp->mss = kcp->mtu - IKCP_OVERHEAD;
+	kcp->stream = 0;
+
+	kcp->buffer = (char*)ikcp_malloc((kcp->mtu + IKCP_OVERHEAD) * 3);
+	if (kcp->buffer == NULL) {
+		ikcp_free(kcp);
+		return NULL;
+	}
+
+	iqueue_init(&kcp->snd_queue);
+	iqueue_init(&kcp->rcv_queue);
+	iqueue_init(&kcp->snd_buf);
+	iqueue_init(&kcp->rcv_buf);
+	kcp->nrcv_buf = 0;
+	kcp->nsnd_buf = 0;
+	kcp->nrcv_que = 0;
+	kcp->nsnd_que = 0;
+	kcp->state = 0;
+	kcp->acklist = NULL;
+	kcp->ackblock = 0;
+	kcp->ackcount = 0;
+	kcp->ackedlen = 0;
+	kcp->rx_srtt = 0;
+	kcp->rx_rttval = 0;
+	kcp->rx_rto = IKCP_RTO_DEF;
+	kcp->rx_minrto = IKCP_RTO_MIN;
+	kcp->current = 0;
+	kcp->interval = IKCP_INTERVAL;
+	kcp->ts_flush = IKCP_INTERVAL;
+	kcp->nodelay = 0;
+	kcp->updated = 0;
+	kcp->logmask = 0;
+	kcp->ssthresh = IKCP_THRESH_INIT;
+	kcp->fastresend = 0;
+	kcp->fastlimit = IKCP_FASTACK_LIMIT;
+	kcp->nocwnd = 0;
+	kcp->xmit = 0;
+	kcp->dead_link = IKCP_DEADLINK;
+	kcp->output = NULL;
+	kcp->ccops = NULL;
+	kcp->congest = NULL;
+	kcp->writelog = NULL;
+
+	return kcp;
+}
+
+
+//---------------------------------------------------------------------
+// release a kcpcb
+//---------------------------------------------------------------------
+void ikcp_release(ikcpcb *kcp)
+{
+	IKCPSEG *seg;
+	assert(kcp);
+	if (kcp) {
+		if (kcp->ccops && kcp->ccops->release) {
+			kcp->ccops->release(kcp);
+		}
+		while (!iqueue_is_empty(&kcp->snd_buf)) {
+			seg = iqueue_entry(kcp->snd_buf.next, IKCPSEG, node);
+			iqueue_del(&seg->node);
+			ikcp_segment_delete(kcp, seg);
+		}
+		while (!iqueue_is_empty(&kcp->rcv_buf)) {
+			seg = iqueue_entry(kcp->rcv_buf.next, IKCPSEG, node);
+			iqueue_del(&seg->node);
+			ikcp_segment_delete(kcp, seg);
+		}
+		while (!iqueue_is_empty(&kcp->snd_queue)) {
+			seg = iqueue_entry(kcp->snd_queue.next, IKCPSEG, node);
+			iqueue_del(&seg->node);
+			ikcp_segment_delete(kcp, seg);
+		}
+		while (!iqueue_is_empty(&kcp->rcv_queue)) {
+			seg = iqueue_entry(kcp->rcv_queue.next, IKCPSEG, node);
+			iqueue_del(&seg->node);
+			ikcp_segment_delete(kcp, seg);
+		}
+		if (kcp->buffer) {
+			ikcp_free(kcp->buffer);
+		}
+		if (kcp->acklist) {
+			ikcp_free(kcp->acklist);
+		}
+
+		kcp->nrcv_buf = 0;
+		kcp->nsnd_buf = 0;
+		kcp->nrcv_que = 0;
+		kcp->nsnd_que = 0;
+		kcp->ackcount = 0;
+		kcp->buffer = NULL;
+		kcp->acklist = NULL;
+		ikcp_free(kcp);
+	}
+}
+
+
+//---------------------------------------------------------------------
+// set output callback, which will be invoked by kcp
+//---------------------------------------------------------------------
+void ikcp_setoutput(ikcpcb *kcp, int (*output)(const char *buf, int len,
+	ikcpcb *kcp, void *user))
+{
+	kcp->output = output;
+}
+
+
+//---------------------------------------------------------------------
+// upper-level recv: returns size, or a negative value for EAGAIN
+//---------------------------------------------------------------------
+int ikcp_recv(ikcpcb *kcp, char *buffer, int len)
+{
+	struct IQUEUEHEAD *p;
+	int ispeek = (len < 0)? 1 : 0;
+	int peeksize;
+	int recover = 0;
+	IKCPSEG *seg;
+	assert(kcp);
+
+	if (iqueue_is_empty(&kcp->rcv_queue))
+		return -1;
+
+	if (len < 0) len = -len;
+
+	peeksize = ikcp_peeksize(kcp);
+
+	if (peeksize < 0) 
+		return -2;
+
+	if (peeksize > len) 
+		return -3;
+
+	if (kcp->nrcv_que >= kcp->rcv_wnd)
+		recover = 1;
+
+	// merge fragment
+	for (len = 0, p = kcp->rcv_queue.next; p != &kcp->rcv_queue; ) {
+		int fragment;
+		seg = iqueue_entry(p, IKCPSEG, node);
+		p = p->next;
+
+		if (buffer) {
+			memcpy(buffer, seg->data, seg->len);
+			buffer += seg->len;
+		}
+
+		len += seg->len;
+		fragment = seg->frg;
+
+		if (ikcp_canlog(kcp, IKCP_LOG_RECV)) {
+			ikcp_log(kcp, IKCP_LOG_RECV, "recv sn=%lu", (unsigned long)seg->sn);
+		}
+
+		if (ispeek == 0) {
+			iqueue_del(&seg->node);
+			ikcp_segment_delete(kcp, seg);
+			kcp->nrcv_que--;
+		}
+
+		if (fragment == 0) 
+			break;
+	}
+
+	assert(len == peeksize);
+
+	// move available data from rcv_buf -> rcv_queue
+	while (! iqueue_is_empty(&kcp->rcv_buf)) {
+		seg = iqueue_entry(kcp->rcv_buf.next, IKCPSEG, node);
+		if (seg->sn == kcp->rcv_nxt && kcp->nrcv_que < kcp->rcv_wnd) {
+			iqueue_del(&seg->node);
+			kcp->nrcv_buf--;
+			iqueue_add_tail(&seg->node, &kcp->rcv_queue);
+			kcp->nrcv_que++;
+			kcp->rcv_nxt++;
+		}	else {
+			break;
+		}
+	}
+
+	// fast recover
+	if (kcp->nrcv_que < kcp->rcv_wnd && recover) {
+		// ready to send back IKCP_CMD_WINS in ikcp_flush
+		// tell remote my window size
+		kcp->probe |= IKCP_ASK_TELL;
+	}
+
+	return len;
+}
+
+
+//---------------------------------------------------------------------
+// peek data size
+//---------------------------------------------------------------------
+int ikcp_peeksize(const ikcpcb *kcp)
+{
+	struct IQUEUEHEAD *p;
+	IKCPSEG *seg;
+	int length = 0;
+
+	assert(kcp);
+
+	if (iqueue_is_empty(&kcp->rcv_queue)) return -1;
+
+	seg = iqueue_entry(kcp->rcv_queue.next, IKCPSEG, node);
+	if (seg->frg == 0) return seg->len;
+
+	if (kcp->nrcv_que < seg->frg + 1) return -1;
+
+	for (p = kcp->rcv_queue.next; p != &kcp->rcv_queue; p = p->next) {
+		seg = iqueue_entry(p, IKCPSEG, node);
+		length += seg->len;
+		if (seg->frg == 0) break;
+	}
+
+	return length;
+}
+
+
+//---------------------------------------------------------------------
+// upper-level send: returns size, or a negative value on error
+//---------------------------------------------------------------------
+int ikcp_send(ikcpcb *kcp, const char *buffer, int len)
+{
+	IKCPSEG *seg;
+	int count, i;
+	int sent = 0;
+
+	assert(kcp->mss > 0);
+	if (len < 0) return -1;
+
+	// append to previous segment in streaming mode (if possible)
+	if (kcp->stream != 0) {
+		if (!iqueue_is_empty(&kcp->snd_queue)) {
+			IKCPSEG *old = iqueue_entry(kcp->snd_queue.prev, IKCPSEG, node);
+			if (old->len < kcp->mss) {
+				int capacity = kcp->mss - old->len;
+				int extend = (len < capacity)? len : capacity;
+				seg = ikcp_segment_new(kcp, old->len + extend);
+				assert(seg);
+				if (seg == NULL) {
+					return -2;
+				}
+				iqueue_add_tail(&seg->node, &kcp->snd_queue);
+				memcpy(seg->data, old->data, old->len);
+				if (buffer) {
+					memcpy(seg->data + old->len, buffer, extend);
+					buffer += extend;
+				}
+				seg->len = old->len + extend;
+				seg->frg = 0;
+				len -= extend;
+				iqueue_del_init(&old->node);
+				ikcp_segment_delete(kcp, old);
+				sent = extend;
+			}
+		}
+		if (len <= 0) {
+			return sent;
+		}
+	}
+
+	if (len <= (int)kcp->mss) count = 1;
+	else count = (len + kcp->mss - 1) / kcp->mss;
+
+	if (count >= (int)IKCP_WND_RCV) {
+		if (kcp->stream != 0 && sent > 0) 
+			return sent;
+		return -2;
+	}
+
+	if (count == 0) count = 1;
+
+	// fragment
+	for (i = 0; i < count; i++) {
+		int size = len > (int)kcp->mss ? (int)kcp->mss : len;
+		seg = ikcp_segment_new(kcp, size);
+		assert(seg);
+		if (seg == NULL) {
+			return -2;
+		}
+		if (buffer && len > 0) {
+			memcpy(seg->data, buffer, size);
+		}
+		seg->len = size;
+		seg->frg = (kcp->stream == 0)? (count - i - 1) : 0;
+		iqueue_init(&seg->node);
+		iqueue_add_tail(&seg->node, &kcp->snd_queue);
+		kcp->nsnd_que++;
+		if (buffer) {
+			buffer += size;
+		}
+		len -= size;
+		sent += size;
+	}
+
+	return sent;
+}
+
+
+//---------------------------------------------------------------------
+// parse ack
+//---------------------------------------------------------------------
+static void ikcp_update_ack(ikcpcb *kcp, IINT32 rtt)
+{
+	IINT32 rto = 0;
+	if (kcp->rx_srtt == 0) {
+		kcp->rx_srtt = rtt;
+		kcp->rx_rttval = rtt / 2;
+	}	else {
+		long delta = rtt - kcp->rx_srtt;
+		if (delta < 0) delta = -delta;
+		kcp->rx_rttval = (3 * kcp->rx_rttval + delta) / 4;
+		kcp->rx_srtt = (7 * kcp->rx_srtt + rtt) / 8;
+		if (kcp->rx_srtt < 1) kcp->rx_srtt = 1;
+	}
+	rto = kcp->rx_srtt + _imax_(kcp->interval, 4 * kcp->rx_rttval);
+	kcp->rx_rto = _ibound_(kcp->rx_minrto, rto, IKCP_RTO_MAX);
+	if (kcp->ccops && kcp->ccops->on_rtt) {
+		kcp->ccops->on_rtt(kcp, rtt);
+	}
+}
+
+static void ikcp_shrink_buf(ikcpcb *kcp)
+{
+	struct IQUEUEHEAD *p = kcp->snd_buf.next;
+	if (p != &kcp->snd_buf) {
+		IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
+		kcp->snd_una = seg->sn;
+	}	else {
+		kcp->snd_una = kcp->snd_nxt;
+	}
+}
+
+static void ikcp_parse_ack(ikcpcb *kcp, IUINT32 sn)
+{
+	struct IQUEUEHEAD *p, *next;
+	IINT32 pkt_rtt;
+
+	if (_itimediff(sn, kcp->snd_una) < 0 || _itimediff(sn, kcp->snd_nxt) >= 0)
+		return;
+
+	for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = next) {
+		IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
+		next = p->next;
+		if (sn == seg->sn) {
+			kcp->ackedlen += seg->len;
+			if (kcp->ccops && kcp->ccops->on_pkt_acked) {
+				pkt_rtt = -1;
+				if (_itimediff(kcp->current, seg->ts) >= 0) {
+					pkt_rtt = _itimediff(kcp->current, seg->ts);
+				}
+				kcp->ccops->on_pkt_acked(kcp, seg->sn, seg->ts,
+						seg->len, pkt_rtt, seg->xmit);
+			}
+			iqueue_del(p);
+			ikcp_segment_delete(kcp, seg);
+			kcp->nsnd_buf--;
+			break;
+		}
+		if (_itimediff(sn, seg->sn) < 0) {
+			break;
+		}
+	}
+}
+
+static void ikcp_parse_una(ikcpcb *kcp, IUINT32 una)
+{
+	struct IQUEUEHEAD *p, *next;
+	for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = next) {
+		IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
+		next = p->next;
+		if (_itimediff(una, seg->sn) > 0) {
+			kcp->ackedlen += seg->len;
+			if (kcp->ccops && kcp->ccops->on_pkt_acked) {
+				kcp->ccops->on_pkt_acked(kcp, seg->sn, seg->ts,
+						seg->len, -1, seg->xmit);
+			}
+			iqueue_del(p);
+			ikcp_segment_delete(kcp, seg);
+			kcp->nsnd_buf--;
+		}	else {
+			break;
+		}
+	}
+}
+
+static void ikcp_parse_fastack(ikcpcb *kcp, IUINT32 sn, IUINT32 ts)
+{
+	struct IQUEUEHEAD *p, *next;
+
+	if (_itimediff(sn, kcp->snd_una) < 0 || _itimediff(sn, kcp->snd_nxt) >= 0)
+		return;
+
+	for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = next) {
+		IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
+		next = p->next;
+		if (_itimediff(sn, seg->sn) < 0) {
+			break;
+		}
+		else if (sn != seg->sn) {
+		#ifndef IKCP_FASTACK_CONSERVE
+			seg->fastack++;
+		#else
+			if (_itimediff(ts, seg->ts) >= 0)
+				seg->fastack++;
+		#endif
+		}
+	}
+}
+
+
+//---------------------------------------------------------------------
+// ack append
+//---------------------------------------------------------------------
+static void ikcp_ack_push(ikcpcb *kcp, IUINT32 sn, IUINT32 ts)
+{
+	IUINT32 newsize = kcp->ackcount + 1;
+	IUINT32 *ptr;
+
+	if (newsize > kcp->ackblock) {
+		IUINT32 *acklist;
+		IUINT32 newblock;
+
+		for (newblock = 8; newblock < newsize; newblock <<= 1);
+		acklist = (IUINT32*)ikcp_malloc(newblock * sizeof(IUINT32) * 2);
+
+		if (acklist == NULL) {
+			assert(acklist != NULL);
+			abort();
+		}
+
+		if (kcp->acklist != NULL) {
+			IUINT32 x;
+			for (x = 0; x < kcp->ackcount; x++) {
+				acklist[x * 2 + 0] = kcp->acklist[x * 2 + 0];
+				acklist[x * 2 + 1] = kcp->acklist[x * 2 + 1];
+			}
+			ikcp_free(kcp->acklist);
+		}
+
+		kcp->acklist = acklist;
+		kcp->ackblock = newblock;
+	}
+
+	ptr = &kcp->acklist[kcp->ackcount * 2];
+	ptr[0] = sn;
+	ptr[1] = ts;
+	kcp->ackcount++;
+}
+
+static void ikcp_ack_get(const ikcpcb *kcp, int p, IUINT32 *sn, IUINT32 *ts)
+{
+	if (sn) sn[0] = kcp->acklist[p * 2 + 0];
+	if (ts) ts[0] = kcp->acklist[p * 2 + 1];
+}
+
+
+//---------------------------------------------------------------------
+// parse data
+//---------------------------------------------------------------------
+void ikcp_parse_data(ikcpcb *kcp, IKCPSEG *newseg)
+{
+	struct IQUEUEHEAD *p, *prev;
+	IUINT32 sn = newseg->sn;
+	int repeat = 0;
+	
+	if (_itimediff(sn, kcp->rcv_nxt + kcp->rcv_wnd) >= 0 ||
+		_itimediff(sn, kcp->rcv_nxt) < 0) {
+		ikcp_segment_delete(kcp, newseg);
+		return;
+	}
+
+	for (p = kcp->rcv_buf.prev; p != &kcp->rcv_buf; p = prev) {
+		IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
+		prev = p->prev;
+		if (seg->sn == sn) {
+			repeat = 1;
+			break;
+		}
+		if (_itimediff(sn, seg->sn) > 0) {
+			break;
+		}
+	}
+
+	if (repeat == 0) {
+		iqueue_init(&newseg->node);
+		iqueue_add(&newseg->node, p);
+		kcp->nrcv_buf++;
+	}	else {
+		ikcp_segment_delete(kcp, newseg);
+	}
+
+#if 0
+	ikcp_qprint("rcvbuf", &kcp->rcv_buf);
+	printf("rcv_nxt=%lu\n", kcp->rcv_nxt);
+#endif
+
+	// move available data from rcv_buf -> rcv_queue
+	while (! iqueue_is_empty(&kcp->rcv_buf)) {
+		IKCPSEG *seg = iqueue_entry(kcp->rcv_buf.next, IKCPSEG, node);
+		if (seg->sn == kcp->rcv_nxt && kcp->nrcv_que < kcp->rcv_wnd) {
+			iqueue_del(&seg->node);
+			kcp->nrcv_buf--;
+			iqueue_add_tail(&seg->node, &kcp->rcv_queue);
+			kcp->nrcv_que++;
+			kcp->rcv_nxt++;
+		}	else {
+			break;
+		}
+	}
+
+#if 0
+	ikcp_qprint("queue", &kcp->rcv_queue);
+	printf("rcv_nxt=%lu\n", kcp->rcv_nxt);
+#endif
+
+#if 1
+//	printf("snd(buf=%d, queue=%d)\n", kcp->nsnd_buf, kcp->nsnd_que);
+//	printf("rcv(buf=%d, queue=%d)\n", kcp->nrcv_buf, kcp->nrcv_que);
+#endif
+}
+
+
+//---------------------------------------------------------------------
+// input data
+//---------------------------------------------------------------------
+int ikcp_input(ikcpcb *kcp, const char *data, long size)
+{
+	IUINT32 prev_una = kcp->snd_una;
+	IUINT32 prev_nsnd_buf = kcp->nsnd_buf;
+	IUINT32 acked_segs, prior_in_flight;
+	IUINT32 maxack = 0, latest_ts = 0;
+	int flag = 0;
+
+	kcp->ackedlen = 0;
+
+	if (ikcp_canlog(kcp, IKCP_LOG_INPUT)) {
+		ikcp_log(kcp, IKCP_LOG_INPUT, "[RI] %d bytes", (int)size);
+	}
+
+	if (data == NULL || (int)size < (int)IKCP_OVERHEAD) return -1;
+
+	while (1) {
+		IUINT32 ts, sn, len, una, conv;
+		IUINT32 wnd;
+		IUINT32 cmd, frg;
+		IKCPSEG *seg;
+
+		if (size < (int)IKCP_OVERHEAD) break;
+
+		data = ikcp_decode32u(data, &conv);
+		if (conv != kcp->conv) return -1;
+
+		data = ikcp_decode32u(data, &cmd);
+		data = ikcp_decode32u(data, &frg);
+		data = ikcp_decode32u(data, &wnd);
+		data = ikcp_decode32u(data, &ts);
+		data = ikcp_decode32u(data, &sn);
+		data = ikcp_decode32u(data, &una);
+		data = ikcp_decode32u(data, &len);
+
+		size -= IKCP_OVERHEAD;
+
+		if ((long)size < (long)len || (int)len < 0) return -2;
+
+		if (cmd != IKCP_CMD_PUSH && cmd != IKCP_CMD_ACK &&
+			cmd != IKCP_CMD_WASK && cmd != IKCP_CMD_WINS) 
+			return -3;
+
+		kcp->rmt_wnd = wnd;
+		ikcp_parse_una(kcp, una);
+		ikcp_shrink_buf(kcp);
+
+		if (cmd == IKCP_CMD_ACK) {
+			if (_itimediff(kcp->current, ts) >= 0) {
+				ikcp_update_ack(kcp, _itimediff(kcp->current, ts));
+			}
+			ikcp_parse_ack(kcp, sn);
+			ikcp_shrink_buf(kcp);
+			if (flag == 0) {
+				flag = 1;
+				maxack = sn;
+				latest_ts = ts;
+			}	else {
+				if (_itimediff(sn, maxack) > 0) {
+				#ifndef IKCP_FASTACK_CONSERVE
+					maxack = sn;
+					latest_ts = ts;
+				#else
+					if (_itimediff(ts, latest_ts) > 0) {
+						maxack = sn;
+						latest_ts = ts;
+					}
+				#endif
+				}
+			}
+			if (ikcp_canlog(kcp, IKCP_LOG_IN_ACK)) {
+				ikcp_log(kcp, IKCP_LOG_IN_ACK, 
+					"input ack: sn=%lu rtt=%ld rto=%ld", (unsigned long)sn, 
+					(long)_itimediff(kcp->current, ts),
+					(long)kcp->rx_rto);
+			}
+		}
+		else if (cmd == IKCP_CMD_PUSH) {
+			if (ikcp_canlog(kcp, IKCP_LOG_IN_DATA)) {
+				ikcp_log(kcp, IKCP_LOG_IN_DATA, 
+					"input psh: sn=%lu ts=%lu", (unsigned long)sn, (unsigned long)ts);
+			}
+			if (_itimediff(sn, kcp->rcv_nxt + kcp->rcv_wnd) < 0) {
+				ikcp_ack_push(kcp, sn, ts);
+				if (_itimediff(sn, kcp->rcv_nxt) >= 0) {
+					seg = ikcp_segment_new(kcp, len);
+					seg->conv = conv;
+					seg->cmd = cmd;
+					seg->frg = frg;
+					seg->wnd = wnd;
+					seg->ts = ts;
+					seg->sn = sn;
+					seg->una = una;
+					seg->len = len;
+
+					if (len > 0) {
+						memcpy(seg->data, data, len);
+					}
+
+					ikcp_parse_data(kcp, seg);
+				}
+			}
+		}
+		else if (cmd == IKCP_CMD_WASK) {
+			// ready to send back IKCP_CMD_WINS in ikcp_flush
+			// tell remote my window size
+			kcp->probe |= IKCP_ASK_TELL;
+			if (ikcp_canlog(kcp, IKCP_LOG_IN_PROBE)) {
+				ikcp_log(kcp, IKCP_LOG_IN_PROBE, "input probe");
+			}
+		}
+		else if (cmd == IKCP_CMD_WINS) {
+			// do nothing
+			if (ikcp_canlog(kcp, IKCP_LOG_IN_WINS)) {
+				ikcp_log(kcp, IKCP_LOG_IN_WINS,
+					"input wins: %lu", (unsigned long)(wnd));
+			}
+		}
+		else {
+			return -3;
+		}
+
+		data += len;
+		size -= len;
+	}
+
+	if (flag != 0) {
+		ikcp_parse_fastack(kcp, maxack, latest_ts);
+	}
+
+	if (_itimediff(kcp->snd_una, prev_una) > 0) {
+		acked_segs = kcp->snd_una - prev_una;
+		prior_in_flight = prev_nsnd_buf;
+		if (kcp->ccops && kcp->ccops->on_ack) {
+			kcp->ccops->on_ack(kcp, acked_segs, kcp->ackedlen, 
+					prior_in_flight);
+		}
+		else {
+			if (kcp->cwnd < kcp->rmt_wnd) {
+				IUINT32 mss = kcp->mss;
+				if (kcp->cwnd < kcp->ssthresh) {
+					kcp->cwnd++;
+					kcp->incr += mss;
+				}	else {
+					if (kcp->incr < mss) kcp->incr = mss;
+					kcp->incr += (mss * mss) / kcp->incr + (mss / 16);
+					if ((kcp->cwnd + 1) * mss <= kcp->incr) {
+					#if 1
+						kcp->cwnd = (kcp->incr + mss - 1) / ((mss > 0)? mss : 1);
+					#else
+						kcp->cwnd++;
+					#endif
+					}
+				}
+				if (kcp->cwnd > kcp->rmt_wnd) {
+					kcp->cwnd = kcp->rmt_wnd;
+					kcp->incr = kcp->rmt_wnd * mss;
+				}
+			}
+		}
+	}
+
+	return 0;
+}
+
+
+//---------------------------------------------------------------------
+// ikcp_encode_seg
+//---------------------------------------------------------------------
+static char *ikcp_encode_seg(char *ptr, const IKCPSEG *seg)
+{
+	ptr = ikcp_encode32u(ptr, seg->conv);
+	ptr = ikcp_encode32u(ptr, (IUINT32)seg->cmd);
+	ptr = ikcp_encode32u(ptr, (IUINT32)seg->frg);
+	ptr = ikcp_encode32u(ptr, (IUINT32)seg->wnd);
+	ptr = ikcp_encode32u(ptr, seg->ts);
+	ptr = ikcp_encode32u(ptr, seg->sn);
+	ptr = ikcp_encode32u(ptr, seg->una);
+	ptr = ikcp_encode32u(ptr, seg->len);
+	return ptr;
+}
+
+static int ikcp_wnd_unused(const ikcpcb *kcp)
+{
+	if (kcp->nrcv_que < kcp->rcv_wnd) {
+		return kcp->rcv_wnd - kcp->nrcv_que;
+	}
+	return 0;
+}
+
+
+//---------------------------------------------------------------------
+// ikcp_flush
+//---------------------------------------------------------------------
+void ikcp_flush(ikcpcb *kcp)
+{
+	IUINT32 current = kcp->current;
+	char *buffer = kcp->buffer;
+	char *ptr = buffer;
+	int count, size, i;
+	IUINT32 resent, cwnd;
+	IUINT32 rtomin;
+	IUINT32 prior_cwnd;
+	IUINT32 eff_cwnd, cur_inflight;
+	IINT32 pacing_budget = -1;
+	struct IQUEUEHEAD *p;
+	int change = 0;
+	int lost = 0;
+	IKCPSEG seg;
+
+	// 'ikcp_update' hasn't been called yet. 
+	if (kcp->updated == 0) return;
+
+	if (kcp->ccops && kcp->ccops->on_tick) {
+		kcp->ccops->on_tick(kcp);
+	}
+
+	if (kcp->ccops && kcp->ccops->pacing_rate) {
+		pacing_budget = (IINT32)kcp->ccops->pacing_rate(kcp);
+	}
+
+	prior_cwnd = kcp->cwnd;
+
+	seg.conv = kcp->conv;
+	seg.cmd = IKCP_CMD_ACK;
+	seg.frg = 0;
+	seg.wnd = ikcp_wnd_unused(kcp);
+	seg.una = kcp->rcv_nxt;
+	seg.len = 0;
+	seg.sn = 0;
+	seg.ts = 0;
+
+	// flush acknowledges
+	count = kcp->ackcount;
+	for (i = 0; i < count; i++) {
+		size = (int)(ptr - buffer);
+		if (size + (int)IKCP_OVERHEAD > (int)kcp->mtu) {
+			ikcp_output(kcp, buffer, size);
+			ptr = buffer;
+		}
+		ikcp_ack_get(kcp, i, &seg.sn, &seg.ts);
+		ptr = ikcp_encode_seg(ptr, &seg);
+	}
+
+	kcp->ackcount = 0;
+
+	// probe window size (if remote window size equals zero)
+	if (kcp->rmt_wnd == 0) {
+		if (kcp->probe_wait == 0) {
+			kcp->probe_wait = IKCP_PROBE_INIT;
+			kcp->ts_probe = kcp->current + kcp->probe_wait;
+		}	
+		else {
+			if (_itimediff(kcp->current, kcp->ts_probe) >= 0) {
+				if (kcp->probe_wait < IKCP_PROBE_INIT) 
+					kcp->probe_wait = IKCP_PROBE_INIT;
+				kcp->probe_wait += kcp->probe_wait / 2;
+				if (kcp->probe_wait > IKCP_PROBE_LIMIT)
+					kcp->probe_wait = IKCP_PROBE_LIMIT;
+				kcp->ts_probe = kcp->current + kcp->probe_wait;
+				kcp->probe |= IKCP_ASK_SEND;
+			}
+		}
+	}	else {
+		kcp->ts_probe = 0;
+		kcp->probe_wait = 0;
+	}
+
+	// flush window probing commands
+	if (kcp->probe & IKCP_ASK_SEND) {
+		seg.cmd = IKCP_CMD_WASK;
+		size = (int)(ptr - buffer);
+		if (size + (int)IKCP_OVERHEAD > (int)kcp->mtu) {
+			ikcp_output(kcp, buffer, size);
+			ptr = buffer;
+		}
+		ptr = ikcp_encode_seg(ptr, &seg);
+	}
+
+	// flush window probing commands
+	if (kcp->probe & IKCP_ASK_TELL) {
+		seg.cmd = IKCP_CMD_WINS;
+		size = (int)(ptr - buffer);
+		if (size + (int)IKCP_OVERHEAD > (int)kcp->mtu) {
+			ikcp_output(kcp, buffer, size);
+			ptr = buffer;
+		}
+		ptr = ikcp_encode_seg(ptr, &seg);
+	}
+
+	kcp->probe = 0;
+
+	// calculate window size
+	cwnd = _imin_(kcp->snd_wnd, kcp->rmt_wnd);
+	if (kcp->ccops != NULL || kcp->nocwnd == 0) cwnd = _imin_(kcp->cwnd, cwnd);
+
+	// move data from snd_queue to snd_buf
+	while (_itimediff(kcp->snd_nxt, kcp->snd_una + cwnd) < 0) {
+		IKCPSEG *newseg;
+		if (iqueue_is_empty(&kcp->snd_queue)) break;
+
+		newseg = iqueue_entry(kcp->snd_queue.next, IKCPSEG, node);
+
+		iqueue_del(&newseg->node);
+		iqueue_add_tail(&newseg->node, &kcp->snd_buf);
+		kcp->nsnd_que--;
+		kcp->nsnd_buf++;
+
+		newseg->conv = kcp->conv;
+		newseg->cmd = IKCP_CMD_PUSH;
+		newseg->wnd = seg.wnd;
+		newseg->ts = current;
+		newseg->sn = kcp->snd_nxt++;
+		newseg->una = kcp->rcv_nxt;
+		newseg->resendts = current;
+		newseg->rto = kcp->rx_rto;
+		newseg->fastack = 0;
+		newseg->xmit = 0;
+	}
+
+	// check on_app_limited
+	if (kcp->ccops && kcp->ccops->on_app_limited) {
+		if (iqueue_is_empty(&kcp->snd_queue)) {
+			eff_cwnd = _imin_(kcp->snd_wnd, kcp->rmt_wnd);
+			eff_cwnd = _imin_(kcp->cwnd, eff_cwnd);
+			cur_inflight = kcp->nsnd_buf;
+			if (cur_inflight < eff_cwnd) {
+				kcp->ccops->on_app_limited(kcp, cur_inflight);
+			}
+		}
+	}
+
+	// calculate resent
+	resent = (kcp->fastresend > 0)? (IUINT32)kcp->fastresend : 0xffffffff;
+	rtomin = (kcp->nodelay == 0)? (kcp->rx_rto >> 3) : 0;
+
+	// flush data segments
+	for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = p->next) {
+		IKCPSEG *segment = iqueue_entry(p, IKCPSEG, node);
+		int needsend = 0;
+		if (segment->xmit == 0) {
+			needsend = 1;
+			segment->xmit++;
+			segment->rto = kcp->rx_rto;
+			segment->resendts = current + segment->rto + rtomin;
+		}
+		else if (_itimediff(current, segment->resendts) >= 0) {
+			needsend = 1;
+			segment->xmit++;
+			kcp->xmit++;
+			if (kcp->nodelay == 0) {
+				segment->rto += _imax_(segment->rto, (IUINT32)kcp->rx_rto);
+			}	else {
+				IINT32 step = (kcp->nodelay < 2)? 
+					((IINT32)(segment->rto)) : kcp->rx_rto;
+				segment->rto += step / 2;
+			}
+			segment->resendts = current + segment->rto;
+			lost = 1;
+		}
+		else if (segment->fastack >= resent) {
+			if ((int)segment->xmit <= kcp->fastlimit || 
+				kcp->fastlimit <= 0) {
+				needsend = 1;
+				segment->xmit++;
+				segment->fastack = 0;
+				segment->resendts = current + segment->rto;
+				change++;
+			}
+		}
+
+		if (needsend) {
+			int need;
+			segment->ts = current;
+			segment->wnd = seg.wnd;
+			segment->una = kcp->rcv_nxt;
+
+			if (pacing_budget >= 0 && pacing_budget < (IINT32)segment->len) {
+				break;
+			}
+
+			if (kcp->ccops && kcp->ccops->on_pkt_sent) {
+				kcp->ccops->on_pkt_sent(kcp, segment->sn, current,
+						segment->len, kcp->nsnd_buf, segment->xmit);
+			}
+
+			size = (int)(ptr - buffer);
+			need = IKCP_OVERHEAD + segment->len;
+
+			if (size + need > (int)kcp->mtu) {
+				ikcp_output(kcp, buffer, size);
+				ptr = buffer;
+			}
+
+			ptr = ikcp_encode_seg(ptr, segment);
+
+			if (segment->len > 0) {
+				memcpy(ptr, segment->data, segment->len);
+				ptr += segment->len;
+			}
+
+			if (pacing_budget >= 0) {
+				pacing_budget -= (IINT32)segment->len;
+			}
+
+			if (segment->xmit >= kcp->dead_link) {
+				kcp->state = (IUINT32)-1;
+			}
+		}
+	}
+
+	// flash remaining segments
+	size = (int)(ptr - buffer);
+	if (size > 0) {
+		ikcp_output(kcp, buffer, size);
+	}
+
+	// update ssthresh
+	if (change) {
+		if (kcp->ccops && kcp->ccops->on_fast_retransmit) {
+			kcp->ccops->on_fast_retransmit(kcp, (IUINT32)change, 
+					kcp->nsnd_buf, prior_cwnd);
+		}
+		else {
+			IUINT32 inflight = kcp->snd_nxt - kcp->snd_una;
+			kcp->ssthresh = inflight / 2;
+			if (kcp->ssthresh < IKCP_THRESH_MIN)
+				kcp->ssthresh = IKCP_THRESH_MIN;
+			kcp->cwnd = kcp->ssthresh + resent;
+			kcp->incr = kcp->cwnd * kcp->mss;
+		}
+	}
+
+	if (lost) {
+		if (kcp->ccops && kcp->ccops->on_timeout) {
+			kcp->ccops->on_timeout(kcp, prior_cwnd);
+		}
+		else {
+			kcp->ssthresh = prior_cwnd / 2;
+			if (kcp->ssthresh < IKCP_THRESH_MIN)
+				kcp->ssthresh = IKCP_THRESH_MIN;
+			kcp->cwnd = 1;
+			kcp->incr = kcp->mss;
+		}
+	}
+
+	if (kcp->cwnd < 1) {
+		kcp->cwnd = 1;
+		kcp->incr = kcp->mss;
+	}
+}
+
+
+//---------------------------------------------------------------------
+// update state (call it repeatedly, every 10ms-100ms), or you can ask
+// ikcp_check when to call it again (if no ikcp_input/_send calls occur).
+// 'current' - current timestamp in milliseconds.
+//---------------------------------------------------------------------
+void ikcp_update(ikcpcb *kcp, IUINT32 current)
+{
+	IINT32 slap;
+
+	kcp->current = current;
+
+	if (kcp->updated == 0) {
+		kcp->updated = 1;
+		kcp->ts_flush = kcp->current;
+	}
+
+	slap = _itimediff(kcp->current, kcp->ts_flush);
+
+	if (slap >= 10000 || slap < -10000) {
+		kcp->ts_flush = kcp->current;
+		slap = 0;
+	}
+
+	if (slap >= 0) {
+		kcp->ts_flush += kcp->interval;
+		if (_itimediff(kcp->current, kcp->ts_flush) >= 0) {
+			kcp->ts_flush = kcp->current + kcp->interval;
+		}
+		ikcp_flush(kcp);
+	}
+}
+
+
+//---------------------------------------------------------------------
+// Determines when you should invoke ikcp_update next:
+// returns the timestamp (in milliseconds) at which you should call
+// ikcp_update, assuming no ikcp_input/_send calls occur in between.
+// You can call ikcp_update at that time instead of calling it repeatedly.
+// Important for reducing unnecessary ikcp_update invocations. Use it to
+// schedule ikcp_update (e.g., implementing an epoll-like mechanism,
+// or optimizing ikcp_update when handling massive kcp connections).
+//---------------------------------------------------------------------
+IUINT32 ikcp_check(const ikcpcb *kcp, IUINT32 current)
+{
+	IUINT32 ts_flush = kcp->ts_flush;
+	IINT32 tm_flush = 0x7fffffff;
+	IINT32 tm_packet = 0x7fffffff;
+	IUINT32 minimal = 0;
+	struct IQUEUEHEAD *p;
+
+	if (kcp->updated == 0) {
+		return current;
+	}
+
+	if (_itimediff(current, ts_flush) >= 10000 ||
+		_itimediff(current, ts_flush) < -10000) {
+		ts_flush = current;
+	}
+
+	if (_itimediff(current, ts_flush) >= 0) {
+		return current;
+	}
+
+	tm_flush = _itimediff(ts_flush, current);
+
+	for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = p->next) {
+		const IKCPSEG *seg = iqueue_entry(p, const IKCPSEG, node);
+		IINT32 diff = _itimediff(seg->resendts, current);
+		if (diff <= 0) {
+			return current;
+		}
+		if (diff < tm_packet) tm_packet = diff;
+	}
+
+	minimal = (IUINT32)(tm_packet < tm_flush ? tm_packet : tm_flush);
+	if (minimal >= kcp->interval) minimal = kcp->interval;
+
+	return current + minimal;
+}
+
+
+
+int ikcp_setmtu(ikcpcb *kcp, int mtu)
+{
+	char *buffer;
+	if (mtu < 50 || mtu < (int)IKCP_OVERHEAD) 
+		return -1;
+	buffer = (char*)ikcp_malloc((mtu + IKCP_OVERHEAD) * 3);
+	if (buffer == NULL) 
+		return -2;
+	kcp->mtu = mtu;
+	kcp->mss = kcp->mtu - IKCP_OVERHEAD;
+	ikcp_free(kcp->buffer);
+	kcp->buffer = buffer;
+	return 0;
+}
+
+int ikcp_interval(ikcpcb *kcp, int interval)
+{
+	if (interval > 5000) interval = 5000;
+	else if (interval < 10) interval = 10;
+	kcp->interval = interval;
+	return 0;
+}
+
+int ikcp_nodelay(ikcpcb *kcp, int nodelay, int interval, int resend, int nc)
+{
+	if (nodelay >= 0) {
+		kcp->nodelay = nodelay;
+		if (nodelay) {
+			kcp->rx_minrto = IKCP_RTO_NDL;	
+		}	
+		else {
+			kcp->rx_minrto = IKCP_RTO_MIN;
+		}
+	}
+	if (interval >= 0) {
+		if (interval > 5000) interval = 5000;
+		else if (interval < 10) interval = 10;
+		kcp->interval = interval;
+	}
+	if (resend >= 0) {
+		kcp->fastresend = resend;
+	}
+	if (nc >= 0) {
+		kcp->nocwnd = nc;
+	}
+	return 0;
+}
+
+
+int ikcp_wndsize(ikcpcb *kcp, int sndwnd, int rcvwnd)
+{
+	if (kcp) {
+		if (sndwnd > 0) {
+			kcp->snd_wnd = sndwnd;
+		}
+		if (rcvwnd > 0) {   // must >= max fragment size
+			kcp->rcv_wnd = _imax_(rcvwnd, IKCP_WND_RCV);
+		}
+	}
+	return 0;
+}
+
+int ikcp_waitsnd(const ikcpcb *kcp)
+{
+	return kcp->nsnd_buf + kcp->nsnd_que;
+}
+
+
+// read conv
+IUINT32 ikcp_getconv(const void *ptr)
+{
+	IUINT32 conv;
+	ikcp_decode32u((const char*)ptr, &conv);
+	return conv;
+}
+
+
+//---------------------------------------------------------------------
+// install congestion control
+//---------------------------------------------------------------------
+int ikcp_setcc(ikcpcb *kcp, const struct IKCPOPS *ops)
+{
+	assert(kcp);
+	if (kcp->ccops && kcp->ccops->release) {
+		kcp->ccops->release(kcp);
+	}
+	kcp->congest = NULL;
+	kcp->ccops = ops;
+	if (ops) {
+		if (ops->init) {
+			if (ops->init(kcp) < 0) {
+				kcp->ccops = NULL;
+				kcp->congest = NULL;
+				if (kcp->cwnd < 1) kcp->cwnd = 1;
+				kcp->incr = kcp->cwnd * kcp->mss;
+				return -1;
+			}
+		}
+	}
+	else {
+		if (kcp->cwnd < 1) kcp->cwnd = 1;
+		kcp->incr = kcp->cwnd * kcp->mss;
+		if (kcp->incr < kcp->mss) kcp->incr = kcp->mss;
+	}
+	return 0;
+}
+
+
+
+
+--- END OF FILE: src/rpc_client/ikcp.c ---
+
+--- START FILE PATH: src/rpc_client/vfs_client.cpp ---
+#include "bridge/client_bridge.h"
+#include "rpc_client/vfs_client.h"
+#include "rpc_client/crypto_box.h"
+#include "rpc_client/vfs_packet.h"
+#include <iostream>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
+#include <cstring>
+
+using asio::ip::udp;
+
+extern "C" void zhiauth_swift_on_response(uint32_t reqId, const uint8_t* payload, uint32_t len);
+extern "C" void zhiauth_swift_log(const char* msg);
+
+static void logToSwift(const std::string& msg) {
+    zhiauth_swift_log(msg.c_str());
+}
+
+static std::string getRealtimeLog() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    auto duration = now.time_since_epoch();
+    auto micros = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() % 1000000;
+    std::tm bt{}; localtime_r(&time_t_now, &bt);
+    std::ostringstream oss;
+    oss << std::put_time(&bt, "%H:%M:%S") << "." << std::setfill('0') << std::setw(6) << micros;
+    return oss.str();
+}
+
+VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
+                     int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd)
+    : socket_(io_context_, udp::endpoint(udp::v4(), 0)), is_running_(false), 
+      recv_buffer_(65536), kcp_cb_(nullptr), sym_key_(sym_key), mtu_(mtu),
+      nodelay_(nodelay), interval_(interval), resend_(resend), nc_(nc), snd_wnd_(snd_wnd), rcv_wnd_(rcv_wnd)
+{
+    asio::ip::udp::resolver resolver(io_context_);
+    server_endpoint_ = *resolver.resolve(udp::v4(), server_ip, std::to_string(port)).begin();
+    try {
+        socket_.set_option(asio::socket_base::receive_buffer_size(16777216));
+        socket_.set_option(asio::socket_base::send_buffer_size(16777216));
+    } catch(...) {}
+}
+
+VfsClient::~VfsClient() { stop(); }
+
+bool VfsClient::start() {
+    if (is_running_) return true;
+    is_running_ = true;
+    
+    std::error_code ec;
+    socket_.connect(server_endpoint_, ec);
+    if (ec) {
+        logToSwift("[" + getRealtimeLog() + "] ❌ [SYS-ERR] LỖI BIND SOCKET UDP: " + ec.message());
+    } else {
+        logToSwift("[" + getRealtimeLog() + "] 🟢 [SYS-NET] Mở Socket UDP trói IP: " + server_endpoint_.address().to_string() + ":" + std::to_string(server_endpoint_.port()));
+    }
+
+    kcp_cb_ = ikcp_create(0x11223344, this);
+    kcp_cb_->output = kcp_output_callback;
+    
+    ikcp_nodelay(kcp_cb_, nodelay_, interval_, resend_, nc_);
+    int safe_mtu = (mtu_ > 100) ? (mtu_ - 56) : 1200; 
+    ikcp_wndsize(kcp_cb_, snd_wnd_, rcv_wnd_); 
+    kcp_cb_->stream = 0; ikcp_setmtu(kcp_cb_, safe_mtu); kcp_cb_->rx_minrto = 10;
+
+    io_thread_ = std::thread([this]() { auto work = asio::make_work_guard(io_context_); receive_loop(); io_context_.run(); });
+    timer_thread_ = std::thread(&VfsClient::kcp_update_loop, this);
+    return true;
+}
+
+void VfsClient::stop() {
+    if (!is_running_) return;
+    is_running_ = false; socket_.close();
+    if (io_thread_.joinable()) io_thread_.join();
+    if (timer_thread_.joinable()) timer_thread_.join();
+    if (kcp_cb_) { ikcp_release(kcp_cb_); kcp_cb_ = nullptr; }
+}
+
+int VfsClient::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user) {
+    VfsClient* client = static_cast<VfsClient*>(user);
+    std::error_code ec;
+    size_t sent = client->socket_.send(asio::buffer(buf, len), 0, ec);
+    if (ec) {
+        logToSwift("[" + getRealtimeLog() + "] ❌ [TX-ERR] Gửi UDP THẤT BẠI: " + ec.message());
+    } else {
+        logToSwift("[" + getRealtimeLog() + "] 📤 [TX-UDP] Bắn gói KCP ra mạng: " + std::to_string(sent) + " Bytes");
+    }
+    return 0;
+}
+
+void VfsClient::receive_loop() {
+    socket_.async_receive(asio::buffer(recv_buffer_), 
+        [this](std::error_code ec, std::size_t bytes_recvd) {
+            if (!is_running_) return;
+            if (ec) {
+                if (ec != asio::error::would_block && ec != asio::error::try_again && ec != asio::error::operation_aborted) {
+                    logToSwift("[" + getRealtimeLog() + "] ❌ [RX-ERR] Lỗi Socket UDP: " + ec.message());
+                }
+            } else if (bytes_recvd > 0) {
+                std::lock_guard<std::mutex> lock(kcp_mutex_);
+                ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), static_cast<long>(bytes_recvd));
+                int len;
+                while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
+                    std::vector<uint8_t> encrypted_payload(len);
+                    ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
+                    std::vector<uint8_t> plaintext;
+                    if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
+                        if (plaintext.size() >= sizeof(VfsPacketHeader)) {
+                            VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
+                            uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
+                            zhiauth_swift_on_response(req_id, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
+                        }
+                    }
+                }
+            }
+            if (is_running_) receive_loop();
+        });
+}
+
+void VfsClient::kcp_update_loop() {
+    while (is_running_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        uint32_t current_clock = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+        std::lock_guard<std::mutex> lock(kcp_mutex_);
+        if (kcp_cb_) ikcp_update(kcp_cb_, current_clock);
+    }
+}
+
+void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
+    if (request_payload.size() < sizeof(VfsPacketHeader)) return;
+    VfsPacketHeader* hdr = (VfsPacketHeader*)request_payload.data();
+    uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
+    
+    std::ostringstream oss;
+    oss << "[" << getRealtimeLog() << "] 📦 [TX-KCP] GÓI LỆNH RPC | Opcode: 0x" << std::hex << (int)hdr->opcode << std::dec 
+        << " | ReqID: " << req_id << " | PathLen: " << hdr->path_len << " | DataLen: " << hdr->data_len << " | Tổng: " << request_payload.size() << "B";
+    logToSwift(oss.str());
+
+    std::vector<uint8_t> encrypted_payload;
+    if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) {
+        logToSwift("[" + getRealtimeLog() + "] ❌ [TX-ERR] Ép giáp Libsodium thất bại!");
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(kcp_mutex_);
+        ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), static_cast<int>(encrypted_payload.size()));
+        ikcp_flush(kcp_cb_);
+        logToSwift("[" + getRealtimeLog() + "] 🛡️ [TX-KCP] Bơm " + std::to_string(encrypted_payload.size()) + "B vô nòng KCP");
+    }
+}
+
+extern "C" {
+    void* zhiauth_create_vfs_client(const char* ip, int port, const char* sym_key, int mtu,
+                                    int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
+        return new VfsClient(ip, port, sym_key, mtu, nodelay, interval, resend, nc, snd_wnd, rcv_wnd);
+    }
+
+    bool zhiauth_start_vfs_client(void* client) {
+        if (!client) return false;
+        return static_cast<VfsClient*>(client)->start();
+    }
+
+    void zhiauth_stop_vfs_client(void* client) {
+        if (client) static_cast<VfsClient*>(client)->stop();
+    }
+
+    void zhiauth_destroy_vfs_client(void* client) {
+        if (client) delete static_cast<VfsClient*>(client);
+    }
+
+    void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
+                              uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len) {
+        if (!client) return;
+        uint16_t path_length = path ? static_cast<uint16_t>(strlen(path)) : 0;
+        std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + path_length + payload_len, 0);
+        VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
+        
+        hdr->magic = 0x5A484941;
+        hdr->opcode = static_cast<VfsOpcode>(opcode);
+        hdr->session_id = req_id;
+        hdr->offset = offset;
+        hdr->data_len = (req_len > 0) ? req_len : payload_len; 
+        hdr->path_len = path_length;
+        
+        uint8_t* ptr = req_data.data() + sizeof(VfsPacketHeader);
+        if (path_length > 0) {
+            memcpy(ptr, path, path_length);
+            ptr += path_length;
+        }
+        if (payload && payload_len > 0) {
+            memcpy(ptr, payload, payload_len);
+        }
+        
+        static_cast<VfsClient*>(client)->send_rpc_async(req_data);
+    }
+}
+
+--- END OF FILE: src/rpc_client/vfs_client.cpp ---
+
+--- START FILE PATH: src/rpc_client/vfs_client.h ---
+#ifndef ZHIAUTH_VFS_CLIENT_H
+#define ZHIAUTH_VFS_CLIENT_H
+#include <asio.hpp>
+#include <thread>
+#include <mutex>
+#include <vector>
+#include <string>
+#include <condition_variable>
+#include <unordered_map>
+#include <memory>
+#include "rpc_client/ikcp.h"
+
+struct RpcContext {
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::vector<uint8_t> response;
+    bool done = false;
+};
+
+class VfsClient {
+public:
+    VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
+              int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
+    ~VfsClient();
+    bool start();
+    void stop();
+    void send_rpc_async(const std::vector<uint8_t>& request_payload);
+    static int kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* user);
+private:
+    void receive_loop();
+    void kcp_update_loop();
+    void kcp_adaptive_tuner_loop();
+    asio::io_context io_context_;
+    asio::ip::udp::socket socket_;
+    asio::ip::udp::endpoint server_endpoint_;
+    std::vector<uint8_t> recv_buffer_;
+    std::thread io_thread_;
+    std::thread timer_thread_;
+    std::thread tuner_thread_;
+    std::atomic<bool> is_running_;
+    ikcpcb* kcp_cb_;
+    std::mutex kcp_mutex_;
+    std::string sym_key_;
+    int mtu_; 
+    int nodelay_, interval_, resend_, nc_, snd_wnd_, rcv_wnd_;
+
+    std::unordered_map<uint64_t, std::shared_ptr<RpcContext>> rpc_map_;
+    std::mutex rpc_map_mutex_;
+};
+#endif
+
+--- END OF FILE: src/rpc_client/vfs_client.h ---
+
+--- START FILE PATH: src/bridge/client_bridge.cpp ---
+#include "bridge/client_bridge.h"
+#include "rpc_client/crypto_box.h"
+#include "rpc_client/vfs_client.h"
+
+static VfsClient* g_vfs_client = nullptr;
+
+extern "C" {
+int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, int mtu,
+                        int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
+    if (!CryptoBox::initialize()) return -1;
+    if (g_vfs_client != nullptr) delete g_vfs_client;
+    
+    g_vfs_client = new VfsClient(server_ip, port, sym_key, mtu, nodelay, interval, resend, nc, snd_wnd, rcv_wnd);
+    g_vfs_client->start();
+    return 0;
+}
+
+void zhiauth_send_vfs_command_async(const uint8_t* payload, size_t payload_len) {
+    if (g_vfs_client) {
+        std::vector<uint8_t> req(payload, payload + payload_len);
+        g_vfs_client->send_rpc_async(req); // Đổi thành Async!
+    }
+}
+
+void zhiauth_client_shutdown() {
+    if (g_vfs_client) { g_vfs_client->stop(); delete g_vfs_client; g_vfs_client = nullptr; }
+}
+}
+
+--- END OF FILE: src/bridge/client_bridge.cpp ---
+
+--- START FILE PATH: src/bridge/client_bridge.h ---
+#ifndef CLIENT_BRIDGE_H
+#define CLIENT_BRIDGE_H
+#include <stdint.h>
+#include <stddef.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, int mtu,
+                        int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
+// Gọi cái này là trả lời qua hàm callback, siêu mượt!
+void zhiauth_send_vfs_command_async(const uint8_t* payload, size_t payload_len);
+void zhiauth_client_shutdown();
+
+// Khai báo hàm Go để gọi ngược lên
+extern void zhiauth_cgo_on_response(uint64_t reqId, uint8_t* data, size_t length);
+#ifdef __cplusplus
+}
+#endif
+#endif
+
+--- END OF FILE: src/bridge/client_bridge.h ---
+
+--- START FILE PATH: ZhiAuth/ZhiLogger.swift ---
+import Foundation
+
+enum LogLevel: String {
+    case DEBUG = "DEBUG"
+    case INFO = "INFO"
+    case WARNING = "WARNING"
+    case ERROR = "ERROR"
+}
+
+class ZhiLogger {
+    private static let lock = NSLock()
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+    
+    static func log(level: LogLevel, file: String = #file, line: Int = #line, function: String = #function, message: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        
+        let timestamp = dateFormatter.string(from: Date())
+        let fileName = (file as NSString).lastPathComponent
+        NSLog("%@", "[\(timestamp)] [\(level.rawValue)] [\(fileName):\(line)::\(function)] -> \(message)")
+    }
+    
+    static func debug(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .DEBUG, file: file, line: line, function: function, message: message)
+    }
+    
+    static func info(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .INFO, file: file, line: line, function: function, message: message)
+    }
+    
+    static func warning(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .WARNING, file: file, line: line, function: function, message: message)
+    }
+    
+    static func error(_ message: String, file: String = #file, line: Int = #line, function: String = #function) {
+        log(level: .ERROR, file: file, line: line, function: function, message: message)
+    }
+}
+--- END OF FILE: ZhiAuth/ZhiLogger.swift ---
+
+--- START FILE PATH: ZhiAuth/ZhiKcpEngine.swift ---
+import Foundation
+
+@_cdecl("zhiauth_swift_log")
+public func zhiauth_swift_log(msg: UnsafePointer<CChar>) {
+    let str = String(cString: msg)
+    DispatchQueue.main.async {
+        NotificationCenter.default.post(name: NSNotification.Name("ZhiAuthLog"), object: str)
+    }
+}
+
+actor KcpRequestManager {
+    private var pendingRequests: [UInt32: CheckedContinuation<Data, Error>] = [:]
+    
+    func addRequest(id: UInt32, continuation: CheckedContinuation<Data, Error>) {
+        pendingRequests[id] = continuation
+    }
+    
+    func completeRequest(id: UInt32, data: Data) {
+        if let continuation = pendingRequests.removeValue(forKey: id) {
+            continuation.resume(returning: data)
+        }
+    }
+    
+    func removeRequest(id: UInt32) {
+        pendingRequests.removeValue(forKey: id)
+    }
+    
+    func failAll(error: Error) {
+        for (_, continuation) in pendingRequests {
+            continuation.resume(throwing: error)
+        }
+        pendingRequests.removeAll()
+    }
+}
+
+public enum VfsOpcode: UInt8 {
+    case OP_PING     = 0x00
+    case OP_STAT     = 0x01
+    case OP_LIST     = 0x02
+    case OP_READ     = 0x03
+    case OP_WRITE    = 0x04
+    case OP_MKDIR    = 0x05
+    case OP_DELETE   = 0x06
+    case OP_RENAME   = 0x07
+    case OP_TRUNCATE = 0x08
+    case OP_ERROR    = 0xFF
+}
+
+public class ZhiKcpEngine {
+    private static var vfsClient: UnsafeMutableRawPointer? = nil
+    fileprivate static let requestManager = KcpRequestManager()
+    private static var currentSessionId: UInt32 = 0
+    
+    public static func initCore(ip: String, port: Int32, symKey: String, mtu: Int32, tuning: KcpTuningParams) -> Bool {
+        stopCore()
+        vfsClient = zhiauth_create_vfs_client(
+            ip, port, symKey, mtu,
+            tuning.noDelay, tuning.interval, tuning.resend, tuning.nc,
+            tuning.sndWnd, tuning.rcvWnd
+        )
+        guard let client = vfsClient else { return false }
+        return zhiauth_start_vfs_client(client)
+    }
+    
+    public static func stopCore() {
+        guard let client = vfsClient else { return }
+        zhiauth_stop_vfs_client(client)
+        zhiauth_destroy_vfs_client(client)
+        vfsClient = nil
+        Task {
+            await requestManager.failAll(error: NSError(domain: "ZhiAuth.KCP", code: -500, userInfo: [NSLocalizedDescriptionKey: "KCP Engine Stopped"]))
+        }
+    }
+    
+    public static func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
+        guard let client = vfsClient else {
+            throw NSError(domain: "ZhiAuth.KCP", code: -501, userInfo: [NSLocalizedDescriptionKey: "Lõi KCP chưa khởi động"])
+        }
+        
+        currentSessionId &+= 1
+        let reqId = currentSessionId
+        
+        return try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask {
+                return try await withCheckedThrowingContinuation { continuation in
+                    Task {
+                        await requestManager.addRequest(id: reqId, continuation: continuation)
+                        path.withCString { cPath in
+                            if let data = payloadData, !data.isEmpty {
+                                data.withUnsafeBytes { rawPtr in
+                                    let basePtr = rawPtr.bindMemory(to: UInt8.self).baseAddress
+                                    zhiauth_vfs_send_rpc(client, reqId, opcode.rawValue, cPath, offset, reqLen, basePtr, UInt32(data.count))
+                                }
+                            } else {
+                                zhiauth_vfs_send_rpc(client, reqId, opcode.rawValue, cPath, offset, reqLen, nil, 0)
+                            }
+                        }
+                    }
+                }
+            }
+            
+            group.addTask {
+                try await Task.sleep(nanoseconds: 6_000_000_000)
+                await requestManager.removeRequest(id: reqId)
+                let errMsg = "[TIMEOUT] KCP quá hạn 6s (ReqID: \(reqId))"
+                NotificationCenter.default.post(name: NSNotification.Name("ZhiAuthLog"), object: "❌ " + errMsg)
+                throw NSError(domain: "ZhiAuth.KCP", code: -408, userInfo: [NSLocalizedDescriptionKey: errMsg])
+            }
+            
+            let result = try await group.next()!
+            group.cancelAll()
+            
+            if result.count >= 5 && result[4] == VfsOpcode.OP_ERROR.rawValue {
+                throw NSError(domain: "ZhiAuth.KCP", code: -502, userInfo: [NSLocalizedDescriptionKey: "Server trả về OP_ERROR (0xFF) cho lệnh \(opcode)"])
+            }
+            return result
+        }
+    }
+}
+
+@_cdecl("zhiauth_swift_on_response")
+public func zhiauth_swift_on_response(reqId: UInt32, payload: UnsafePointer<UInt8>?, len: UInt32) {
+    let data = payload != nil ? Data(bytes: payload!, count: Int(len)) : Data()
+    Task { await ZhiKcpEngine.requestManager.completeRequest(id: reqId, data: data) }
+}
+
+--- END OF FILE: ZhiAuth/ZhiKcpEngine.swift ---
+
+--- START FILE PATH: ZhiAuth/ZhiNetworkAuth.swift ---
+import Foundation
+import Network
+
+public struct KcpTuningParams {
+    public var noDelay: Int32 = 1
+    public var interval: Int32 = 10
+    public var resend: Int32 = 2
+    public var nc: Int32 = 0
+    public var sndWnd: Int32 = 512
+    public var rcvWnd: Int32 = 512
+    public var isDynamic: Bool = false
+    public init() {}
+}
+
+public struct AuthResponse {
+    public var isSuccess: Bool = false
+    public var sharedPath: String = ""
+    public var quicPort: Int = 4433
+    public var kcpPort: Int = 6666
+    public var symKey: String = ""
+    public var tuning: KcpTuningParams = KcpTuningParams()
+    public init() {}
+}
+
+final class AuthState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _isResponded = false
+    
+    func claimResponse() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if _isResponded { return false }
+        _isResponded = true
+        return true
+    }
+}
+
+public class ZhiNetworkAuth {
+    public static func executePortKnockingAuth(ip: String, authPort: UInt16, authCmd: String) async throws -> AuthResponse {
+        return try await withCheckedThrowingContinuation { continuation in
+            let host = NWEndpoint.Host(ip)
+            guard let port = NWEndpoint.Port(rawValue: authPort) else {
+                continuation.resume(throwing: NSError(domain: "ZhiAuth.Network", code: -400, userInfo: [NSLocalizedDescriptionKey: "Cổng mạng không hợp lệ"]))
+                return
+            }
+            
+            let options = NWProtocolQUIC.Options(alpn: ["zhiauth-rpc"])
+            let secOptions = options.securityProtocolOptions
+            sec_protocol_options_set_verify_block(secOptions, { _, _, sec_protocol_verify_complete in
+                sec_protocol_verify_complete(true) 
+            }, .main)
+            
+            let parameters = NWParameters(quic: options)
+            let connection = NWConnection(host: host, port: port, using: parameters)
+            let serialQueue = DispatchQueue(label: "com.zhiauth.quic_auth")
+            
+            let state = AuthState()
+            
+            serialQueue.asyncAfter(deadline: .now() + 3.0) {
+                if state.claimResponse() {
+                    connection.cancel()
+                    let err = NSError(domain: "ZhiAuth.Network", code: -408, userInfo: [NSLocalizedDescriptionKey: "Timeout 3s: Không kết nối được tới \(ip)"])
+                    continuation.resume(throwing: err)
+                }
+            }
+            
+            connection.stateUpdateHandler = { connState in
+                switch connState {
+                case .ready:
+                    guard let cmdData = authCmd.data(using: .utf8) else { return }
+                    connection.send(content: cmdData, completion: .contentProcessed { sendError in
+                        if let sendError = sendError {
+                            connection.cancel()
+                            if state.claimResponse() { continuation.resume(throwing: sendError) }
+                            return
+                        }
+                        
+                        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, _, _ in
+                            connection.cancel()
+                            guard state.claimResponse() else { return }
+                            
+                            if let data = data, let respStr = String(data: data, encoding: .utf8), respStr.hasPrefix("AUTH_SUCCESS") {
+                                var resp = AuthResponse()
+                                resp.isSuccess = true
+                                let parts = respStr.split(separator: "|")
+                                if parts.count >= 4 {
+                                    resp.sharedPath = String(parts[1])
+                                    resp.quicPort = Int(parts[2]) ?? 4433
+                                    resp.kcpPort = Int(parts[3]) ?? 6666
+                                    resp.symKey = AppConfig.shared.kcpSymmetricKey
+                                }
+                                if parts.count >= 10 {
+                                    resp.tuning.noDelay = Int32(parts[4]) ?? 1
+                                    resp.tuning.interval = Int32(parts[5]) ?? 10
+                                    resp.tuning.resend = Int32(parts[6]) ?? 2
+                                    resp.tuning.nc = Int32(parts[7]) ?? 0
+                                    resp.tuning.sndWnd = Int32(parts[8]) ?? 512
+                                    resp.tuning.rcvWnd = Int32(parts[9]) ?? 512
+                                    resp.tuning.isDynamic = true
+                                }
+                                continuation.resume(returning: resp)
+                            } else {
+                                continuation.resume(throwing: NSError(domain: "ZhiAuth.Network", code: -401, userInfo: [NSLocalizedDescriptionKey: "Server từ chối xác thực"]))
+                            }
+                        }
+                    })
+                case .failed(let err):
+                    if state.claimResponse() { continuation.resume(throwing: err) }
+                case .cancelled:
+                    if state.claimResponse() {
+                        continuation.resume(throwing: NSError(domain: "ZhiAuth.Network", code: -402, userInfo: [NSLocalizedDescriptionKey: "Đã huỷ kết nối"]))
+                    }
+                case .waiting(let err):
+                    connection.cancel()
+                    if state.claimResponse() {
+                        continuation.resume(throwing: err)
+                    }
+                default: break
+                }
+            }
+            connection.start(queue: serialQueue)
+        }
+    }
+}
+
+--- END OF FILE: ZhiAuth/ZhiNetworkAuth.swift ---
+
+--- START FILE PATH: ZhiAuth/ZhiQuicTunnel.swift ---
+import Foundation
+import Network
+
+final class QuicRpcState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _isCompleted = false
+    var buffer = Data()
+    
+    func tryComplete() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if _isCompleted { return false }
+        _isCompleted = true
+        return true
+    }
+    
+    func appendData(_ data: Data) {
+        lock.lock()
+        buffer.append(data)
+        lock.unlock()
+    }
+    
+    func getData() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return buffer
+    }
+}
+
+public class ZhiQuicTunnel: @unchecked Sendable {
+    private var serverIP: String = ""
+    private var serverPort: UInt16 = 4433
+    private var reqCounter: UInt32 = 10000
+    public private(set) var isConfigured: Bool = false
+    
+    public init() {}
+    
+    private func logRealtime(_ msg: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSSSSS"
+        let ts = formatter.string(from: Date())
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: NSNotification.Name("ZhiAuthLog"), object: "QUIC | [\(ts)] \(msg)")
+        }
+    }
+    
+    public func configure(ip: String, port: UInt16) {
+        self.serverIP = ip
+        self.serverPort = port
+        self.isConfigured = true
+        logRealtime("⚡️ [QUIC-READY] Đã cấu hình đường hầm QUIC tại \(ip):\(port)")
+    }
+    
+    public func disconnect() {
+        self.isConfigured = false
+        logRealtime("🛑 [QUIC-STOP] Đã ngắt đường hầm QUIC")
+    }
+    
+    private func buildVfsPacket(reqId: UInt32, opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) -> Data {
+        let pathData = Data(path.utf8)
+        let payloadCount = UInt32(payloadData?.count ?? 0)
+        let finalDataLen = (reqLen > 0) ? reqLen : payloadCount
+        
+        var packet = Data()
+        packet.reserveCapacity(7 + 27 + pathData.count + Int(payloadCount))
+        
+        // Tiền tố FS_CMD| khớp với MsQuicServer::DataStreamCallback trên Server
+        packet.append(contentsOf: "FS_CMD|".utf8)
+        
+        var magic: UInt32 = UInt32(0x5A484941).littleEndian
+        var op: UInt8 = opcode.rawValue
+        var sessionId: UInt64 = UInt64(reqId).littleEndian
+        var off: UInt64 = offset.littleEndian
+        var dLen: UInt32 = finalDataLen.littleEndian
+        var pLen: UInt16 = UInt16(pathData.count).littleEndian
+        
+        withUnsafeBytes(of: &magic) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &op) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &sessionId) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &off) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &dLen) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &pLen) { packet.append(contentsOf: $0) }
+        
+        packet.append(pathData)
+        if let payloadData = payloadData, !payloadData.isEmpty {
+            packet.append(payloadData)
+        }
+        return packet
+    }
+    
+    public func sendRpcVfs(opcode: VfsOpcode, path: String, offset: UInt64, reqLen: UInt32, payloadData: Data?) async throws -> Data {
+        guard isConfigured, !serverIP.isEmpty, let port = NWEndpoint.Port(rawValue: serverPort) else {
+            throw NSError(domain: "ZhiAuth.QUIC", code: -601, userInfo: [NSLocalizedDescriptionKey: "Luồng QUIC chưa được cấu hình"])
+        }
+        
+        reqCounter &+= 1
+        let reqId = reqCounter
+        let packet = buildVfsPacket(reqId: reqId, opcode: opcode, path: path, offset: offset, reqLen: reqLen, payloadData: payloadData)
+        
+        logRealtime("📤 [TX-QUIC] Bắn gói RPC | Opcode: 0x\(String(format: "%02X", opcode.rawValue)) | ReqID: \(reqId) | Size: \(packet.count)B")
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            let host = NWEndpoint.Host(serverIP)
+            let options = NWProtocolQUIC.Options(alpn: ["zhiauth-rpc"])
+            let secOptions = options.securityProtocolOptions
+            sec_protocol_options_set_verify_block(secOptions, { _, _, complete in
+                complete(true)
+            }, .main)
+            
+            let params = NWParameters(quic: options)
+            let conn = NWConnection(host: host, port: port, using: params)
+            let queue = DispatchQueue(label: "com.zhiauth.quic.rpc.\(reqId)")
+            let rpcState = QuicRpcState()
+            
+            queue.asyncAfter(deadline: .now() + 8.0) {
+                if rpcState.tryComplete() {
+                    conn.cancel()
+                    self.logRealtime("❌ [TIMEOUT-QUIC] Quá hạn 8s cho ReqID: \(reqId)")
+                    continuation.resume(throwing: NSError(domain: "ZhiAuth.QUIC", code: -408, userInfo: [NSLocalizedDescriptionKey: "QUIC Timeout 8s (ReqID: \(reqId))"]))
+                }
+            }
+            
+            @Sendable func receiveNextChunk() {
+                conn.receive(minimumIncompleteLength: 1, maximumLength: 131072) { content, _, isComplete, error in
+                    if let content = content, !content.isEmpty {
+                        rpcState.appendData(content)
+                    }
+                    if let error = error {
+                        conn.cancel()
+                        if rpcState.tryComplete() {
+                            continuation.resume(throwing: error)
+                        }
+                        return
+                    }
+                    if isComplete {
+                        conn.cancel()
+                        if rpcState.tryComplete() {
+                            let finalData = rpcState.getData()
+                            self.logRealtime("📥 [RX-QUIC] Nhận đủ gói QUIC | ReqID: \(reqId) | Tổng: \(finalData.count)B")
+                            if finalData.count >= 5 && finalData[4] == VfsOpcode.OP_ERROR.rawValue {
+                                continuation.resume(throwing: NSError(domain: "ZhiAuth.QUIC", code: -502, userInfo: [NSLocalizedDescriptionKey: "Server QUIC trả về OP_ERROR (0xFF)"]))
+                            } else {
+                                continuation.resume(returning: finalData)
+                            }
+                        }
+                    } else {
+                        receiveNextChunk()
+                    }
+                }
+            }
+            
+            conn.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    // Gửi kèm cờ isComplete: true để kích hoạt QUIC_RECEIVE_FLAG_FIN trên MsQuicServer
+                    let context = NWConnection.ContentContext(identifier: "ZhiAuthRPC", expiration: 0, priority: 0.5, isFinal: true, tracer: nil, message: nil)
+                    conn.send(content: packet, contentContext: context, isComplete: true, completion: .contentProcessed { sendErr in
+                        if let sendErr = sendErr {
+                            conn.cancel()
+                            if rpcState.tryComplete() {
+                                continuation.resume(throwing: sendErr)
+                            }
+                            return
+                        }
+                        receiveNextChunk()
+                    })
+                case .failed(let err):
+                    conn.cancel()
+                    if rpcState.tryComplete() {
+                        continuation.resume(throwing: err)
+                    }
+                case .waiting(let err):
+                    conn.cancel()
+                    if rpcState.tryComplete() {
+                        continuation.resume(throwing: err)
+                    }
+                default:
+                    break
+                }
+            }
+            
+            conn.start(queue: queue)
+        }
+    }
+}
+
+--- END OF FILE: ZhiAuth/ZhiQuicTunnel.swift ---
+
+--- START FILE PATH: ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h ---
+#ifndef ZhiAuth_Bridging_Header_h
+#define ZhiAuth_Bridging_Header_h
+
+#include <stdint.h>
+#include <stdbool.h>
+
+// Bắt buộc phải khai báo lại đống hàm này để Swift nhìn thấy C++
+void* zhiauth_create_vfs_client(const char* ip, int port, const char* sym_key, int mtu,
+                                int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd);
+bool zhiauth_start_vfs_client(void* client);
+void zhiauth_stop_vfs_client(void* client);
+void zhiauth_destroy_vfs_client(void* client);
+void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
+                          uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len);
+
+#endif /* ZhiAuth_Bridging_Header_h */
+
+--- END OF FILE: ZhiAuth/Bridge/ZhiAuth-Bridging-Header.h ---
+

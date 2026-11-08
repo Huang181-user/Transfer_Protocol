@@ -1,0 +1,130 @@
+================================================================================
+          BẢN THIẾT KẾ KIẾN TRÚC HỆ THỐNG XÁC THỰC ĐỘNG (ZHIAUTH) v6.0
+================================================================================
+Ngày lập dự án: Lần cuối cập nhật năm 2026
+Mục tiêu: Xây dựng hệ thống Daemon C++ 
+          Xác thực ẩn mình (Port Knocking), đóng/mở cổng UFW động.
+          Kiến trúc truyền tải kép: KCP UDP (Trục chính/C++ Core) + MsQUIC UDP (Dự phòng).
+          Loại bỏ hoàn toàn NFS, bảo mật cấp quân đội bằng Libsodium, tối ưu RAM, mã nguồn mở.
+
+--- THƯ MỤC CẤU TRÚC PHÂN CHIA (HYBRID SOURCE TREE VIA CMAKE) ---
+Hệ thống được quản lý bằng CMake biên dịch lõi C++ thành thư viện tĩnh đa nền tảng, chia nhỏ tối đa để dễ debug và bảo trì:
+zhiauth/
+├── .gitignore               <- Chặn *.db, config.json, logs/, run/, build/
+├── build.sh                 <- Script tự động biên dịch, phân quyền và deploy systemd
+├── CMakeLists.txt           <- Tích hợp Asio, KCP, Libsodium, MsQUIC, SQLite3
+├── config/
+│   ├── config.json          <- Cấu hình Port, KCP Tuning, Đường dẫn & Khóa bảo mật
+│   ├── *.crt / *.key        <- Chứng chỉ TLS cho trục MsQUIC
+├── database/
+│   └── zhiauth.db           <- Cơ sở dữ liệu SQLite chạy chế độ WAL
+├── logs/                    <- Lưu trữ log thời gian thực của từng KCP Worker theo User
+├── run/                     <- Chứa Unix Domain Socket (zhiauth_kcp_<user>.sock)
+└── src/                     <- Toàn bộ mã nguồn lõi C++20
+    ├── server_main.cpp      <- Điểm vào Daemon, băm SHA-256, quản lý Session & Watchdog
+    ├── bridge/              
+    │   └── auth_bridge.h/.cpp <- Điều phối xác thực DB, khởi tạo KCP/MsQUIC & NFTables
+    ├── common/              
+    │   ├── logger.h/.cpp    <- Hệ thống Verbose Logging đa luồng kèm Timestamp mili-giây
+    │   └── sqlite_handler.h/.cpp <- Giao tiếp SQLite bảo mật (100% Parameterized Queries)
+    ├── system/              
+    │   ├── sys_control.h/.cpp <- Kiểm tra phân vùng lưu trữ và hạ quyền tiến trình
+    │   └── ufw_manager.h/.cpp <- Hàng đợi Worker Thread điều khiển NFTables Set tuần tự
+    ├── rpc_quic/
+    │   └── msquic_server.h/.cpp <- Máy chủ MsQUIC Native lắng nghe cổng Auth & Data
+    └── rpc_vfs/             <- TRỤC TRUYỀN TẢI CUSTOM UDP C++ & I/O WORKER
+        ├── vfs_server.h/.cpp    <- Lõi mạng Asio UDP Socket & Quản lý phiên KCP
+        ├── kcp_worker_main.cpp  <- Tiến trình Worker chạy dưới UID của từng User
+        ├── vfs_io_worker.h/.cpp <- Thực thi pread/pwrite trực tiếp lên ổ cứng vật lý
+        ├── vfs_packet.h         <- Định nghĩa gói tin C++ Struct (Header 27 bytes)
+        ├── ikcp.h/.c            <- Thuật toán ARQ KCP tùy biến cửa sổ lớn (WND 4096)
+        └── crypto_box.h/.cpp    <- Libsodium (ChaCha20-Poly1305) bọc mã hóa mọi gói tin
+        
+--------------------------------------------------------------------------------
+1. QUY HOẠCH PHÂN QUYỀN TRÊN SERVER (SERVER PRIVILEGES)
+--------------------------------------------------------------------------------
+* User vận hành Daemon: Tận dụng user `ubuntu_admin` có sẵn trên OS.
+* Cắt giảm quyền hạt nhân: LOẠI BỎ hoàn toàn việc gọi lệnh exportfs hay can thiệp Kernel.
+* Cơ chế chạm vào nhân (Kernel via Sudoers):
+  - Cấu hình file /etc/sudoers để cho phép user `ubuntu_admin` mượn quyền root
+    thực thi CHỈ ĐÚNG DUY NHẤT 1 lệnh hệ thống mà không cần mật khẩu:
+    1. `/usr/sbin/ufw` (Đóng/mở port tường lửa).
+
+--------------------------------------------------------------------------------
+2. CƠ SỞ DỮ LIỆU & BẢO MẬT THÔNG TIN (DATABASE & ENCRYPTION)
+--------------------------------------------------------------------------------
+* Hệ thống lưu trữ: Sử dụng cơ sở dữ liệu SQLite (`zhiauth.db`), lưu trong máy.
+* Cơ chế chống Sql Injection: Bắt buộc dùng Parameterized Queries (Câu lệnh có 
+  tham số), không cộng chuỗi string thô. Khởi động chế độ WAL (Write-Ahead Logging)
+  để tránh nghẽn/khóa file DB khi nhiều thiết bị truy vấn cùng lúc.
+* Mã hóa dữ liệu truyền tải & Tĩnh: 
+  - Mọi thông tin nhạy cảm (Mật khẩu, Token) băm SHA-256 kết hợp muối tĩnh.
+  - Toàn bộ dòng chảy dữ liệu file qua mạng (LAN & WAN) đều bị ép qua cỗ máy mã hóa ChaCha20-Poly1305 (Libsodium). Không có dữ liệu thô nào bay ngoài không khí.
+  - Hạn chế lạm dụng thư viện Regex trong C/C++ để giữ hiệu năng cao nhất.
+
+--------------------------------------------------------------------------------
+3. CHIẾN LƯỢC QUẢN LÝ SESSION & TỐI GIẢN NGÔN NGỮ (SESSION MANAGEMENT)
+--------------------------------------------------------------------------------
+* Luồng giao quyền lực: Xác thực thành công, C++ Server tự động gọi lệnh `seteuid()` để mượn thân xác của User thực tế (ví dụ UID 1001 của huang) rồi đọc trực tiếp tệp tin vật lý bằng `std::ifstream`, bỏ qua hoàn toàn Kernel Mount.
+* Quản lý cổng mạng: Chỉ mở đúng port 4433 (QUIC) và 6666 (KCP) cho đúng User/IP đó, phân biệt rạch ròi giữa IP Local và IP Tailscale của Client.
+* Tối giản ngôn ngữ (English Only): Hệ thống LOẠI BỎ hoàn toàn cơ chế đa ngôn ngữ (en, vi, cn) nhằm vắt kiệt hiệu năng. Giao tiếp qua mạng và Log 100% dùng tiếng Anh chuyên ngành cứng (hardcoded text).
+* Khi Session kết thúc: Server đóng UFW, giải phóng RAM, hủy session và gửi chuỗi tĩnh ("signed out" / "timed out").
+
+--------------------------------------------------------------------------------
+4. LUỒNG XỬ LÝ PHÍA CLIENT & TÍCH HỢP HỆ ĐIỀU HÀNH
+--------------------------------------------------------------------------------
+* Form đăng nhập: Hiện form bắt nhập tài khoản.
+* Thuật toán trinh sát MTU (Heuristic Radar): Dò từ 1000 - 1500 bytes (Trăm -> Chục -> Đơn vị) tìm đỉnh MTU mạng 4G/VNPT thực tế.
+* Kịch bản Dual-Tunnel Song Hành: Sau khi đăng nhập, Client kích nổ 2 luồng: KCP UDP (Luồng C++ truyền tải chính siêu tốc) và QUIC UDP (Luồng ngầm dự phòng). Lỗi KCP thì nhả file qua QUIC không gián đoạn.
+* Client gửi lên: Gửi kèm IP Local và IP Tailscale. Không có Tailscale IP -> "LAN-only restriction: WAN access denied".
+* Cơ chế "Ghi nhớ tôi": Cấp Session Token dài hạn phía Client.
+* Cơ chế SDK C++ Đa Nền Tảng (Phân chia rạch ròi hàm cho OS):
+  - Windows: SDK gọi WinFSP tạo Network Drive.
+  - Linux: SDK gọi FUSE mount thư mục ảo.
+  - Android: JNI gọi API DocumentsProvider (Storage Access Framework).
+  - iOS/macOS: Swift/C++ tự build app duyệt file riêng.
+
+--------------------------------------------------------------------------------
+5. BỘ 6 TẤM KHIÊN BẢO MẬT & PHƯƠNG ÁN FIX ĐIỂM YẾU CHÍ MẠNG
+--------------------------------------------------------------------------------
+[TẤM KHIÊN 1] CHỐNG GIẢ MẠO IP ĐỂ BAN ADMIN (CƠ CHẾ PORT KNOCKING)
+- Bỏ cơ chế REJECT/BAN. Cấu hình UFW sang DROP (Blackhole).
+- Port 5555 UDP (Auth) luôn đón khách. Port Data (4433, 6666) đóng cứng, chỉ hé mở qua Knocking sau khi đăng nhập authentication từ port 5555 thành công.
+- Ví dụ như client đang sửa file dở mà server hết timeout không thấy phản hồi từ client và tự động đóng kết nối thì khi client sửa file xong nhấn save file thì code phía client phải tự động mở lại kết nối và gửi lệnh thao tác lại chính file đó để  tránh hỏng file và gián đoạn quá trình sử dụng
+
+[TẤM KHIÊN 2] CHỐNG TREO CỨNG FILE EXPLORER
+- Giao thức "Cảnh báo tử thần": Trước khi đóng cổng 3s, Server báo Client tự động ngắt kết nối an toàn (`umount`). Phản hồi xong mới sập UFW.
+- Nếu phần mềm đang truy xuất mà rớt timeout: Tiến trình ngầm tự động đăng nhập lại bằng Token để khôi phục kết nối không gián đoạn.
+
+[TẤM KHIÊN 3] LUỒNG MẠNG THÔNG MINH (ROAMING) & XÁC THỰC
+- Quét mạng: Ưu tiên IP Local > IP Tailscale. (Trên Mobile: Chạy Foreground Service & Ignore Battery Optimizations chống Doze Mode).
+- Failover (LAN sang 4G) và Failback (4G về LAN) tự động.
+- Chống trùng IP Café: Client gửi Nonce ngẫu nhiên, Server băm cùng `Server_UUID`.
+- Tất cả các gói tin khi bay ngoài không khí đều phải được mã hóa 
+- Sau khi đăng nhập xong server sẽ mở port tương ứng với ip đó trên ufw và sẽ phản hồi số port về cho client để client biết gửi dữ liệu qua port nào, tránh tình trạng lỡ có sự việc gì đó buộc phải đổi port server xong phải thay đổi port từng client sẽ rất rườm rà
+
+[TẤM KHIÊN 4] CHỐNG ĐÁNH CẮP THẺ BÀI (TOKEN THEFT)
+- Đóng dấu vân tay phần cứng (Hardware Fingerprint Binding):
+  + Win/Linux: MAC + UUID Mainboard.
+  + Android: SSAID + TEE KeyStore.
+  + iOS/macOS: IDFV trong Keychain. Token sai phần cứng bị từ chối ngay.
+- Tất cả những dữ liệu nhạy cảm như session, token, key giải mã mã hóa, tài khoản, mật khẩu đăng nhập,... nếu lưu nội bộ trên máy server thì giữ nguyên như cũ để lấy làm gốc, còn nếu lưu nội bộ trên máy client thì phải được mã hóa để chống bị đánh cắp.
+
+[TẤM KHIÊN 5] TRỊ XUNG ĐỘT TIẾN TRÌNH LỆNH & XUNG ĐỘT FILE
+- Mở Port UFW: Dùng Task Queue (`std::queue`) và `std::mutex`, Worker Thread gắp lệnh UFW tuần tự.
+- Giao tiếp Lock File: Hệ thống C++ tự quản lý lock RAM. Ai vào trước thao tác file, kẻ đến sau lập tức ăn mã lỗi "FILE_LOCKED". (Giao tiếp LAN/WAN đồng bộ qua Unix Domain Socket).
+
+[TẤM KHIÊN 6] ĐA LUỒNG TRUYỀN FILE CHỐNG DDOS ATTACK
+- Lõi KCP tích hợp thuật toán Sliding Window: Tự động điều chỉnh kích thước gói. Phát hiện request rác (DDoS), Server C++ tự bóp luồng Session đó để cứu hạ tầng.
+
+[TẤM KHIÊN QUAN TRỌNG NHẤT] HẠN CHẾ ROOT TUYỆT ĐỐI
+- Mọi tiến trình chạy ở Userspace, không dùng quyền Root ngoại trừ tài khoản `huang`.
+- User "ubuntu_admin" chỉ có 2 quyền là quyền mở tường lửa và quyền chạy lệnh bàn giao toàn quyền sinh sát toàn bộ tiến trình lại cho user đăng nhập tương ứng với user hệ thống trùng tên user đăng nhập đó, và user ubuntu_admin sẽ rút lui về trực cổng 5555 nhường toàn bộ quyền sinh sát sesion đó cho user đó, và ngoài 2 quyền đó, user ubuntu_admin ko được phép có thêm bất kỳ quyền nào khác
+
+--------------------------------------------------------------------------------
+6. CHIẾN LƯỢC VERBOSE LOGGING (IN LOG SẠCH SÀNH SANH ĐỂ DEBUG)
+--------------------------------------------------------------------------------
+* Quy định in Log: Trạng thái dài nhất, chi tiết nhất. 100% tiếng Anh chuyên ngành, và ghi ra file log riêng, nếu được thì in log ra màn hình càng tốt, miễn không ảnh hưởng tới trải nghiệm sử dụng là được.
+* Định dạng chuẩn: [YYYY-MM-DD HH:MM:SS.ms] [TAG_LEVEL] [FILE_NAME::FUNCTION_NAME] -> Chi tiết.
+* Ghi chép Real-time: Nhận gói KCP/QUIC, Roaming, UFW, Auth, Checksum Libsodium. Mọi hoạt động đều phải nã ra log.
+================================================================================

@@ -33,8 +33,11 @@ class AppState: ObservableObject {
             guard let self = self, self.isLoggedIn else { return }
             Task {
                 do {
-            try await Task.sleep(nanoseconds: 1)
-                    _ = try await self.dispatchRpc(opcode: .OP_PING, path: "", offset: 0, reqLen: 0, payloadData: nil) } catch { self.log("⚠️ [WATCHDOG] Lỗi Ping") }
+                    try await Task.sleep(nanoseconds: 1)
+                    _ = try await self.dispatchRpc(opcode: .OP_PING, path: "", offset: 0, reqLen: 0, payloadData: nil)
+                } catch {
+                    self.log("⚠️ [WATCHDOG] Lỗi Ping")
+                }
                 let currentIPs = getDeviceIPs()
                 let curLan = currentIPs.lan.isEmpty ? "N/A" : currentIPs.lan
                 let curTs = currentIPs.ts.isEmpty ? "N/A" : currentIPs.ts
@@ -50,25 +53,32 @@ class AppState: ObservableObject {
     
     private func triggerEmergencyReauth(lanIP: String, tsIP: String) async {
         let authCmd = "ROAM_REQ|TOKEN:\(sessionToken)|LAN:\(lanIP)|TS:\(tsIP)|HWID:\(hardwareMac)"
-        do {
-            try await Task.sleep(nanoseconds: 1)
-            var newBaseIP = ""
-            var resp: AuthResponse? = nil
-            if lanIP != "N/A" {
-                let ipToKnock = AppConfig.shared.defaultLanIp
-                if !ipToKnock.isEmpty { resp = try? await ZhiNetworkAuth.executePortKnockingAuth(ip: ipToKnock, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd); if resp?.isSuccess == true { newBaseIP = ipToKnock } }
+        var newBaseIP = ""
+        var resp: AuthResponse? = nil
+        if lanIP != "N/A" {
+            let ipToKnock = AppConfig.shared.defaultLanIp
+            if !ipToKnock.isEmpty {
+                resp = try? await ZhiNetworkAuth.executePortKnockingAuth(ip: ipToKnock, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd)
+                if resp?.isSuccess == true { newBaseIP = ipToKnock }
             }
-            if resp == nil && tsIP != "N/A" {
-                let ipToKnock = AppConfig.shared.defaultTsIp
-                if !ipToKnock.isEmpty { resp = try? await ZhiNetworkAuth.executePortKnockingAuth(ip: ipToKnock, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd); if resp?.isSuccess == true { newBaseIP = ipToKnock } }
+        }
+        if resp == nil && tsIP != "N/A" {
+            let ipToKnock = AppConfig.shared.defaultTsIp
+            if !ipToKnock.isEmpty {
+                resp = try? await ZhiNetworkAuth.executePortKnockingAuth(ip: ipToKnock, authPort: AppConfig.shared.defaultAuthPort, authCmd: authCmd)
+                if resp?.isSuccess == true { newBaseIP = ipToKnock }
             }
-            if let auth = resp, auth.isSuccess {
-                self.baseIP = newBaseIP; self.kcpPort = auth.kcpPort; self.quicPort = UInt16(auth.quicPort)
-                _ = ZhiKcpEngine.initCore(ip: self.baseIP, port: Int32(self.kcpPort), symKey: auth.symKey, mtu: AppConfig.shared.defaultMtu, tuning: auth.tuning)
-                self.quicTunnel.configure(ip: self.baseIP, port: self.quicPort)
-                self.log("✅ [RE-AUTH] Khôi phục phiên qua \(self.baseIP)")
-            }
-        } catch { self.log("❌ [RE-AUTH] Rớt mạng...") }
+        }
+        if let auth = resp, auth.isSuccess {
+            self.baseIP = newBaseIP
+            self.kcpPort = auth.kcpPort
+            self.quicPort = UInt16(auth.quicPort)
+            _ = ZhiKcpEngine.initCore(ip: self.baseIP, port: Int32(self.kcpPort), symKey: auth.symKey, mtu: AppConfig.shared.defaultMtu, tuning: auth.tuning)
+            self.quicTunnel.configure(ip: self.baseIP, port: self.quicPort)
+            self.log("✅ [RE-AUTH] Khôi phục phiên qua \(self.baseIP)")
+        } else {
+            self.log("❌ [RE-AUTH] Rớt mạng...")
+        }
     }
     
     private static let timeFormatter: DateFormatter = {
@@ -128,7 +138,6 @@ class AppState: ObservableObject {
         let destURL = tempDir.appendingPathComponent(url.lastPathComponent)
         
         do {
-            try await Task.sleep(nanoseconds: 1)
             if FileManager.default.fileExists(atPath: destURL.path) {
                 try FileManager.default.removeItem(at: destURL)
             }
@@ -161,7 +170,6 @@ class AppState: ObservableObject {
             responseData = try await quicTunnel.sendRpcVfs(opcode: opcode, path: path, offset: offset, reqLen: reqLen, payloadData: payloadData)
         } else {
             do {
-            try await Task.sleep(nanoseconds: 1)
                 responseData = try await ZhiKcpEngine.sendRpcVfs(opcode: opcode, path: path, offset: offset, reqLen: reqLen, payloadData: payloadData)
             } catch {
                 log("⚠️ [FAILOVER] KCP gặp sự cố (\(error.localizedDescription)). Tự động chuyển sang luồng dự phòng QUIC!")
