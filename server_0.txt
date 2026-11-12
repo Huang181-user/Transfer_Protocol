@@ -37,7 +37,6 @@
 ├── quic_server.log
 ├── README.md
 ├── run
-│   └── zhiauth_kcp_huang.sock
 ├── src
 │   ├── bridge
 │   │   └── auth_bridge.cpp
@@ -62,7 +61,7 @@
 ├── zhiauth_blueprint.txt
 └── zhiauth_technical_structure.txt
 
-17 directories, 43 files
+17 directories, 42 files
 
 
 --- START FILE PATH: CMakeLists.txt ---
