@@ -122,7 +122,7 @@ struct FileExplorerView: View {
                         .font(.system(size: 15))
                         .foregroundColor(.primary)
                 }
-                Button(action: logout) {
+                Button(action: { state.executeLogout() }) {
                     Image(systemName: "power")
                         .font(.system(size: 15))
                         .foregroundColor(.red)
@@ -610,26 +610,6 @@ struct FileExplorerView: View {
         Giao thức: \(state.activeTunnel.rawValue)
         """
         showInfoAlert = true
-    }
-    
-    func logout() {
-        ZhiKcpEngine.stopCore()
-        state.quicTunnel.disconnect()
-        
-        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(state.baseIP), port: 5555)
-        let conn = NWConnection(to: endpoint, using: .udp)
-        conn.start(queue: .global())
-        conn.send(content: "AUTH_REQ|LOGOUT".data(using: .utf8)!, completion: .contentProcessed { _ in
-            conn.cancel()
-        })
-        
-        state.isLoggedIn = false
-        state.fileList = []
-        state.currentPath = "/"
-        state.clipboardItem = nil
-        state.activeTunnel = .none
-        state.transferSpeed = "0 KB/s"
-        state.log("🛑 Đã đăng xuất và giải phóng toàn bộ tài nguyên KCP & QUIC.")
     }
     
     func parseList(data: Data, basePath: String) -> [ZhiFileItem] {

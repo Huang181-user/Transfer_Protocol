@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import Network
 
 class AppState: ObservableObject {
     @Published var isLoggedIn: Bool = false
@@ -183,5 +184,32 @@ class AppState: ObservableObject {
             updateSpeed(bytes: transferredBytes, durationSeconds: elapsed)
         }
         return responseData
+    }
+
+    // Đưa logout vào đây để chạy bất đồng bộ
+    func executeLogout() {
+        self.watchdogTimer?.invalidate()
+        let token = self.sessionToken
+        let ip = self.baseIP
+        self.isLoading = true
+        
+        Task.detached {
+            let logoutCmd = "LOGOUT_REQ|TOKEN:\(token)"
+            let _ = try? await ZhiNetworkAuth.executePortKnockingAuth(ip: ip, authPort: AppConfig.shared.defaultAuthPort, authCmd: logoutCmd)
+            
+            ZhiKcpEngine.stopCore()
+            
+            await MainActor.run {
+                self.quicTunnel.disconnect()
+                self.isLoggedIn = false
+                self.fileList = []
+                self.currentPath = "/"
+                self.clipboardItem = nil
+                self.activeTunnel = .none
+                self.transferSpeed = "0 KB/s"
+                self.isLoading = false
+                self.log("🛑 Đã đăng xuất an toàn, giải phóng KCP & QUIC.")
+            }
+        }
     }
 }
