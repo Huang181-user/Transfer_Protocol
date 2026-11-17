@@ -1,6 +1,8 @@
 #include "bridge/client_bridge.h"
 #include "rpc_client/crypto_box.h"
 #include "rpc_client/vfs_client.h"
+#include <vector>  // 🔥 LỖI THIẾU THƯ VIỆN NÀY LÀM BUILD FAIL!
+#include <string>  // 🔥 VÀ THÊM THƯ VIỆN NÀY CHO CHẮC CÚ!
 
 static VfsClient* g_vfs_client = nullptr;
 
@@ -30,7 +32,6 @@ void zhiauth_client_shutdown() {
     }
 }
 
-// 🔥 GIỮ LẠI HÀM NÀY NHƯNG CHỈNH LẠI GÁN SESSION_ID ĐỂ KHÔNG BỊ TREO REQ_ID
 void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
                           uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len) {
     if (!client) return;
@@ -44,7 +45,6 @@ void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const c
     hdr->data_len = (req_len > 0) ? req_len : payload_len; 
     hdr->path_len = path_length;
     
-    // Gán cẩu thả tạm thời (Sang send_rpc_async sẽ được ép đè lại bằng ClientID + ReqID chuẩn xác)
     hdr->session_id = req_id; 
     
     uint8_t* ptr = req_data.data() + sizeof(VfsPacketHeader);
