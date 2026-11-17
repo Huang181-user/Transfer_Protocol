@@ -29,7 +29,8 @@ static std::string getRealtimeLog() {
     return oss.str();
 }
 
-static uint32_t IOS_CLIENT_ID = 0x1A2B3C4D;
+// 🔥 FIX SỐNG CÒN Ở ĐÂY: Trả lại ID chuẩn khớp 100% với Server
+static uint32_t IOS_CLIENT_ID = 0x11223344;
 
 VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
                      int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd)
@@ -110,23 +111,14 @@ void VfsClient::receive_loop() {
                     std::vector<uint8_t> raw_payload(recv_buffer_.begin(), recv_buffer_.begin() + probe_size);
                     std::vector<uint8_t> plaintext;
                     
-                    if (CryptoBox::decrypt_payload(raw_payload, sym_key_, plaintext) && plaintext.size() >= 27) {
-                        
-                        // Đọc OPCODE trực tiếp từ Byte số 4
-                        uint8_t opcode = plaintext[4];
-                        
-                        // Đọc MAGIC trực tiếp từ Byte 0-3
-                        uint32_t magic = 0;
-                        memcpy(&magic, &plaintext[0], 4);
-
-                        if (opcode == 0xDE) { // OP_DEATH_WARNING
+                    if (CryptoBox::decrypt_payload(raw_payload, sym_key_, plaintext) && plaintext.size() >= sizeof(VfsPacketHeader)) {
+                        VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
+                        if (hdr->opcode == VfsOpcode::OP_DEATH_WARNING) {
                             logToSwift("[" + getRealtimeLog() + "] 💥 Nhận Cảnh báo Tử thần (0xDE)! Tự văng App...");
                             uint32_t death_req = 999999;
                             zhiauth_swift_on_response(death_req, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
-                        } else if (opcode == 0x00 && magic == 0x5A484941) { // OP_PING
-                            uint64_t full_session_id;
-                            memcpy(&full_session_id, &plaintext[5], 8);
-                            uint32_t req_id = static_cast<uint32_t>(full_session_id & 0xFFFFFFFF);
+                        } else if (hdr->opcode == VfsOpcode::OP_PING && hdr->magic == 0x5A484941) {
+                            uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
                             zhiauth_swift_on_response(req_id, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
                         }
                     }
@@ -136,20 +128,17 @@ void VfsClient::receive_loop() {
                         std::vector<uint8_t> encrypted_payload(len);
                         ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
                         std::vector<uint8_t> plaintext;
-                        if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext) && plaintext.size() >= 27) {
+                        if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext) && plaintext.size() >= sizeof(VfsPacketHeader)) {
+                            VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
                             
-                            uint8_t opcode = plaintext[4];
-                            
-                            if (opcode == 0xDE) { // OP_DEATH_WARNING
+                            if (hdr->opcode == VfsOpcode::OP_DEATH_WARNING) {
                                 logToSwift("[" + getRealtimeLog() + "] 💥 Nhận Cảnh báo Tử thần (0xDE)! Tự văng App...");
                                 uint32_t death_req = 999999;
                                 zhiauth_swift_on_response(death_req, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
                                 continue;
                             }
 
-                            uint64_t full_session_id;
-                            memcpy(&full_session_id, &plaintext[5], 8);
-                            uint32_t req_id = static_cast<uint32_t>(full_session_id & 0xFFFFFFFF);
+                            uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
                             zhiauth_swift_on_response(req_id, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
                         }
                     }
@@ -169,22 +158,16 @@ void VfsClient::kcp_update_loop() {
 }
 
 void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
-    if (request_payload.size() < 27) return; // Kích thước tối thiểu của 1 gói tin
+    if (request_payload.size() < sizeof(VfsPacketHeader)) return;
     
     std::vector<uint8_t> fixed_payload = request_payload;
+    VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(fixed_payload.data());
     
-    // Đọc ReqID thô từ mảng byte cũ (Vị trí 5 đến 12 chứa SessionID)
-    uint64_t old_session_id = 0;
-    memcpy(&old_session_id, &fixed_payload[5], 8);
-    uint32_t req_id = static_cast<uint32_t>(old_session_id & 0xFFFFFFFF);
+    // Ghi đề ID theo cấu trúc [ClientID 32 bit cao] [ReqID 32 bit thấp]
+    uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
+    hdr->session_id = ((uint64_t)IOS_CLIENT_ID << 32) | req_id;
     
-    // Đắp đè Client ID lên 32-bit cao
-    uint64_t full_session_id = ((uint64_t)IOS_CLIENT_ID << 32) | req_id;
-    memcpy(&fixed_payload[5], &full_session_id, 8);
-    
-    // Đọc OPCODE trực tiếp từ Byte số 4
-    uint8_t opcode = fixed_payload[4];
-    bool is_ping = (opcode == 0x00);
+    bool is_ping = (hdr->opcode == VfsOpcode::OP_PING);
 
     std::vector<uint8_t> encrypted_payload;
     if (!CryptoBox::encrypt_payload(fixed_payload, sym_key_, encrypted_payload)) {
