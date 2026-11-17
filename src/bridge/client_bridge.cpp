@@ -1,6 +1,7 @@
 #include "bridge/client_bridge.h"
 #include "rpc_client/crypto_box.h"
 #include "rpc_client/vfs_client.h"
+#include "rpc_client/vfs_packet.h"
 #include <vector>  // 🔥 LỖI THIẾU THƯ VIỆN NÀY LÀM BUILD FAIL!
 #include <string>  // 🔥 VÀ THÊM THƯ VIỆN NÀY CHO CHẮC CÚ!
 
