@@ -18,11 +18,44 @@ int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, in
 void zhiauth_send_vfs_command_async(const uint8_t* payload, size_t payload_len) {
     if (g_vfs_client) {
         std::vector<uint8_t> req(payload, payload + payload_len);
-        g_vfs_client->send_rpc_async(req); // Đổi thành Async!
+        g_vfs_client->send_rpc_async(req); 
     }
 }
 
 void zhiauth_client_shutdown() {
-    if (g_vfs_client) { g_vfs_client->stop(); delete g_vfs_client; g_vfs_client = nullptr; }
+    if (g_vfs_client) { 
+        g_vfs_client->stop(); 
+        delete g_vfs_client; 
+        g_vfs_client = nullptr; 
+    }
+}
+
+// 🔥 GIỮ LẠI HÀM NÀY NHƯNG CHỈNH LẠI GÁN SESSION_ID ĐỂ KHÔNG BỊ TREO REQ_ID
+void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
+                          uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len) {
+    if (!client) return;
+    uint16_t path_length = path ? static_cast<uint16_t>(strlen(path)) : 0;
+    std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + path_length + payload_len, 0);
+    VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
+    
+    hdr->magic = 0x5A484941;
+    hdr->opcode = static_cast<VfsOpcode>(opcode);
+    hdr->offset = offset;
+    hdr->data_len = (req_len > 0) ? req_len : payload_len; 
+    hdr->path_len = path_length;
+    
+    // Gán cẩu thả tạm thời (Sang send_rpc_async sẽ được ép đè lại bằng ClientID + ReqID chuẩn xác)
+    hdr->session_id = req_id; 
+    
+    uint8_t* ptr = req_data.data() + sizeof(VfsPacketHeader);
+    if (path_length > 0) {
+        memcpy(ptr, path, path_length);
+        ptr += path_length;
+    }
+    if (payload && payload_len > 0) {
+        memcpy(ptr, payload, payload_len);
+    }
+    
+    static_cast<VfsClient*>(client)->send_rpc_async(req_data);
 }
 }

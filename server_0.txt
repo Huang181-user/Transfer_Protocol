@@ -37,6 +37,7 @@
 ├── quic_server.log
 ├── README.md
 ├── run
+│   └── zhiauth_kcp_huang.sock
 ├── src
 │   ├── bridge
 │   │   └── auth_bridge.cpp
@@ -61,7 +62,7 @@
 ├── zhiauth_blueprint.txt
 └── zhiauth_technical_structure.txt
 
-17 directories, 42 files
+17 directories, 43 files
 
 
 --- START FILE PATH: CMakeLists.txt ---
@@ -913,7 +914,8 @@ enum class VfsOpcode : uint8_t {
     OP_DELETE   = 0x06,
     OP_RENAME   = 0x07,
     OP_TRUNCATE = 0x08, 
-    OP_ERROR    = 0xFF
+    OP_ERROR    = 0xFF,
+    OP_DEATH_WARNING = 0xDE
 };
 
 // TRẢ LẠI NGUYÊN BẢN CHO V6.0
@@ -1148,7 +1150,8 @@ private:
     "hash_salt": "ZhiAuth_Secret_Salt_2026_",
     "system_admin_user": "huang",
     "max_fail_attempts": 5,
-    "ban_duration_minutes": 15
+    "ban_duration_minutes": 15,
+    "session_timeout_seconds": 120
   }
 }
 
@@ -1218,6 +1221,34 @@ std::string extract_field(const std::string& payload, const std::string& key) {
         return std::iscntrl(c); 
     }), val.end());
     return val;
+}
+
+void send_death_warning(const std::string& username) {
+    std::string uds_path = "/home/huang/zhiauth/run/zhiauth_kcp_" + username + ".sock";
+    int uds_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (uds_fd < 0) return;
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, uds_path.c_str(), sizeof(addr.sun_path) - 1);
+
+    struct timeval tv{1, 0};
+    setsockopt(uds_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    if (connect(uds_fd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
+        // 🔥 FIX SỬ DỤNG MÃ LỆNH RIÊNG BIỆT 0xDE CHO CẢNH BÁO TỬ THẦN
+        uint8_t pkt[27] = {0};
+        uint32_t magic = 0x5A484941;
+        memcpy(pkt, &magic, 4);
+        pkt[4] = 0xDE; // VfsOpcode::OP_DEATH_WARNING
+        
+        uint32_t req_sz = 27;
+        send(uds_fd, &req_sz, 4, MSG_NOSIGNAL);
+        send(uds_fd, pkt, req_sz, MSG_NOSIGNAL);
+        ZHI_LOG_INFO("[WATCHDOG] 💀 Đã bắn Cảnh báo tử thần (OP_DEATH_WARNING - 0xDE) cho Client: " + username);
+    }
+    close(uds_fd);
 }
 
 extern "C" const char* cxx_on_msquic_auth(const char* payload, const char* remote_ip) {
@@ -1297,23 +1328,33 @@ extern "C" const char* cxx_on_msquic_auth(const char* payload, const char* remot
         std::string token = extract_field(p, "TOKEN");
         std::string hashed_token = token.empty() ? "" : hash_sha256(token + salt);
         std::string lan_to_close = "", ts_to_close = "";
+        std::string target_user = "";
+
         {
             std::lock_guard<std::mutex> lock(g_session_mtx);
             auto it = g_session_cache.find(remote_ip);
             if (it != g_session_cache.end()) {
                 lan_to_close = it->second->lan_ip;
                 ts_to_close = it->second->ts_ip;
-                std::string target_user = it->second->username;
+                target_user = it->second->username;
                 for (auto sit = g_session_cache.begin(); sit != g_session_cache.end(); ) {
                     if (sit->second->username == target_user) sit = g_session_cache.erase(sit);
                     else ++sit;
                 }
             }
         }
+        
         zhiauth_revoke_access(remote_ip, hashed_token.c_str());
-        if (!lan_to_close.empty() && lan_to_close != remote_ip) zhiauth_revoke_access(lan_to_close.c_str(), "");
-        if (!ts_to_close.empty() && ts_to_close != remote_ip) zhiauth_revoke_access(ts_to_close.c_str(), "");
-        ZHI_LOG_INFO("[AUTH-GATEWAY] 👋 User tại IP " + std::string(remote_ip) + " đã đăng xuất (signed out).");
+        if (!lan_to_close.empty() && lan_to_close != remote_ip && lan_to_close != "NONE") zhiauth_revoke_access(lan_to_close.c_str(), "");
+        if (!ts_to_close.empty() && ts_to_close != remote_ip && ts_to_close != "NONE") zhiauth_revoke_access(ts_to_close.c_str(), "");
+        
+        if (!target_user.empty()) {
+            std::string cmd = "sudo pkill -9 -u " + target_user + " -f zhiauth_kcp_worker";
+            system(cmd.c_str());
+            remove(("/home/huang/zhiauth/run/zhiauth_kcp_" + target_user + ".sock").c_str());
+        }
+
+        ZHI_LOG_INFO("[AUTH-GATEWAY] 👋 User tại IP " + std::string(remote_ip) + " đã đăng xuất (signed out). Triệt tiêu tiến trình KCP Worker.");
         return strdup("signed out");
     }
 
@@ -1321,26 +1362,42 @@ extern "C" const char* cxx_on_msquic_auth(const char* payload, const char* remot
 }
 
 void watchdog_loop() {
-    ZHI_LOG_INFO("[WATCHDOG] Chó canh gác C++ đã thức giấc (Tuần tra mỗi 30s)");
+    int timeout_sec = g_config["security"]["session_timeout_seconds"].is_number() ? 
+                      g_config["security"]["session_timeout_seconds"].get<int>() : 120;
+    
+    ZHI_LOG_INFO("[WATCHDOG] Chó canh gác C++ đã thức giấc (Tuần tra mỗi 30s | Timeout cấu hình: " + std::to_string(timeout_sec) + "s)");
+    
     while(true) {
         std::this_thread::sleep_for(std::chrono::seconds(30));
         uint64_t now = time(NULL);
         std::unordered_map<std::string, std::string> to_kill;
+        
         {
             std::lock_guard<std::mutex> lock(g_session_mtx);
             for (auto it = g_session_cache.begin(); it != g_session_cache.end(); ++it) {
                 uint64_t kcp_lan = zhiauth_check_kcp_active(it->second->lan_ip.c_str());
                 uint64_t kcp_ts = zhiauth_check_kcp_active(it->second->ts_ip.c_str());
                 uint64_t last_act = it->second->last_active;
+                
                 if (kcp_lan > last_act) last_act = kcp_lan;
                 if (kcp_ts > last_act) last_act = kcp_ts;
-                if (now - last_act > 120) to_kill[it->second->username] = it->second->shared_path;
+                
+                if (now - last_act > timeout_sec) {
+                    to_kill[it->second->username] = it->second->shared_path;
+                }
             }
         }
+        
         for (const auto& kv : to_kill) {
-            ZHI_LOG_WARN("[WATCHDOG-ALERT] Mất tín hiệu user '" + kv.first + "' quá 120s (timed out). Kích hoạt Cảnh báo tử thần, đợi 3s trước khi đóng NFTables và hủy Worker!");
+            ZHI_LOG_WARN("[WATCHDOG-ALERT] Mất tín hiệu user '" + kv.first + "' quá " + std::to_string(timeout_sec) + "s (timed out). Kích hoạt Cảnh báo tử thần, đợi 3s trước khi đóng NFTables và hủy Worker!");
+            
+            // 🔥 BƯỚC 1: Bắn Cảnh báo tử thần ĐỘC QUYỀN (OP_DEATH_WARNING) về Client
+            send_death_warning(kv.first);
+
+            // 🔥 BƯỚC 2: Đợi 3 giây cho Client tự văng App
             std::this_thread::sleep_for(std::chrono::seconds(3));
             
+            // 🔥 BƯỚC 3: ĐÁ VĂNG WORKER PROCESS & DỌN DẸP RULE TƯỜNG LỬA
             std::string cmd = "sudo pkill -9 -u " + kv.first + " -f zhiauth_kcp_worker";
             system(cmd.c_str());
             remove(("/home/huang/zhiauth/run/zhiauth_kcp_" + kv.first + ".sock").c_str());
@@ -1348,12 +1405,12 @@ void watchdog_loop() {
             std::lock_guard<std::mutex> lock(g_session_mtx);
             for (auto it = g_session_cache.begin(); it != g_session_cache.end(); ) {
                 if (it->second->username == kv.first) {
-                    zhiauth_revoke_access(it->second->lan_ip.c_str(), "");
-                    zhiauth_revoke_access(it->second->ts_ip.c_str(), "");
+                    if (it->second->lan_ip != "NONE") zhiauth_revoke_access(it->second->lan_ip.c_str(), "");
+                    if (it->second->ts_ip != "NONE") zhiauth_revoke_access(it->second->ts_ip.c_str(), "");
                     it = g_session_cache.erase(it);
                 } else { ++it; }
             }
-            ZHI_LOG_INFO("[WATCHDOG] 🧹 Đã thu hồi toàn bộ Port NFTables (QUIC/KCP/ICMP) và giải phóng RAM của user: " + kv.first);
+            ZHI_LOG_INFO("[WATCHDOG] 🧹 Đã thu hồi toàn bộ Rule Port mở động và triệt tiêu tiến trình Worker của user: " + kv.first);
         }
     }
 }
@@ -1628,8 +1685,44 @@ void VfsServer::receive_loop() {
         lock.unlock(); 
 
         std::lock_guard<std::mutex> kcp_lock(*current_session.kcp_mtx);
-        ikcp_input(current_session.kcp_cb, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
         
+        // 🔥 FIX PADDING MẠNG LAN: Thử giải mã 55 bytes thô thành 27 bytes gói Ping trần!
+        int kcp_res = ikcp_input(current_session.kcp_cb, reinterpret_cast<const char*>(recv_buffer_.data()), bytes_recvd);
+        
+        if (kcp_res < 0) { 
+            size_t probe_size = (bytes_recvd >= 55) ? 55 : bytes_recvd;
+            std::vector<uint8_t> raw_payload(recv_buffer_.data(), recv_buffer_.data() + probe_size);
+            std::vector<uint8_t> plaintext;
+            
+            if (CryptoBox::decrypt_payload(raw_payload, master_sym_key_, plaintext) && plaintext.size() >= sizeof(VfsPacketHeader)) {
+                VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
+                if (hdr->opcode == VfsOpcode::OP_PING && hdr->magic == 0x5A484941) {
+                    // 🔥 FIX: Lấy chuẩn xác giá trị session_id bằng mảng bộ nhớ (tránh lỗi padding/cast struct)
+                    uint64_t full_session_id;
+                    memcpy(&full_session_id, plaintext.data() + 5, 8); // Offset 5 là vị trí của session_id
+                    uint32_t req_id = (uint32_t)(full_session_id & 0xFFFFFFFF);
+                    
+                    ZHI_LOG_DEBUG("[DEBUG-SERVER-PING] 🟢 BẮT ĐƯỢC PING BYPASS TỪ UDP TRẦN | ReqID=" + std::to_string(req_id));
+
+                    VfsPacketHeader res_hdr;
+                    memset(&res_hdr, 0, sizeof(VfsPacketHeader));
+                    res_hdr.magic = 0x5A484941;
+                    res_hdr.opcode = VfsOpcode::OP_PING;
+                    res_hdr.session_id = full_session_id; // Đổ lại y nguyên cái session_id
+
+                    std::vector<uint8_t> response_payload(sizeof(VfsPacketHeader));
+                    std::memcpy(response_payload.data(), &res_hdr, sizeof(VfsPacketHeader));
+                    std::vector<uint8_t> final_encrypted;
+                    
+                    if (CryptoBox::encrypt_payload(response_payload, master_sym_key_, final_encrypted)) {
+                        std::error_code ec; 
+                        socket_.send_to(asio::buffer(final_encrypted.data(), final_encrypted.size()), sender_endpoint_, 0, ec);
+                    }
+                }
+            }
+            continue; 
+        }
+
         int len;
         while ((len = ikcp_peeksize(current_session.kcp_cb)) > 0) {
             std::vector<uint8_t> encrypted_payload(len);
@@ -1652,8 +1745,21 @@ void VfsServer::process_kcp_payload(KcpSession session_copy, std::vector<uint8_t
     if (plaintext.size() < sizeof(VfsPacketHeader)) return;
 
     VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
+
     if (hdr->opcode == VfsOpcode::OP_PING) {
-        VfsPacketHeader res_hdr = *hdr;
+        // 🔥 Đảm bảo đọc chuẩn session_id
+        uint64_t full_session_id;
+        memcpy(&full_session_id, plaintext.data() + 5, 8);
+        uint32_t req_id = (uint32_t)(full_session_id & 0xFFFFFFFF);
+        
+        ZHI_LOG_DEBUG("[DEBUG-SERVER-PING] 🟢 BẮT ĐƯỢC PING QUA KCP | ReqID=" + std::to_string(req_id));
+
+        VfsPacketHeader res_hdr;
+        memset(&res_hdr, 0, sizeof(VfsPacketHeader));
+        res_hdr.magic = 0x5A484941;
+        res_hdr.opcode = VfsOpcode::OP_PING;
+        res_hdr.session_id = full_session_id;
+
         std::vector<uint8_t> response_payload(sizeof(VfsPacketHeader));
         std::memcpy(response_payload.data(), &res_hdr, sizeof(VfsPacketHeader));
         std::vector<uint8_t> final_encrypted;
@@ -1661,7 +1767,6 @@ void VfsServer::process_kcp_payload(KcpSession session_copy, std::vector<uint8_t
 	    std::lock_guard<std::mutex> kcp_lock(*session_copy.kcp_mtx); 
 	    ikcp_send(session_copy.kcp_cb, reinterpret_cast<const char*>(final_encrypted.data()), final_encrypted.size());
 	    ikcp_flush(session_copy.kcp_cb);
-            
         }
         return;
     }

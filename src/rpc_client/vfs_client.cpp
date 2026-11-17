@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cstring>
+#include <string>
 
 using asio::ip::udp;
 
@@ -27,6 +28,9 @@ static std::string getRealtimeLog() {
     oss << std::put_time(&bt, "%H:%M:%S") << "." << std::setfill('0') << std::setw(6) << micros;
     return oss.str();
 }
+
+// Bơm bừa 1 cái Client ID tĩnh cho bản iOS vì không có MAC (Swift lo phần HWID rồi)
+static uint32_t IOS_CLIENT_ID = 0x1A2B3C4D;
 
 VfsClient::VfsClient(const std::string& server_ip, uint16_t port, const std::string& sym_key, int mtu,
                      int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd)
@@ -56,7 +60,7 @@ bool VfsClient::start() {
         logToSwift("[" + getRealtimeLog() + "] 🟢 [SYS-NET] Mở Socket UDP trói IP: " + server_endpoint_.address().to_string() + ":" + std::to_string(server_endpoint_.port()));
     }
 
-    kcp_cb_ = ikcp_create(0x11223344, this);
+    kcp_cb_ = ikcp_create(IOS_CLIENT_ID, this);
     kcp_cb_->output = kcp_output_callback;
     
     ikcp_nodelay(kcp_cb_, nodelay_, interval_, resend_, nc_);
@@ -69,9 +73,17 @@ bool VfsClient::start() {
     return true;
 }
 
+// 🔥 CHÌA KHÓA FIX LỖI TREO APP LÚC LOGOUT Ở ĐÂY NÈ!
 void VfsClient::stop() {
     if (!is_running_) return;
-    is_running_ = false; socket_.close();
+    is_running_ = false; 
+    
+    // Ép Asio hủy tất cả các lệnh async đang chờ, giải cứu io_thread khỏi vòng xoáy tử thần
+    std::error_code ec;
+    socket_.cancel(ec); 
+    socket_.close(ec);
+    io_context_.stop();
+    
     if (io_thread_.joinable()) io_thread_.join();
     if (timer_thread_.joinable()) timer_thread_.join();
     if (kcp_cb_) { ikcp_release(kcp_cb_); kcp_cb_ = nullptr; }
@@ -81,11 +93,6 @@ int VfsClient::kcp_output_callback(const char* buf, int len, ikcpcb* kcp, void* 
     VfsClient* client = static_cast<VfsClient*>(user);
     std::error_code ec;
     size_t sent = client->socket_.send(asio::buffer(buf, len), 0, ec);
-    if (ec) {
-        logToSwift("[" + getRealtimeLog() + "] ❌ [TX-ERR] Gửi UDP THẤT BẠI: " + ec.message());
-    } else {
-        logToSwift("[" + getRealtimeLog() + "] 📤 [TX-UDP] Bắn gói KCP ra mạng: " + std::to_string(sent) + " Bytes");
-    }
     return 0;
 }
 
@@ -99,17 +106,51 @@ void VfsClient::receive_loop() {
                 }
             } else if (bytes_recvd > 0) {
                 std::lock_guard<std::mutex> lock(kcp_mutex_);
-                ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), static_cast<long>(bytes_recvd));
-                int len;
-                while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
-                    std::vector<uint8_t> encrypted_payload(len);
-                    ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
+                int kcp_res = ikcp_input(kcp_cb_, reinterpret_cast<const char*>(recv_buffer_.data()), static_cast<long>(bytes_recvd));
+                
+                // 🔥 THUẬT TOÁN PING BYPASS + BẮT MÃ TỬ HÌNH CHO IOS
+                if (kcp_res < 0) {
+                    size_t probe_size = (bytes_recvd >= 55) ? 55 : bytes_recvd;
+                    std::vector<uint8_t> raw_payload(recv_buffer_.begin(), recv_buffer_.begin() + probe_size);
                     std::vector<uint8_t> plaintext;
-                    if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
-                        if (plaintext.size() >= sizeof(VfsPacketHeader)) {
-                            VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
-                            uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
+                    
+                    if (CryptoBox::decrypt_payload(raw_payload, sym_key_, plaintext) && plaintext.size() >= sizeof(VfsPacketHeader)) {
+                        VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
+                        
+                        if (hdr->opcode == VfsOpcode::OP_DEATH_WARNING) {
+                            logToSwift("[" + getRealtimeLog() + "] 💥 Nhận Cảnh báo Tử thần (0xDE)! Tự văng App...");
+                            // Ném 1 gói rác ReqID = 999 về Swift để Swift nổ tung và ngắt
+                            uint32_t death_req = 999999;
+                            zhiauth_swift_on_response(death_req, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
+                        } else if (hdr->opcode == VfsOpcode::OP_PING && hdr->magic == 0x5A484941) {
+                            uint64_t full_session_id;
+                            memcpy(&full_session_id, plaintext.data() + 5, 8);
+                            uint32_t req_id = static_cast<uint32_t>(full_session_id & 0xFFFFFFFF);
                             zhiauth_swift_on_response(req_id, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
+                        }
+                    }
+                } else {
+                    int len;
+                    while ((len = ikcp_peeksize(kcp_cb_)) > 0) {
+                        std::vector<uint8_t> encrypted_payload(len);
+                        ikcp_recv(kcp_cb_, reinterpret_cast<char*>(encrypted_payload.data()), len);
+                        std::vector<uint8_t> plaintext;
+                        if (CryptoBox::decrypt_payload(encrypted_payload, sym_key_, plaintext)) {
+                            if (plaintext.size() >= sizeof(VfsPacketHeader)) {
+                                VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(plaintext.data());
+                                
+                                if (hdr->opcode == VfsOpcode::OP_DEATH_WARNING) {
+                                    logToSwift("[" + getRealtimeLog() + "] 💥 Nhận Cảnh báo Tử thần (0xDE)! Tự văng App...");
+                                    uint32_t death_req = 999999;
+                                    zhiauth_swift_on_response(death_req, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
+                                    continue;
+                                }
+
+                                uint64_t full_session_id;
+                                memcpy(&full_session_id, plaintext.data() + 5, 8);
+                                uint32_t req_id = static_cast<uint32_t>(full_session_id & 0xFFFFFFFF);
+                                zhiauth_swift_on_response(req_id, plaintext.data(), static_cast<uint32_t>(plaintext.size()));
+                            }
                         }
                     }
                 }
@@ -127,71 +168,31 @@ void VfsClient::kcp_update_loop() {
     }
 }
 
+// 🔥 FIX ĐỒNG BỘ: NHỒI REQ_ID + CLIENT_ID, BẮN PING TRẦN, NÉ HOL KCP
 void VfsClient::send_rpc_async(const std::vector<uint8_t>& request_payload) {
     if (request_payload.size() < sizeof(VfsPacketHeader)) return;
-    VfsPacketHeader* hdr = (VfsPacketHeader*)request_payload.data();
-    uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
     
-    std::ostringstream oss;
-    oss << "[" << getRealtimeLog() << "] 📦 [TX-KCP] GÓI LỆNH RPC | Opcode: 0x" << std::hex << (int)hdr->opcode << std::dec 
-        << " | ReqID: " << req_id << " | PathLen: " << hdr->path_len << " | DataLen: " << hdr->data_len << " | Tổng: " << request_payload.size() << "B";
-    logToSwift(oss.str());
+    std::vector<uint8_t> fixed_payload = request_payload;
+    VfsPacketHeader* hdr = (VfsPacketHeader*)fixed_payload.data();
+    
+    uint32_t req_id = static_cast<uint32_t>(hdr->session_id & 0xFFFFFFFF);
+    uint64_t full_session_id = ((uint64_t)IOS_CLIENT_ID << 32) | req_id;
+    memcpy(fixed_payload.data() + 5, &full_session_id, 8);
+    
+    bool is_ping = (hdr->opcode == VfsOpcode::OP_PING);
 
     std::vector<uint8_t> encrypted_payload;
-    if (!CryptoBox::encrypt_payload(request_payload, sym_key_, encrypted_payload)) {
+    if (!CryptoBox::encrypt_payload(fixed_payload, sym_key_, encrypted_payload)) {
         logToSwift("[" + getRealtimeLog() + "] ❌ [TX-ERR] Ép giáp Libsodium thất bại!");
         return;
     }
-    {
+    
+    if (is_ping) {
+        std::error_code ec;
+        socket_.send(asio::buffer(encrypted_payload.data(), encrypted_payload.size()), 0, ec);
+    } else {
         std::lock_guard<std::mutex> lock(kcp_mutex_);
         ikcp_send(kcp_cb_, reinterpret_cast<const char*>(encrypted_payload.data()), static_cast<int>(encrypted_payload.size()));
         ikcp_flush(kcp_cb_);
-        logToSwift("[" + getRealtimeLog() + "] 🛡️ [TX-KCP] Bơm " + std::to_string(encrypted_payload.size()) + "B vô nòng KCP");
-    }
-}
-
-extern "C" {
-    void* zhiauth_create_vfs_client(const char* ip, int port, const char* sym_key, int mtu,
-                                    int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
-        return new VfsClient(ip, port, sym_key, mtu, nodelay, interval, resend, nc, snd_wnd, rcv_wnd);
-    }
-
-    bool zhiauth_start_vfs_client(void* client) {
-        if (!client) return false;
-        return static_cast<VfsClient*>(client)->start();
-    }
-
-    void zhiauth_stop_vfs_client(void* client) {
-        if (client) static_cast<VfsClient*>(client)->stop();
-    }
-
-    void zhiauth_destroy_vfs_client(void* client) {
-        if (client) delete static_cast<VfsClient*>(client);
-    }
-
-    void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
-                              uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len) {
-        if (!client) return;
-        uint16_t path_length = path ? static_cast<uint16_t>(strlen(path)) : 0;
-        std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + path_length + payload_len, 0);
-        VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
-        
-        hdr->magic = 0x5A484941;
-        hdr->opcode = static_cast<VfsOpcode>(opcode);
-        hdr->session_id = req_id;
-        hdr->offset = offset;
-        hdr->data_len = (req_len > 0) ? req_len : payload_len; 
-        hdr->path_len = path_length;
-        
-        uint8_t* ptr = req_data.data() + sizeof(VfsPacketHeader);
-        if (path_length > 0) {
-            memcpy(ptr, path, path_length);
-            ptr += path_length;
-        }
-        if (payload && payload_len > 0) {
-            memcpy(ptr, payload, payload_len);
-        }
-        
-        static_cast<VfsClient*>(client)->send_rpc_async(req_data);
     }
 }
