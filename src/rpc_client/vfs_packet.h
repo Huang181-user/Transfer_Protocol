@@ -15,7 +15,8 @@ enum class VfsOpcode : uint8_t {
     OP_DELETE   = 0x06,
     OP_RENAME   = 0x07,
     OP_TRUNCATE = 0x08, 
-    OP_ERROR    = 0xFF
+    OP_ERROR    = 0xFF,
+    OP_DEATH_WARNING = 0xDE  // 🔥 THÊM DÒNG NÀY VÀO LÀ XONG!
 };
 
 struct VfsPacketHeader {
