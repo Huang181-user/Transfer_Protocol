@@ -4,7 +4,13 @@
 #include "rpc_client/vfs_packet.h" 
 #include <vector>
 #include <string>
-#include <cstring> // Cần cho memcpy
+#include <sstream>
+
+extern "C" void zhiauth_swift_log(const char* msg);
+
+static void logToSwiftBridge(const std::string& msg) {
+    zhiauth_swift_log(msg.c_str());
+}
 
 static VfsClient* g_vfs_client = nullptr;
 
@@ -54,50 +60,46 @@ void zhiauth_destroy_vfs_client(void* client) {
     if (client) delete static_cast<VfsClient*>(client);
 }
 
-// 🔥 FIX TẬN GỐC LỖI MEMORY ALIGNMENT: NẠP TỪNG BYTE BẰNG TAY (BYTE-BY-BYTE SERIALIZATION)
 void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
                           uint64_t offset, uint32_t req_len, const uint8_t* payload, uint32_t payload_len) {
     if (!client) return;
-    
     uint16_t path_length = path ? static_cast<uint16_t>(strlen(path)) : 0;
     
-    // Tính toán kích thước chuẩn: 27 bytes Header + Độ dài chuỗi Path + Độ dài mảng Payload
-    size_t total_size = 27 + path_length + payload_len;
-    std::vector<uint8_t> req_data(total_size, 0);
+    // ==========================================
+    // 🔍 ĐOẠN LOG ĐIỀU TRA LỖI MEMORY ALIGNMENT
+    // ==========================================
+    std::ostringstream debug_log;
+    debug_log << "🔍 [DEBUG-ALIGNMENT] Báo cáo cấu trúc VfsPacketHeader trên iOS ARM64:\n";
+    debug_log << "- Tổng kích thước Struct: " << sizeof(VfsPacketHeader) << " bytes (Mong đợi: 27 bytes)\n";
+    debug_log << "- Offset của magic: " << offsetof(VfsPacketHeader, magic) << " (Mong đợi: 0)\n";
+    debug_log << "- Offset của opcode: " << offsetof(VfsPacketHeader, opcode) << " (Mong đợi: 4)\n";
+    debug_log << "- Offset của session_id: " << offsetof(VfsPacketHeader, session_id) << " (Mong đợi: 5)\n";
+    debug_log << "- Offset của offset: " << offsetof(VfsPacketHeader, offset) << " (Mong đợi: 13)\n";
+    debug_log << "- Offset của data_len: " << offsetof(VfsPacketHeader, data_len) << " (Mong đợi: 21)\n";
+    debug_log << "- Offset của path_len: " << offsetof(VfsPacketHeader, path_len) << " (Mong đợi: 25)\n";
+    logToSwiftBridge(debug_log.str());
+    // ==========================================
+
+    std::vector<uint8_t> req_data(sizeof(VfsPacketHeader) + path_length + payload_len, 0);
+    VfsPacketHeader* hdr = reinterpret_cast<VfsPacketHeader*>(req_data.data());
     
-    // 1. Ghi Magic (0x5A484941)
-    uint32_t magic = 0x5A484941;
-    memcpy(&req_data[0], &magic, 4);
+    hdr->magic = 0x5A484941;
+    hdr->opcode = static_cast<VfsOpcode>(opcode);
+    hdr->offset = offset;
+    hdr->data_len = (req_len > 0) ? req_len : payload_len; 
+    hdr->path_len = path_length;
     
-    // 2. Ghi Opcode
-    req_data[4] = opcode;
+    hdr->session_id = req_id; 
     
-    // 3. Ghi SessionID (Tạm gán req_id, vào vfs_client.cpp sẽ bị đắp đè HWID lên)
-    uint64_t temp_session_id = req_id;
-    memcpy(&req_data[5], &temp_session_id, 8);
-    
-    // 4. Ghi Offset
-    memcpy(&req_data[13], &offset, 8);
-    
-    // 5. Ghi Data_len (Nếu là lệnh PING/STAT/LIST thì ghi 0, nếu READ thì ghi dung lượng cần đọc, WRITE thì ghi dung lượng mảng)
-    uint32_t final_data_len = (req_len > 0) ? req_len : payload_len;
-    memcpy(&req_data[21], &final_data_len, 4);
-    
-    // 6. Ghi Path_len
-    memcpy(&req_data[25], &path_length, 2);
-    
-    // 7. Chèn chuỗi đường dẫn (Path)
+    uint8_t* ptr = req_data.data() + sizeof(VfsPacketHeader);
     if (path_length > 0) {
-        memcpy(&req_data[27], path, path_length);
+        memcpy(ptr, path, path_length);
+        ptr += path_length;
     }
-    
-    // 8. Chèn dữ liệu Payload (nếu có, dùng cho OP_WRITE)
     if (payload && payload_len > 0) {
-        memcpy(&req_data[27 + path_length], payload, payload_len);
+        memcpy(ptr, payload, payload_len);
     }
     
-    // Quăng xuống lõi mạng KCP
     static_cast<VfsClient*>(client)->send_rpc_async(req_data);
 }
-
 }
