@@ -1,13 +1,17 @@
 #include "bridge/client_bridge.h"
 #include "rpc_client/crypto_box.h"
 #include "rpc_client/vfs_client.h"
-#include "rpc_client/vfs_packet.h"
-#include <vector>  // 🔥 LỖI THIẾU THƯ VIỆN NÀY LÀM BUILD FAIL!
-#include <string>  // 🔥 VÀ THÊM THƯ VIỆN NÀY CHO CHẮC CÚ!
+#include "rpc_client/vfs_packet.h" 
+#include <vector>
+#include <string>
 
 static VfsClient* g_vfs_client = nullptr;
 
 extern "C" {
+
+// ==========================================
+// 1. CÁC HÀM CŨ CHO TƯƠNG THÍCH BẢN GO (LINUX/WIN)
+// ==========================================
 int zhiauth_client_init(const char* server_ip, int port, const char* sym_key, int mtu,
                         int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
     if (!CryptoBox::initialize()) return -1;
@@ -31,6 +35,28 @@ void zhiauth_client_shutdown() {
         delete g_vfs_client; 
         g_vfs_client = nullptr; 
     }
+}
+
+// ==========================================
+// 2. CÁC HÀM XUẤT CHO SWIFT (ZhiAuth-Bridging-Header.h) - 🔥 FIX TẠI ĐÂY!
+// ==========================================
+void* zhiauth_create_vfs_client(const char* ip, int port, const char* sym_key, int mtu,
+                                int nodelay, int interval, int resend, int nc, int snd_wnd, int rcv_wnd) {
+    if (!CryptoBox::initialize()) return nullptr;
+    return new VfsClient(ip, port, sym_key, mtu, nodelay, interval, resend, nc, snd_wnd, rcv_wnd);
+}
+
+bool zhiauth_start_vfs_client(void* client) {
+    if (!client) return false;
+    return static_cast<VfsClient*>(client)->start();
+}
+
+void zhiauth_stop_vfs_client(void* client) {
+    if (client) static_cast<VfsClient*>(client)->stop();
+}
+
+void zhiauth_destroy_vfs_client(void* client) {
+    if (client) delete static_cast<VfsClient*>(client);
 }
 
 void zhiauth_vfs_send_rpc(void* client, uint32_t req_id, uint8_t opcode, const char* path, 
